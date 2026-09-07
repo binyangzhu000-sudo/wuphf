@@ -17,6 +17,7 @@ import (
 
 	wuphf "github.com/nex-crm/wuphf"
 	"github.com/nex-crm/wuphf/internal/brokeraddr"
+	"github.com/nex-crm/wuphf/internal/computer"
 	"github.com/nex-crm/wuphf/internal/config"
 )
 
@@ -91,6 +92,14 @@ func (b *Broker) ServeWebUI(port int) error {
 	mux.Handle("/api/broker/restart", webUIRebindGuard(http.HandlerFunc(b.handleWebBrokerRestart)))
 	mux.Handle("/api/", webUIRebindGuard(b.webUIProxyHandler(brokerURL, "/api")))
 	mux.Handle("/onboarding/", webUIRebindGuard(b.webUIProxyHandler(brokerURL, "")))
+	// The pi bot service (tool authoring, routine chat sessions). The broker
+	// already supervises the service (agent_service_supervisor.go); this proxy
+	// completes the loop for the SHIPPED bundle. Until now only the vite dev
+	// server proxied /bot, so in production the teach-a-tool flow 404'd and
+	// silently fell back to a fabricated mock tool (2026-08-15 QA). Same
+	// rebind guard as the API proxy; no bearer is attached — the service is
+	// loopback-only and unauthenticated, exactly as under the dev proxy.
+	mux.Handle("/agent/", webUIRebindGuard(b.botServiceProxyHandler()))
 	// Token endpoint — no auth needed, but we require a same-origin loopback request.
 	// Otherwise this endpoint leaks the broker bearer to any browser page that
 	// can reach the web UI port via DNS rebinding.
@@ -131,6 +140,10 @@ func (b *Broker) ServeWebUI(port int) error {
 	// rather than the API mux. Path traversal is bounded by http.FileServer
 	// + http.Dir; we strip the prefix so requests resolve relative to the
 	// artist root.
+	// Live desktop viewer: noVNC reverse-proxied under a signed, expiring
+	// capability path. <iframe> cannot carry the bearer, so like artist
+	// files this lives on the web-UI port; the signature is the gate.
+	mux.Handle(computer.ViewerPathPrefix, webUIRebindGuard(b.viewerProxy()))
 	artistRoot := imagegenArtistRoot()
 	mux.Handle("/artist-files/", http.StripPrefix(
 		"/artist-files/",
@@ -268,11 +281,11 @@ func (b *Broker) webUIProxyHandler(brokerURL, stripPrefix string) http.Handler {
 		proxyReq.Header.Set("Authorization", "Bearer "+b.token)
 		proxyReq.Header.Set("Content-Type", r.Header.Get("Content-Type"))
 		// The operator's own web UI sometimes acts on the App Builder writer
-		// path: removing a failed app build sends X-WUPHF-Agent: app-builder,
+		// path: removing a failed app build sends X-WUPHF-Bot: app-builder,
 		// which the app-writer gate (appWriterAllowed) honors. The proxy
 		// attaches the broker token for transport auth, which the broker
 		// classifies as broker-kind — a kind the gate deliberately rejects so
-		// other agents (all of which hold the broker token) cannot register or
+		// other bots (all of which hold the broker token) cannot register or
 		// delete apps outside the build path.
 		//
 		// That makes the App Builder identity privileged, so it must NOT be
@@ -281,12 +294,12 @@ func (b *Broker) webUIProxyHandler(brokerURL, stripPrefix string) http.Handler {
 		// client value: Sec-Fetch-Site is set by the browser and cannot be
 		// forged from script, and a cross-site page that reached this port reads
 		// "cross-site"/"same-site", not "same-origin". We also pin the value to
-		// the App Builder slug — the proxy never relays an arbitrary agent
+		// the App Builder slug — the proxy never relays an arbitrary bot
 		// identity. Anything else is dropped (proxyReq starts with no inbound
 		// headers), leaving the broker to treat the caller as broker-kind.
 		if r.Header.Get("Sec-Fetch-Site") == "same-origin" &&
-			isAppBuilderSlug(r.Header.Get(agentRateLimitHeader)) {
-			proxyReq.Header.Set(agentRateLimitHeader, appBuilderSlug)
+			isAppBuilderSlug(r.Header.Get(botRateLimitHeader)) {
+			proxyReq.Header.Set(botRateLimitHeader, appBuilderSlug)
 		}
 
 		client := http.DefaultClient
@@ -344,4 +357,69 @@ func responseHeadersToSkip(header http.Header) map[string]struct{} {
 		}
 	}
 	return skip
+}
+
+// botServiceProxyHandler forwards /bot/* to the pi bot service the
+// broker supervises (agent_service_supervisor.go — WUPHF_AGENT_URL override,
+// default 127.0.0.1:8820), stripping the /bot prefix exactly as the vite
+// dev proxy does. No bearer is attached: the service is loopback-only and
+// its own contract is unauthenticated (the rebind guard on the mux entry is
+// the browser-origin gate). Long-lived streaming responses are allowed.
+func (b *Broker) botServiceProxyHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetPath := strings.TrimPrefix(r.URL.Path, "/agent")
+		if targetPath == "" {
+			targetPath = "/"
+		}
+		target := operatorBotBaseURL() + targetPath
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+		proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, target, r.Body)
+		if err != nil {
+			http.Error(w, "proxy error", http.StatusBadGateway)
+			return
+		}
+		proxyReq.Header.Set("Content-Type", r.Header.Get("Content-Type"))
+		if accept := r.Header.Get("Accept"); accept != "" {
+			proxyReq.Header.Set("Accept", accept)
+		}
+		client := http.DefaultClient
+		if r.Header.Get("Accept") == "text/event-stream" {
+			client = &http.Client{Timeout: 0}
+		}
+		resp, err := client.Do(proxyReq)
+		if err != nil {
+			http.Error(w, "bot service unreachable", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		skipHeaders := responseHeadersToSkip(resp.Header)
+		for k, v := range resp.Header {
+			if _, skip := skipHeaders[strings.ToLower(k)]; skip {
+				continue
+			}
+			for _, vv := range v {
+				w.Header().Add(k, vv)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		if resp.Header.Get("Content-Type") == "text/event-stream" {
+			flusher, canFlush := w.(http.Flusher)
+			buf := make([]byte, 4096)
+			for {
+				n, readErr := resp.Body.Read(buf)
+				if n > 0 {
+					w.Write(buf[:n]) //nolint:errcheck
+					if canFlush {
+						flusher.Flush()
+					}
+				}
+				if readErr != nil {
+					return
+				}
+			}
+		}
+		_, _ = io.Copy(w, resp.Body)
+	})
 }

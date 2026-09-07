@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { sseURL } from "../../api/client";
-import { useAgentStream } from "../../hooks/useAgentStream";
+import { useBotStream } from "../../hooks/useBotStream";
 import { APP_BUILDER_SLUG } from "../../lib/constants";
 import {
   type BuildActivityItem,
@@ -30,7 +30,7 @@ export function AppActivity({ appId }: AppActivityProps) {
   const url = id
     ? sseURL(`/apps/${encodeURIComponent(id)}/activity`)
     : undefined;
-  const { lines, connected } = useAgentStream(
+  const { lines, connected } = useBotStream(
     id ? APP_BUILDER_SLUG : null,
     null,
     {
@@ -50,6 +50,24 @@ export function AppActivity({ appId }: AppActivityProps) {
     [lines],
   );
   const running = items.some((i) => i.status === "running");
+
+  // The builder's streamed prose is the STORY of the build — the verb rows
+  // alone read as a wall of "Working ×14" (2026-08-16 delight audit). Show
+  // the latest narration line while the build runs.
+  const narration = useMemo(() => {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const p = lines[i].parsed;
+      if (
+        p?.kind === "headless_event" &&
+        p.type === "text" &&
+        typeof p.text === "string" &&
+        p.text.trim()
+      ) {
+        return p.text.replace(/\s+/g, " ").trim().slice(0, 140);
+      }
+    }
+    return null;
+  }, [lines]);
 
   const lastId = items[items.length - 1]?.id;
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on each new row
@@ -85,10 +103,13 @@ export function AppActivity({ appId }: AppActivityProps) {
         />
         <span className="app-build-activity__count">{items.length}</span>
       </button>
+      {narration && running ? (
+        <div className="app-build-activity__now">{narration}</div>
+      ) : null}
       {open ? (
         <div className="app-build-activity__list" ref={scrollRef}>
-          {items.map((item) => (
-            <ActivityRow key={item.id} item={item} />
+          {collapseRepeats(items).map(({ item, repeats }) => (
+            <ActivityRow key={item.id} item={item} repeats={repeats} />
           ))}
         </div>
       ) : null}
@@ -96,7 +117,39 @@ export function AppActivity({ appId }: AppActivityProps) {
   );
 }
 
-function ActivityRow({ item }: { item: BuildActivityItem }) {
+/** Merge runs of finished rows that read identically ("Working", "Running a
+ * setup step") into one row with a ×N count — a wall of repeats says less
+ * than one line saying it happened N times. The trailing row stays separate
+ * while it is running so the live spinner keeps its own line. */
+function collapseRepeats(
+  items: BuildActivityItem[],
+): { item: BuildActivityItem; repeats: number }[] {
+  const out: { item: BuildActivityItem; repeats: number }[] = [];
+  for (const item of items) {
+    const prev = out[out.length - 1];
+    if (
+      prev &&
+      prev.item.status === "done" &&
+      item.status === "done" &&
+      prev.item.verb === item.verb &&
+      prev.item.target === item.target
+    ) {
+      prev.repeats += 1;
+      prev.item = item;
+    } else {
+      out.push({ item, repeats: 1 });
+    }
+  }
+  return out;
+}
+
+function ActivityRow({
+  item,
+  repeats = 1,
+}: {
+  item: BuildActivityItem;
+  repeats?: number;
+}) {
   return (
     <div
       className={`app-build-activity__row app-build-activity__row--${item.status}`}
@@ -112,7 +165,10 @@ function ActivityRow({ item }: { item: BuildActivityItem }) {
           "✓"
         )}
       </span>
-      <span className="app-build-activity__verb">{item.verb}</span>
+      <span className="app-build-activity__verb">
+        {item.verb}
+        {repeats > 1 ? ` ×${repeats}` : ""}
+      </span>
       {item.target ? (
         <span className="app-build-activity__target" title={item.target}>
           {item.target}

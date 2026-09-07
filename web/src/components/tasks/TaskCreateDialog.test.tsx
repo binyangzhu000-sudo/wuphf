@@ -4,16 +4,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { OfficeMember } from "../../api/client";
 
-const mutateAsync = vi.fn(
-  async (_input: Record<string, unknown>) => ({ task: { id: "task-1" } }),
-);
+const mutateAsync = vi.fn(async (_input: Record<string, unknown>) => ({
+  task: { id: "task-1" },
+}));
 
 vi.mock("../../hooks/useCreateTask", () => ({
   useCreateTask: () => ({ mutateAsync, isPending: false }),
 }));
 
 const SAMPLE_MEMBERS: OfficeMember[] = [
-  { slug: "ceo", name: "CEO", role: "supervisor", emoji: "👔" },
+  { slug: "cos", name: "CEO", role: "supervisor", emoji: "👔" },
   { slug: "bookkeeper", name: "Bookkeeper", role: "specialist", emoji: "📒" },
 ];
 
@@ -22,7 +22,7 @@ vi.mock("../../hooks/useMembers", () => ({
 }));
 
 vi.mock("../../api/client", () => ({
-  getConfig: async () => ({ team_lead_slug: "ceo" }),
+  getConfig: async () => ({ team_lead_slug: "cos" }),
 }));
 
 vi.mock("../../lib/router", () => ({
@@ -53,9 +53,7 @@ describe("<TaskCreateDialog>", () => {
     // Regression: the modal used to expose a "#channel" picker chip. Channels
     // are no longer a creation-time choice — every task gets its own channel.
     expect(screen.queryByTestId("issue-create-channel")).toBeNull();
-    expect(
-      screen.queryByRole("combobox", { name: /channel/i }),
-    ).toBeNull();
+    expect(screen.queryByRole("combobox", { name: /channel/i })).toBeNull();
     // The assignee chip is still the one remaining property control.
     expect(screen.getByTestId("issue-create-assignee")).toBeInTheDocument();
   });

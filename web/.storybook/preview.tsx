@@ -8,7 +8,7 @@ import "../src/styles/shadcn.css";
 import "../src/styles/global.css";
 import "../src/styles/layout.css";
 import "../src/styles/messages.css";
-import "../src/styles/agents.css";
+import "../src/styles/bots.css";
 import "../src/styles/search.css";
 import "../src/styles/command.css";
 import "../src/styles/wiki-shell.css";
@@ -22,6 +22,7 @@ import "../src/styles/office-tour-slides.css";
 import "../src/styles/onboarding-shell.css";
 import "../src/styles/pam.css";
 import "../src/styles/rich-artifacts.css";
+import "../src/styles/computer.css";
 
 const THEME_LINK_ID = "wuphf-theme-link";
 

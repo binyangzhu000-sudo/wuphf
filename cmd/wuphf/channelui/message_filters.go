@@ -10,7 +10,9 @@ func IsHumanSender(from string) bool {
 
 // FilterInsightMessages returns the subset of messages that are
 // automation / context-graph entries — kind "automation" or from the
-// system "nex" sender. Used to populate the insights side panels.
+// legacy "nex" automation sender slug. Used to populate the insights side
+// panels. The slug is a persisted identifier on existing message history, not
+// a live integration.
 func FilterInsightMessages(messages []BrokerMessage) []BrokerMessage {
 	filtered := make([]BrokerMessage, 0, len(messages))
 	for _, msg := range messages {
@@ -33,11 +35,11 @@ func LatestHumanFacingMessage(messages []BrokerMessage) *BrokerMessage {
 	return nil
 }
 
-// CountUniqueAgents counts distinct non-system / non-user senders in
-// messages: "you" (the human), "nex" (automation), kind=="automation"
+// CountUniqueBots counts distinct non-system / non-user senders in
+// messages: "you" (the human), the legacy "nex" automation slug, kind=="automation"
 // rows, and any blank/whitespace-only senders are excluded from the
-// tally so unset From values don't read as a phantom agent.
-func CountUniqueAgents(messages []BrokerMessage) int {
+// tally so unset From values don't read as a phantom bot.
+func CountUniqueBots(messages []BrokerMessage) int {
 	seen := make(map[string]bool)
 	for _, m := range messages {
 		if IsHumanSender(m.From) || m.From == "nex" || m.Kind == "automation" {

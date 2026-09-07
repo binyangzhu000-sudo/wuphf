@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -44,6 +45,7 @@ func DisableRealTaskWorktreeForTests() {
 			"(it mutates package-level worktree dispatch vars with no restore path)")
 	}
 	allowRealTaskWorktree.Store(false)
+	computerRuntimeAllowed.Store(false)
 	skipBrokerStateLoadOnConstruct = true
 	prep := prepareTaskWorktreeFn(func(taskID string) (string, string, error) {
 		path, branch := stubTaskWorktreePath(taskID)
@@ -209,4 +211,100 @@ func setKillHeadlessTaskRunnerProcessForTest(t *testing.T, fn killHeadlessTaskRu
 	t.Cleanup(func() {
 		killHeadlessTaskRunnerProcessOverride.Store(prior)
 	})
+}
+
+// SeedLegacyRoomForTest gives a broker a channel literally named "general".
+//
+// Cross-package version of the in-package fixture helper, for teammcp and any
+// other package whose tests need a room to post into. Those tests are not
+// about #general -- they exercise tool surfaces, message scoping, and task
+// plumbing, and they simply need somewhere for a bot to speak.
+//
+// The FIXTURE provides the room; PRODUCTION does not. This bypasses the create
+// gate deliberately, and the seed paths that would mint #general in a real
+// workspace stay gated behind generalChannelEnabled and are covered by their
+// own tests. A test that cares whether #general EXISTS must not call this.
+func SeedLegacyRoomForTest(b *Broker) {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.findChannelLocked(GeneralChannelSlug) != nil {
+		return
+	}
+	members := make([]string, 0, len(b.members)+1)
+	members = append(members, "human")
+	for _, m := range b.members {
+		members = append(members, m.Slug)
+	}
+	b.channels = append(b.channels, teamChannel{
+		Slug:        GeneralChannelSlug,
+		Name:        GeneralChannelSlug,
+		Type:        "channel",
+		Description: "Legacy room provided by the test fixture only",
+		Members:     members,
+	})
+}
+
+// SeedBridgedRoomForTest gives a broker a BRIDGED room that several bots
+// share — the shape of a Slack or Telegram channel wired into the office.
+//
+// Cross-package callers (teammcp) have routing tests — which channel does a
+// broadcast default to, which room does a task action report in — that need a
+// room holding more than two participants. Two other candidates do not work,
+// and both failures are the product behaving correctly:
+//
+//   - A DM has exactly two members by definition, so the CEO tagging a
+//     specialist inside another bot's DM is refused. That is the privacy
+//     model, not a broken fixture.
+//   - A plain named room can be seeded, but GET /channels WITHHOLDS ordinary
+//     named rooms while the retirement switch is off, so it is invisible to
+//     the bot-side channel inference these tests drive. The room would exist
+//     and the routing would still resolve elsewhere.
+//
+// A bridged room is the multi-participant surface that survives the
+// retirement, and it survives deliberately: it is how external messages
+// arrive, so hiding it would strand every message that came in through it.
+// Routing between bots in a shared room is exactly what still has to work
+// there, which makes it the honest fixture rather than a way around the gate.
+func SeedBridgedRoomForTest(b *Broker, slug string, members ...string) {
+	if b == nil {
+		return
+	}
+	slug = normalizeChannelSlug(slug)
+	if slug == "" {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.findChannelLocked(slug) != nil {
+		return
+	}
+	b.channels = append(b.channels, teamChannel{
+		Slug:        slug,
+		Name:        slug,
+		Type:        "channel",
+		Description: "Bridged room provided by the test fixture only",
+		Members:     uniqueSlugs(append([]string{"human", "cos"}, members...)),
+		Surface:     &channelSurface{Provider: "slack", RemoteID: "C" + strings.ToUpper(slug), RemoteTitle: slug},
+	})
+	b.rebuildChannelIndexLocked()
+}
+
+// HasChannelForTest reports whether the broker holds a channel with this slug.
+//
+// Cross-package existence check, for teammcp and anyone else asserting that a
+// refused create really created nothing. It exists because GET /channels is no
+// longer a usable proxy for that: with named channels retired the listing
+// WITHHOLDS ordinary named rooms, so "the room is not in the response" is true
+// whether or not it was created, and a test built on the listing would pass
+// through the exact bug it guards. This reads the roster of rooms directly.
+func HasChannelForTest(b *Broker, slug string) bool {
+	if b == nil {
+		return false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.findChannelLocked(slug) != nil
 }

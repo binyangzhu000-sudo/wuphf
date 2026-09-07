@@ -1,7 +1,7 @@
 /**
  * StepMeet — wizard step 01, "Meet WUPHF."
  *
- * Sets the metaphor: WUPHF is an office, and a team of agents lives in it. The
+ * Sets the metaphor: gawkbot is an office, and a team of bots lives in it. The
  * visual is a mock office coming online, so the first thing the user sees is
  * their (mock) office coming to life.
  *
@@ -20,8 +20,8 @@
  * dormant unless a PostHog project key is configured.
  *
  * The stage visual is a rendered Remotion clip (web/public/media/onboarding/
- * meet-office.gif): a "wuphf · office" window where the founding team comes
- * online one agent at a time, each with a presence dot. It is a self-contained
+ * meet-office.gif): a "gawkbot · office" window where the founding team comes
+ * online one bot at a time, each with a presence dot. It is a self-contained
  * product window, so it reads correctly on every onboarding page theme.
  *
  * Reuses the office-tour split + copy primitives so the wizard reads as one
@@ -129,7 +129,7 @@ export function StepMeet({
                 type="button"
                 className="onboarding-meet-chip"
                 onClick={() => setOfficeName(example)}
-                aria-label={`Use ${example} as the office name`}
+                aria-label={`Use ${example} as the team name`}
                 data-testid={`onboarding-office-name-chip-${example}`}
               >
                 {example}
@@ -188,7 +188,7 @@ export function StepMeet({
             src="/media/onboarding/meet-office.gif"
             width={868}
             height={620}
-            alt="WUPHF agents spinning up one by one: a CRM Auditor that runs your CRM hygiene sweep end to end, a Lead Router that routes every inbound lead, and a Pipeline Digest that briefs you every Monday, each flipping to Running as it arrives."
+            alt="A gawkbot office coming online: the Chief of Staff who runs the team, @revops who keeps the CRM clean, and @analyst who watches the funnel, each turning to an online presence as they arrive."
             loading="lazy"
             decoding="async"
           />

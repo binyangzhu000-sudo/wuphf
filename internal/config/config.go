@@ -25,7 +25,7 @@ import (
 // user-global; intentionally NOT under WUPHF_RUNTIME_HOME — this is the
 // definition of RuntimeHomeDir itself; os.UserHomeDir() is the fallback only.
 func RuntimeHomeDir() string {
-	if v := strings.TrimSpace(os.Getenv("WUPHF_RUNTIME_HOME")); v != "" {
+	if v := strings.TrimSpace(Getenv("WUPHF_RUNTIME_HOME")); v != "" {
 		return v
 	}
 	home, err := os.UserHomeDir()
@@ -37,7 +37,6 @@ func RuntimeHomeDir() string {
 
 // Config mirrors ~/.wuphf/config.json.
 type Config struct {
-	APIKey         string `json:"api_key,omitempty"`
 	MemoryBackend  string `json:"memory_backend,omitempty"`
 	OneAPIKey      string `json:"one_api_key,omitempty"`
 	ComposioAPIKey string `json:"composio_api_key,omitempty"`
@@ -50,24 +49,27 @@ type Config struct {
 	ComposioUserAPIKey string `json:"composio_user_api_key,omitempty"`
 	ComposioOrgID      string `json:"composio_org_id,omitempty"`
 	ComposioProjectID  string `json:"composio_project_id,omitempty"`
-	ActionProvider     string `json:"action_provider,omitempty"`
-	Email              string `json:"email,omitempty"`
-	WorkspaceID        string `json:"workspace_id,omitempty"`
-	WorkspaceSlug      string `json:"workspace_slug,omitempty"`
-	LLMProvider        string `json:"llm_provider,omitempty"`
+	// BoxAPIKey is the ascii.dev Box key that rents a bot its cloud
+	// computer. Resolved through ResolveBoxAPIKey (env wins).
+	BoxAPIKey      string `json:"box_api_key,omitempty"`
+	ActionProvider string `json:"action_provider,omitempty"`
+	Email          string `json:"email,omitempty"`
+	WorkspaceID    string `json:"workspace_id,omitempty"`
+	WorkspaceSlug  string `json:"workspace_slug,omitempty"`
+	LLMProvider    string `json:"llm_provider,omitempty"`
 	// LLMProviderPriority is an ordered list of provider identifiers (same
-	// vocabulary as LLMProvider — "claude-code", "codex", "opencode", etc.) that agents
+	// vocabulary as LLMProvider — "claude-code", "codex", "opencode", etc.) that bots
 	// should try in order when picking a runtime. LLMProvider remains the
-	// single-value primary choice; the priority list is consulted by agent
+	// single-value primary choice; the priority list is consulted by bot
 	// creation and fallback flows. An empty slice means "fall back to
 	// LLMProvider alone", preserving legacy behavior.
 	LLMProviderPriority []string `json:"llm_provider_priority,omitempty"`
 	GeminiAPIKey        string   `json:"gemini_api_key,omitempty"`
 	AnthropicAPIKey     string   `json:"anthropic_api_key,omitempty"`
 	OpenAIAPIKey        string   `json:"openai_api_key,omitempty"`
-	// RealtimeModel is the OpenAI Realtime model used by the "Demo workflow to
-	// Nex" voice call (speech-to-speech + screen vision). Empty falls back to
-	// the compiled default in ResolveRealtimeModel.
+	// RealtimeModel is the OpenAI Realtime model used by the demo voice call
+	// (speech-to-speech + screen vision). Empty falls back to the compiled
+	// default in ResolveRealtimeModel.
 	RealtimeModel string `json:"realtime_model,omitempty"`
 	MinimaxAPIKey string `json:"minimax_api_key,omitempty"`
 	Blueprint     string `json:"blueprint,omitempty"`
@@ -139,12 +141,11 @@ type ImageEndpoint struct {
 
 const (
 	MemoryBackendNone     = "none"
-	MemoryBackendNex      = "nex"
 	MemoryBackendGBrain   = "gbrain"
 	MemoryBackendMarkdown = "markdown"
 )
 
-// OpenclawBridgeBinding binds a WUPHF agent session to an OpenClaw bridge slug.
+// OpenclawBridgeBinding binds a WUPHF bot session to an OpenClaw bridge slug.
 type OpenclawBridgeBinding struct {
 	SessionKey  string `json:"session_key"`
 	Slug        string `json:"slug"`
@@ -173,47 +174,38 @@ func ConfigPath() string {
 	// Env override for test harnesses that need to isolate config state from
 	// the user's real ~/.wuphf/config.json without remapping HOME (which
 	// breaks macOS keychain-backed CLI auth).
-	if p := strings.TrimSpace(os.Getenv("WUPHF_CONFIG_PATH")); p != "" {
+	if p := strings.TrimSpace(Getenv("WUPHF_CONFIG_PATH")); p != "" {
 		return p
 	}
 	home := RuntimeHomeDir()
 	if home == "" {
-		return filepath.Join(".wuphf", "config.json")
+		return filepath.Join(RuntimeDirName, "config.json")
 	}
-	newPath := filepath.Join(home, ".wuphf", "config.json")
-	legacyPath := filepath.Join(home, ".nex", "config.json")
+	newDir := RuntimeDir(home)
+	legacyDirs := legacyRuntimeDirs(home)
+	newPath := filepath.Join(newDir, "config.json")
 	if _, err := os.Stat(newPath); err == nil {
 		return newPath
 	}
-	if _, err := os.Stat(legacyPath); err == nil {
-		return legacyPath
+	// A bare read-fallback to the legacy path was a trap: Save() writes through
+	// this function, so returning the old path here kept pre-rename installs
+	// writing into the old directory forever, and callers that derive sibling
+	// directories from filepath.Dir(ConfigPath()) kept their data there too.
+	// Copy the tree forward once instead, then use the new location. If the
+	// copy cannot be done we fall back to the legacy path so the user is never
+	// locked out of their own config.
+	//
+	// legacyDirs is the whole rename history, newest first, so adding the next
+	// name to LegacyRuntimeDirNames is all a future rename has to do here.
+	if migrateLegacyConfigDirOnce(newDir, legacyDirs...) {
+		return newPath
+	}
+	for _, legacyDir := range legacyDirs {
+		if _, err := os.Stat(filepath.Join(legacyDir, "config.json")); err == nil {
+			return filepath.Join(legacyDir, "config.json")
+		}
 	}
 	return newPath
-}
-
-// BaseURL returns the resolved base URL.
-// Priority: WUPHF_DEV_URL env > NEX_DEV_URL env > config dev_url > production default.
-//
-// Note: as of the nex-cli migration, BaseURL is only used by the legacy
-// developer API client surface (api.Client) which still backs the workflow
-// engine's /v1/insights and /v1/context/ask calls. New Nex integrations
-// should shell out via the internal/nex package instead.
-func BaseURL() string {
-	if v := os.Getenv("WUPHF_DEV_URL"); v != "" {
-		return v
-	}
-	if v := os.Getenv("NEX_DEV_URL"); v != "" {
-		return v
-	}
-	if cfg, err := load(ConfigPath()); err == nil && cfg.DevURL != "" {
-		return cfg.DevURL
-	}
-	return "https://app.nex.ai"
-}
-
-// APIBase returns the developer API base URL.
-func APIBase() string {
-	return fmt.Sprintf("%s/api/developers", BaseURL())
 }
 
 // Load reads the config file. Returns an empty config if the file is missing or unreadable.
@@ -250,22 +242,16 @@ func Save(cfg Config) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
-// ResolveNoNex reports whether Nex-backed tools are disabled for this run.
-func ResolveNoNex() bool {
-	v := strings.TrimSpace(os.Getenv("WUPHF_NO_NEX"))
-	if v == "" {
-		return false
-	}
-	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
-}
-
 // NormalizeMemoryBackend returns a supported memory backend or the empty string.
+//
+// The retired "nex" backend normalizes to the empty string like any other
+// unrecognized value, so a `memory_backend: "nex"` left in an existing
+// config.json falls through to the implicit default (gbrain when ready, else
+// markdown) instead of erroring or stranding the user with no backend.
 func NormalizeMemoryBackend(value string) string {
 	switch strings.TrimSpace(strings.ToLower(value)) {
 	case MemoryBackendNone:
 		return MemoryBackendNone
-	case MemoryBackendNex:
-		return MemoryBackendNex
 	case MemoryBackendGBrain:
 		return MemoryBackendGBrain
 	case MemoryBackendMarkdown:
@@ -289,12 +275,13 @@ func NormalizeMemoryBackend(value string) string {
 //     fallback keeps a fresh OSS clone with no embedder booting with a
 //     zero-config, git-native wiki at ~/.wuphf/wiki.
 //
-// After selection, `--no-nex` forces a `nex` selection to `none` (it disables
-// the Nex backend itself) but never blocks gbrain or markdown.
+// A retired backend name persisted in an old config file (notably the removed
+// "nex" backend) normalizes away in step 3 and lands on the step-4 default, so
+// an existing install keeps a working memory backend across the removal.
 func ResolveMemoryBackend(flagValue string) string {
 	backend := NormalizeMemoryBackend(flagValue)
 	if backend == "" {
-		backend = NormalizeMemoryBackend(os.Getenv("WUPHF_MEMORY_BACKEND"))
+		backend = NormalizeMemoryBackend(Getenv("WUPHF_MEMORY_BACKEND"))
 	}
 	if backend == "" {
 		cfg, _ := Load()
@@ -305,9 +292,6 @@ func ResolveMemoryBackend(flagValue string) string {
 			return MemoryBackendGBrain
 		}
 		return MemoryBackendMarkdown
-	}
-	if backend == MemoryBackendNex && ResolveNoNex() {
-		return MemoryBackendNone
 	}
 	return backend
 }
@@ -333,7 +317,7 @@ func gbrainBinaryInstalled() bool {
 	// no PATH fallback. The explicit command usually re-homes the brain, and
 	// substituting the user-global binary would point the implicit default at
 	// the wrong (possibly locked) brain.
-	if cmd := strings.TrimSpace(os.Getenv("WUPHF_GBRAIN_COMMAND")); cmd != "" {
+	if cmd := strings.TrimSpace(Getenv("WUPHF_GBRAIN_COMMAND")); cmd != "" {
 		_, err := exec.LookPath(cmd)
 		return err == nil
 	}
@@ -392,8 +376,6 @@ func detectGBrainOllamaEmbedder() bool {
 // MemoryBackendLabel returns a short user-facing label for the backend.
 func MemoryBackendLabel(backend string) string {
 	switch NormalizeMemoryBackend(backend) {
-	case MemoryBackendNex:
-		return "Nex"
 	case MemoryBackendGBrain:
 		return "GBrain"
 	case MemoryBackendMarkdown:
@@ -410,7 +392,7 @@ func ResolveLLMProvider(flagValue string) string {
 	if v := normalizeLLMProvider(flagValue); v != "" {
 		return v
 	}
-	if v := normalizeLLMProvider(os.Getenv("WUPHF_LLM_PROVIDER")); v != "" {
+	if v := normalizeLLMProvider(Getenv("WUPHF_LLM_PROVIDER")); v != "" {
 		return v
 	}
 	cfg, _ := Load()
@@ -501,7 +483,7 @@ var codexModelLinePattern = regexp.MustCompile(`(?m)^\s*model\s*=\s*("([^"\\]|\\
 // directory, following the documented Codex config layering:
 // WUPHF_CODEX_MODEL/CODEX_MODEL env > nearest .codex/config.toml > ~/.codex/config.toml.
 func ResolveCodexModel(cwd string) string {
-	if v := strings.TrimSpace(os.Getenv("WUPHF_CODEX_MODEL")); v != "" {
+	if v := strings.TrimSpace(Getenv("WUPHF_CODEX_MODEL")); v != "" {
 		return v
 	}
 	if v := strings.TrimSpace(os.Getenv("CODEX_MODEL")); v != "" {
@@ -576,7 +558,7 @@ func codexModelFromFile(path string) string {
 // file layout WUPHF needs to inspect — users configure their Opencode
 // ~/.config/opencode settings directly, so there is no cwd-relative search.
 func ResolveOpencodeModel() string {
-	if v := strings.TrimSpace(os.Getenv("WUPHF_OPENCODE_MODEL")); v != "" {
+	if v := strings.TrimSpace(Getenv("WUPHF_OPENCODE_MODEL")); v != "" {
 		return v
 	}
 	if v := strings.TrimSpace(os.Getenv("OPENCODE_MODEL")); v != "" {
@@ -585,32 +567,10 @@ func ResolveOpencodeModel() string {
 	return ""
 }
 
-// ResolveAPIKey resolves the API key via: flag > WUPHF_API_KEY env > NEX_API_KEY env > config file.
-func ResolveAPIKey(flagValue string) string {
-	if ResolveNoNex() {
-		return ""
-	}
-	if flagValue != "" {
-		return flagValue
-	}
-	if v := os.Getenv("WUPHF_API_KEY"); v != "" {
-		return v
-	}
-	if v := os.Getenv("NEX_API_KEY"); v != "" {
-		return v
-	}
-	cfg, _ := Load()
-	return cfg.APIKey
-}
-
-// ResolveOneSecret resolves the Nex-managed One secret.
-// One is disabled entirely when Nex is disabled for the session.
+// ResolveOneSecret resolves the One API secret.
 // Resolution: WUPHF_ONE_SECRET env > ONE_SECRET env > config file.
 func ResolveOneSecret() string {
-	if ResolveNoNex() {
-		return ""
-	}
-	if v := strings.TrimSpace(os.Getenv("WUPHF_ONE_SECRET")); v != "" {
+	if v := strings.TrimSpace(Getenv("WUPHF_ONE_SECRET")); v != "" {
 		return v
 	}
 	if v := strings.TrimSpace(os.Getenv("ONE_SECRET")); v != "" {
@@ -623,10 +583,7 @@ func ResolveOneSecret() string {
 // ResolveOneIdentity resolves the identity scope WUPHF should use with One.
 // Resolution: WUPHF_ONE_IDENTITY env > ONE_IDENTITY env > config email.
 func ResolveOneIdentity() string {
-	if ResolveNoNex() {
-		return ""
-	}
-	if v := strings.TrimSpace(os.Getenv("WUPHF_ONE_IDENTITY")); v != "" {
+	if v := strings.TrimSpace(Getenv("WUPHF_ONE_IDENTITY")); v != "" {
 		return v
 	}
 	if v := strings.TrimSpace(os.Getenv("ONE_IDENTITY")); v != "" {
@@ -639,10 +596,7 @@ func ResolveOneIdentity() string {
 // ResolveOneIdentityType resolves the One identity type.
 // Resolution: WUPHF_ONE_IDENTITY_TYPE env > ONE_IDENTITY_TYPE env > "user".
 func ResolveOneIdentityType() string {
-	if ResolveNoNex() {
-		return ""
-	}
-	if v := strings.TrimSpace(os.Getenv("WUPHF_ONE_IDENTITY_TYPE")); v != "" {
+	if v := strings.TrimSpace(Getenv("WUPHF_ONE_IDENTITY_TYPE")); v != "" {
 		return v
 	}
 	if v := strings.TrimSpace(os.Getenv("ONE_IDENTITY_TYPE")); v != "" {
@@ -656,42 +610,33 @@ func ResolveOneIdentityType() string {
 
 // OneSetupSummary explains how integrations are handled for the current setup.
 func OneSetupSummary() string {
-	if ResolveNoNex() {
-		return "disabled with Nex (--no-nex)"
-	}
 	email := ResolveOneIdentity()
 	secret := ResolveOneSecret()
 	switch {
 	case email != "" && secret != "":
-		return fmt.Sprintf("managed by Nex via One (%s)", email)
+		return fmt.Sprintf("handled by One (%s)", email)
 	case email != "":
-		return fmt.Sprintf("managed by Nex via One (%s), provisioning pending", email)
+		return fmt.Sprintf("handled by One (%s), credential pending", email)
 	case secret != "":
-		return "managed by Nex via One"
+		return "handled by One"
 	default:
-		return "managed by Nex via One after Nex setup"
+		return "handled by One once ONE_SECRET is set"
 	}
 }
 
 // OneSetupBlurb is the user-facing copy for setup and config surfaces.
 func OneSetupBlurb() string {
-	if ResolveNoNex() {
-		return "Nex is disabled for this session, so WUPHF-managed integrations are disabled too."
-	}
 	email := ResolveOneIdentity()
 	if email != "" {
-		return fmt.Sprintf("WUPHF uses One for integrations and manages it automatically with your Nex email (%s).", email)
+		return fmt.Sprintf("WUPHF uses One for integrations, scoped to %s.", email)
 	}
-	return "WUPHF uses One for integrations and will manage it automatically once Nex setup is complete."
+	return "WUPHF uses One for integrations. Set ONE_SECRET and ONE_IDENTITY to enable it."
 }
 
 // ResolveComposioAPIKey resolves the Composio API key.
 // Resolution: WUPHF_COMPOSIO_API_KEY env > COMPOSIO_API_KEY env > config file.
 func ResolveComposioAPIKey() string {
-	if ResolveNoNex() {
-		return ""
-	}
-	if v := strings.TrimSpace(os.Getenv("WUPHF_COMPOSIO_API_KEY")); v != "" {
+	if v := strings.TrimSpace(Getenv("WUPHF_COMPOSIO_API_KEY")); v != "" {
 		return v
 	}
 	if v := strings.TrimSpace(os.Getenv("COMPOSIO_API_KEY")); v != "" {
@@ -704,10 +649,7 @@ func ResolveComposioAPIKey() string {
 // ResolveComposioUserAPIKey resolves the user-scoped Composio session key
 // (`uak_…`). Resolution: WUPHF_COMPOSIO_USER_API_KEY env > config file.
 func ResolveComposioUserAPIKey() string {
-	if ResolveNoNex() {
-		return ""
-	}
-	if v := strings.TrimSpace(os.Getenv("WUPHF_COMPOSIO_USER_API_KEY")); v != "" {
+	if v := strings.TrimSpace(Getenv("WUPHF_COMPOSIO_USER_API_KEY")); v != "" {
 		return v
 	}
 	cfg, _ := Load()
@@ -716,10 +658,7 @@ func ResolveComposioUserAPIKey() string {
 
 // ResolveComposioOrgID resolves the Composio org id used with the user key.
 func ResolveComposioOrgID() string {
-	if ResolveNoNex() {
-		return ""
-	}
-	if v := strings.TrimSpace(os.Getenv("WUPHF_COMPOSIO_ORG_ID")); v != "" {
+	if v := strings.TrimSpace(Getenv("WUPHF_COMPOSIO_ORG_ID")); v != "" {
 		return v
 	}
 	cfg, _ := Load()
@@ -729,14 +668,24 @@ func ResolveComposioOrgID() string {
 // ResolveComposioProjectID resolves the Composio project id used with the user
 // key. Optional: the SDK falls back to the org's default project when absent.
 func ResolveComposioProjectID() string {
-	if ResolveNoNex() {
-		return ""
-	}
-	if v := strings.TrimSpace(os.Getenv("WUPHF_COMPOSIO_PROJECT_ID")); v != "" {
+	if v := strings.TrimSpace(Getenv("WUPHF_COMPOSIO_PROJECT_ID")); v != "" {
 		return v
 	}
 	cfg, _ := Load()
 	return strings.TrimSpace(cfg.ComposioProjectID)
+}
+
+// ResolveBoxAPIKey resolves the ascii.dev Box API key.
+// Resolution: WUPHF_BOX_API_KEY env > BOX_API_KEY env > config file.
+func ResolveBoxAPIKey() string {
+	if v := strings.TrimSpace(Getenv("WUPHF_BOX_API_KEY")); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(os.Getenv("BOX_API_KEY")); v != "" {
+		return v
+	}
+	cfg, _ := Load()
+	return strings.TrimSpace(cfg.BoxAPIKey)
 }
 
 // IsComposioConfigured reports whether Composio has usable credentials: either
@@ -771,7 +720,7 @@ func (c Config) IsAnalyticsSessionRecordingEnabled() bool {
 // (which is also empty in a stock OSS build, keeping analytics dormant).
 // Resolution: WUPHF_POSTHOG_KEY env > POSTHOG_KEY env.
 func ResolvePostHogKey() string {
-	if v := strings.TrimSpace(os.Getenv("WUPHF_POSTHOG_KEY")); v != "" {
+	if v := strings.TrimSpace(Getenv("WUPHF_POSTHOG_KEY")); v != "" {
 		return v
 	}
 	return strings.TrimSpace(os.Getenv("POSTHOG_KEY"))
@@ -781,7 +730,7 @@ func ResolvePostHogKey() string {
 // let the frontend use its build-time default (us.i.posthog.com).
 // Resolution: WUPHF_POSTHOG_HOST env > POSTHOG_HOST env.
 func ResolvePostHogHost() string {
-	if v := strings.TrimSpace(os.Getenv("WUPHF_POSTHOG_HOST")); v != "" {
+	if v := strings.TrimSpace(Getenv("WUPHF_POSTHOG_HOST")); v != "" {
 		return v
 	}
 	return strings.TrimSpace(os.Getenv("POSTHOG_HOST"))
@@ -789,7 +738,7 @@ func ResolvePostHogHost() string {
 
 // ResolveTelegramBotToken returns the stored Telegram bot token from config.
 func ResolveTelegramBotToken() string {
-	if v := strings.TrimSpace(os.Getenv("WUPHF_TELEGRAM_BOT_TOKEN")); v != "" {
+	if v := strings.TrimSpace(Getenv("WUPHF_TELEGRAM_BOT_TOKEN")); v != "" {
 		return v
 	}
 	cfg, _ := Load()
@@ -845,7 +794,7 @@ func SaveSlackTokens(botToken, appToken string) error {
 	return nil
 }
 
-// CompanyContextBlock returns a prompt fragment with company context for agent
+// CompanyContextBlock returns a prompt fragment with company context for bot
 // system prompts. Returns empty string if no relevant fields are configured.
 func CompanyContextBlock() string {
 	cfg, _ := Load()
@@ -886,7 +835,7 @@ func CompanyContextBlock() string {
 // ResolveGeminiAPIKey resolves the Gemini API key.
 // Resolution: WUPHF_GEMINI_API_KEY env > GEMINI_API_KEY env > config file.
 func ResolveGeminiAPIKey() string {
-	if v := strings.TrimSpace(os.Getenv("WUPHF_GEMINI_API_KEY")); v != "" {
+	if v := strings.TrimSpace(Getenv("WUPHF_GEMINI_API_KEY")); v != "" {
 		return v
 	}
 	if v := strings.TrimSpace(os.Getenv("GEMINI_API_KEY")); v != "" {
@@ -899,7 +848,7 @@ func ResolveGeminiAPIKey() string {
 // ResolveAnthropicAPIKey resolves the Anthropic API key.
 // Resolution: WUPHF_ANTHROPIC_API_KEY env > ANTHROPIC_API_KEY env > config file.
 func ResolveAnthropicAPIKey() string {
-	if v := strings.TrimSpace(os.Getenv("WUPHF_ANTHROPIC_API_KEY")); v != "" {
+	if v := strings.TrimSpace(Getenv("WUPHF_ANTHROPIC_API_KEY")); v != "" {
 		return v
 	}
 	if v := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")); v != "" {
@@ -912,7 +861,7 @@ func ResolveAnthropicAPIKey() string {
 // ResolveOpenAIAPIKey resolves the OpenAI API key.
 // Resolution: WUPHF_OPENAI_API_KEY env > OPENAI_API_KEY env > config file.
 func ResolveOpenAIAPIKey() string {
-	if v := strings.TrimSpace(os.Getenv("WUPHF_OPENAI_API_KEY")); v != "" {
+	if v := strings.TrimSpace(Getenv("WUPHF_OPENAI_API_KEY")); v != "" {
 		return v
 	}
 	if v := strings.TrimSpace(os.Getenv("OPENAI_API_KEY")); v != "" {
@@ -930,7 +879,7 @@ const DefaultRealtimeModel = "gpt-realtime-2"
 // ResolveRealtimeModel resolves the OpenAI Realtime model for the demo call.
 // Resolution: WUPHF_REALTIME_MODEL env > config file > DefaultRealtimeModel.
 func ResolveRealtimeModel() string {
-	if v := strings.TrimSpace(os.Getenv("WUPHF_REALTIME_MODEL")); v != "" {
+	if v := strings.TrimSpace(Getenv("WUPHF_REALTIME_MODEL")); v != "" {
 		return v
 	}
 	if cfg, _ := Load(); strings.TrimSpace(cfg.RealtimeModel) != "" {
@@ -942,7 +891,7 @@ func ResolveRealtimeModel() string {
 // ResolveMinimaxAPIKey resolves the Minimax API key.
 // Resolution: WUPHF_MINIMAX_API_KEY env > MINIMAX_API_KEY env > config file.
 func ResolveMinimaxAPIKey() string {
-	if v := strings.TrimSpace(os.Getenv("WUPHF_MINIMAX_API_KEY")); v != "" {
+	if v := strings.TrimSpace(Getenv("WUPHF_MINIMAX_API_KEY")); v != "" {
 		return v
 	}
 	if v := strings.TrimSpace(os.Getenv("MINIMAX_API_KEY")); v != "" {
@@ -962,10 +911,7 @@ func ResolveMinimaxAPIKey() string {
 // even though available integrations don't need a per-user identity. So a
 // signed-in office with no recorded email still falls back to a stable id.
 func ResolveComposioUserID() string {
-	if ResolveNoNex() {
-		return ""
-	}
-	if v := strings.TrimSpace(os.Getenv("WUPHF_COMPOSIO_USER_ID")); v != "" {
+	if v := strings.TrimSpace(Getenv("WUPHF_COMPOSIO_USER_ID")); v != "" {
 		return v
 	}
 	if v := strings.TrimSpace(os.Getenv("COMPOSIO_USER_ID")); v != "" {
@@ -983,7 +929,7 @@ func ResolveComposioUserID() string {
 // ResolveActionProvider resolves the preferred external action provider.
 // Resolution: WUPHF_ACTION_PROVIDER env > ACTION_PROVIDER env > config file > auto.
 func ResolveActionProvider() string {
-	if v := strings.TrimSpace(os.Getenv("WUPHF_ACTION_PROVIDER")); v != "" {
+	if v := strings.TrimSpace(Getenv("WUPHF_ACTION_PROVIDER")); v != "" {
 		return strings.ToLower(v)
 	}
 	if v := strings.TrimSpace(os.Getenv("ACTION_PROVIDER")); v != "" {
@@ -1022,33 +968,9 @@ func ResolveTimeout(flagValue string) int {
 	return 120_000
 }
 
-// PersistRegistration merges registration data into the config file.
-func PersistRegistration(data map[string]interface{}) error {
-	cfg, _ := Load()
-	if v, ok := data["api_key"].(string); ok && v != "" {
-		cfg.APIKey = v
-	}
-	if v, ok := data["email"].(string); ok && v != "" {
-		cfg.Email = v
-	}
-	if v, ok := data["workspace_id"].(string); ok && v != "" {
-		cfg.WorkspaceID = v
-	} else if v, ok := data["workspace_id"].(float64); ok {
-		cfg.WorkspaceID = strconv.FormatFloat(v, 'f', -1, 64)
-	}
-	if v, ok := data["workspace_slug"].(string); ok && v != "" {
-		cfg.WorkspaceSlug = v
-	}
-	return Save(cfg)
-}
-
 func ResolveInsightsPollInterval() int {
 	minutes := 30
-	if raw := os.Getenv("WUPHF_INSIGHTS_INTERVAL_MINUTES"); raw != "" {
-		if n, err := strconv.Atoi(raw); err == nil {
-			minutes = n
-		}
-	} else if raw := os.Getenv("NEX_INSIGHTS_INTERVAL_MINUTES"); raw != "" {
+	if raw := Getenv("WUPHF_INSIGHTS_INTERVAL_MINUTES"); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil {
 			minutes = n
 		}
@@ -1064,7 +986,6 @@ func ResolveInsightsPollInterval() int {
 func ResolveTaskFollowUpInterval() int {
 	return resolveTaskInterval(
 		"WUPHF_TASK_FOLLOWUP_MINUTES",
-		"NEX_TASK_FOLLOWUP_MINUTES",
 		func(cfg Config) int { return cfg.TaskFollowUpMinutes },
 		60,
 	)
@@ -1073,7 +994,6 @@ func ResolveTaskFollowUpInterval() int {
 func ResolveTaskReminderInterval() int {
 	return resolveTaskInterval(
 		"WUPHF_TASK_REMINDER_MINUTES",
-		"NEX_TASK_REMINDER_MINUTES",
 		func(cfg Config) int { return cfg.TaskReminderMinutes },
 		30,
 	)
@@ -1082,19 +1002,17 @@ func ResolveTaskReminderInterval() int {
 func ResolveTaskRecheckInterval() int {
 	return resolveTaskInterval(
 		"WUPHF_TASK_RECHECK_MINUTES",
-		"NEX_TASK_RECHECK_MINUTES",
 		func(cfg Config) int { return cfg.TaskRecheckMinutes },
 		15,
 	)
 }
 
-func resolveTaskInterval(envKey, legacyEnvKey string, fromConfig func(Config) int, defaultMinutes int) int {
+// resolveTaskInterval reads envKey through Getenv, which walks the prefix
+// generations itself, so a legacy-prefixed spelling of the same setting is
+// still honoured (and warns) without this function naming it.
+func resolveTaskInterval(envKey string, fromConfig func(Config) int, defaultMinutes int) int {
 	minutes := defaultMinutes
-	if raw := os.Getenv(envKey); raw != "" {
-		if n, err := strconv.Atoi(raw); err == nil {
-			minutes = n
-		}
-	} else if raw := os.Getenv(legacyEnvKey); raw != "" {
+	if raw := Getenv(envKey); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil {
 			minutes = n
 		}
@@ -1111,7 +1029,7 @@ func resolveTaskInterval(envKey, legacyEnvKey string, fromConfig func(Config) in
 // WUPHF_OPENCLAW_TOKEN wins for WUPHF-specific setup; OPENCLAW_GATEWAY_TOKEN is
 // accepted for compatibility with OpenClaw's own Gateway docs.
 func ResolveOpenclawToken() string {
-	if v := strings.TrimSpace(os.Getenv("WUPHF_OPENCLAW_TOKEN")); v != "" {
+	if v := strings.TrimSpace(Getenv("WUPHF_OPENCLAW_TOKEN")); v != "" {
 		return v
 	}
 	if v := strings.TrimSpace(os.Getenv("OPENCLAW_GATEWAY_TOKEN")); v != "" {
@@ -1123,7 +1041,7 @@ func ResolveOpenclawToken() string {
 
 // ResolveOpenclawGatewayURL returns the OpenClaw gateway URL from env > config > default loopback.
 func ResolveOpenclawGatewayURL() string {
-	if v := strings.TrimSpace(os.Getenv("WUPHF_OPENCLAW_GATEWAY_URL")); v != "" {
+	if v := strings.TrimSpace(Getenv("WUPHF_OPENCLAW_GATEWAY_URL")); v != "" {
 		return v
 	}
 	cfg, _ := Load()
@@ -1145,8 +1063,8 @@ func ResolveOpenclawGatewayURL() string {
 // helper never returns "" for a registered Kind.
 func ResolveProviderEndpoint(kind, defaultBaseURL, defaultModel string) (string, string) {
 	envKind := strings.ToUpper(strings.ReplaceAll(kind, "-", "_"))
-	baseURL := strings.TrimSpace(os.Getenv("WUPHF_" + envKind + "_BASE_URL"))
-	model := strings.TrimSpace(os.Getenv("WUPHF_" + envKind + "_MODEL"))
+	baseURL := strings.TrimSpace(Getenv("WUPHF_" + envKind + "_BASE_URL"))
+	model := strings.TrimSpace(Getenv("WUPHF_" + envKind + "_MODEL"))
 	if baseURL == "" || model == "" {
 		cfg, _ := Load()
 		if ep, ok := cfg.ProviderEndpoints[kind]; ok {
@@ -1176,7 +1094,7 @@ func ResolveProviderEndpoint(kind, defaultBaseURL, defaultModel string) (string,
 // is device-bound credentials, not workspace state. Per-workspace OpenClaw
 // identity is a separate feature decision deferred to post-v1.
 func ResolveOpenclawIdentityPath() string {
-	if v := strings.TrimSpace(os.Getenv("WUPHF_OPENCLAW_IDENTITY_PATH")); v != "" {
+	if v := strings.TrimSpace(Getenv("WUPHF_OPENCLAW_IDENTITY_PATH")); v != "" {
 		return v
 	}
 	home, err := os.UserHomeDir()

@@ -58,7 +58,7 @@ func evalJobPlatformHonesty(fx *officeEvalFixture, r *OfficeEvalReport) error {
 		Title:     "Research the launch plan",
 		Details:   "Long-running research task used to exercise the stall watchdog.",
 		Owner:     "eng",
-		CreatedBy: "ceo",
+		CreatedBy: "cos",
 		TaskType:  "issue",
 	})
 	if err != nil {
@@ -89,8 +89,8 @@ func evalJobPlatformHonesty(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	notes := fx.channelMessagesByKind(stalled.Channel, taskStalledMessageKind)
 	lineOK := len(notes) == 1 &&
 		strings.Contains(notes[0].Content, "@eng") &&
-		strings.Contains(notes[0].Content, "no visible activity") &&
-		strings.Contains(notes[0].Content, taskID)
+		strings.Contains(notes[0].Content, "gone quiet") &&
+		strings.Contains(notes[0].Content, stalled.Title)
 	detail := fmt.Sprintf("lines=%d", len(notes))
 	if len(notes) > 0 {
 		detail += " first=" + truncate(notes[0].Content, 120)
@@ -108,7 +108,7 @@ func evalJobPlatformHonesty(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	// Fresh observable trace (a ledger bump, as a real turn produces)
 	// clears the marker on the next sweep.
 	fx.broker.AppendTaskLedgerEntry(taskID, TaskLedgerEntry{
-		Agent:   "eng",
+		Bot:     "eng",
 		At:      stallNow.Add(2 * time.Minute).Format(time.RFC3339),
 		Outcome: "ok",
 		Said:    "back to work — drafting the plan now",

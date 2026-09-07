@@ -41,9 +41,11 @@ type workflowReader interface {
 // operatorAppWorkflowKey is the stable storage key for an app's frozen workflow.
 func operatorAppWorkflowKey(appID string) string {
 	base := strings.TrimPrefix(strings.TrimSpace(appID), "app_")
-	slug := normalizeChannelSlug(base)
-	if slug == "" {
-		slug = "app"
+	// Raw emptiness before normalising; same shape as broker_operator.go — an
+	// empty base became "general" rather than the intended "app" default.
+	slug := "app"
+	if strings.TrimSpace(base) != "" {
+		slug = normalizeChannelSlug(base)
 	}
 	return "operator-app-" + slug
 }
@@ -418,7 +420,14 @@ func (b *Broker) precompileAppWorkflowAsync(appID string) {
 			log.Printf("operator workflow: precompile for %s panicked: %v", appID, r)
 		}
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	// Parent on the broker lifecycle so Stop's cancel aborts the model call
+	// promptly — Stop waits for this goroutine (trackBackground), and a
+	// Background parent would hold shutdown for the full 90s on a hung call.
+	parent := b.lifecycleCtx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, 90*time.Second)
 	defer cancel()
 	if err := b.compileAndFreezeAppWorkflow(ctx, appID); err != nil {
 		log.Printf("operator workflow: precompile for %s skipped: %v", appID, err)
@@ -434,7 +443,7 @@ Rules:
 - integration is a lowercase platform slug (e.g. "gmail", "slack") ONLY for a step that calls that external system, else "".
 - gated is true for any step that SENDS or WRITES to an external system.
 - Use ONLY the data sources and integrations the app actually has (listed below). Do NOT invent capabilities.
-- kind "browser" — for a step that must use an external system the app has NO integration for: set integration to "" and put the exact goal in "detail". Nex drives the browser to do it. Set gated true if it sends/writes.
+- kind "browser" — for a step that must use an external system the app has NO integration for: set integration to "" and put the exact goal in "detail". The browser runner drives it. Set gated true if it sends/writes.
 - Tailor the steps to THIS app's specific purpose. Keep it tight: 3 to 7 steps.`
 
 // authoredAppWorkflowPlan asks the model to design a workflow for THIS app from

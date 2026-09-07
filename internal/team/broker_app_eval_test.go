@@ -172,7 +172,7 @@ func TestAppAcceptancePassPostsSummaryAndKeepsDone(t *testing.T) {
 	seedAcceptanceApp(t, "app_00000000000000bb", ch, 5000, "ready", 1)
 	b.tasks = append(b.tasks, teamTask{
 		ID: "OFFICE-9", Owner: appBuilderSlug, Channel: ch,
-		Title: "Build app: Digest", Details: "Build a standup digest grouped by agent.",
+		Title: "Build app: Digest", Details: "Build a standup digest grouped by bot.",
 		status: "done",
 	})
 	_ = time.Now
@@ -222,7 +222,7 @@ func TestAppAcceptanceJudgeTimeoutStillReopensUnpublished(t *testing.T) {
 
 // Regression: an app that PUBLISHED (ready/v1) but is still the unmodified
 // starter scaffold must be reopened deterministically — even if the judge
-// (wrongly) passes it — because the agent never built the requested tool.
+// (wrongly) passes it — because the bot never built the requested tool.
 func TestAppAcceptanceReopensUnmodifiedScaffold(t *testing.T) {
 	t.Setenv("WUPHF_RUNTIME_HOME", t.TempDir())
 	var judgeCalled bool
@@ -370,7 +370,7 @@ func TestSweepStalledAppBuildsReopensUnfinalized(t *testing.T) {
 			Title: "Build app: X", Details: "Build a real tool.",
 			status: "in_progress", StalledSince: "2026-06-26T00:00:00Z"},
 		// A non-App-Builder stalled task must be ignored by the sweep.
-		teamTask{ID: "OFFICE-21", Owner: "ceo", Channel: "task-other",
+		teamTask{ID: "OFFICE-21", Owner: "cos", Channel: "task-other",
 			status: "in_progress", StalledSince: "2026-06-26T00:00:00Z"},
 	)
 
@@ -428,5 +428,22 @@ func TestAppAcceptanceReopensWhenNoAppRegistered(t *testing.T) {
 	}
 	if countMessagesOfKind(b, ch, appAcceptanceFailKind) != 1 {
 		t.Fatalf("want 1 acceptance-fail notice, got %d", countMessagesOfKind(b, ch, appAcceptanceFailKind))
+	}
+}
+
+// The scaffold-source gap check only works if appScaffoldSentinel is a string
+// that actually appears in the current starter App.tsx — otherwise it silently
+// matches nothing (the 2026-08-17 build-pipeline audit found exactly this drift:
+// the sentinel referenced a comment that no longer existed). Guard against it
+// recurring: the sentinel MUST be present in the live scaffold.
+func TestScaffoldSentinelMatchesTemplate(t *testing.T) {
+	// The test binary runs from the package dir; the scaffold lives at repo root.
+	path := filepath.Join("..", "..", "templates", "app-scaffold", "src", "App.tsx")
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read scaffold App.tsx: %v", err)
+	}
+	if !strings.Contains(string(src), appScaffoldSentinel) {
+		t.Fatalf("appScaffoldSentinel %q is not present in the current scaffold %s — the scaffold-source gap check is a silent no-op; update the sentinel", appScaffoldSentinel, path)
 	}
 }

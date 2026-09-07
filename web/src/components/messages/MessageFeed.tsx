@@ -39,12 +39,70 @@ export function messagesAfterClearMarker(
   return messages.slice(markerIndex + 1);
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Existing cognitive complexity is baselined for a focused follow-up refactor.
-export function MessageFeed({ channel }: { channel?: string } = {}) {
+/**
+ * MessageFeed — the channel's live message stream.
+ *
+ * The channel is resolved here and NOWHERE ELSE in this subtree, because the
+ * resolution used to be `channel ?? routeChannel ?? "general"` and that is two
+ * bugs in one expression:
+ *
+ *   - `??` is NULLISH, so an empty STRING passed straight through and was
+ *     queried as a channel slug.
+ *   - the `"general"` tail invented a conversation home for a task that has
+ *     none, pointing the feed at the room the one-room removal retires.
+ *
+ * Now: a real emptiness check, and no fallback. With no channel there is no
+ * conversation to show, so the feed says so rather than showing someone
+ * else's. Resolution happens in this outer component, which calls exactly one
+ * hook before branching, so the inner feed below is only ever mounted with a
+ * genuinely non-empty channel and never fires a query for one.
+ */
+export function MessageFeed({
+  channel,
+  readOnly,
+}: {
+  channel?: string;
+  readOnly?: boolean;
+} = {}) {
   // Prefer an explicit channel (the task-detail chat passes the task's channel,
   // where useChannelSlug() is null). Fall back to the channel route slug.
   const routeChannel = useChannelSlug();
-  const currentChannel = channel ?? routeChannel ?? "general";
+  const currentChannel = channel?.trim() || routeChannel?.trim() || "";
+
+  if (!currentChannel) {
+    return (
+      <div className="messages" data-testid="messages-no-channel">
+        <div className="channel-empty-state">
+          <span className="title">No conversation here yet</span>
+          <span className="body">
+            This task has no conversation home. Assign an owner and the
+            conversation starts in their DM.
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <ChannelMessageFeed channel={currentChannel} readOnly={readOnly ?? false} />
+  );
+}
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Existing cognitive complexity is baselined for a focused follow-up refactor.
+function ChannelMessageFeed({
+  channel,
+  readOnly,
+}: {
+  channel: string;
+  /** Viewing a conversation you are not in (a consult opened from a relay
+   *  marker). Suppresses reactions — a reaction is a mark left ON someone
+   *  else's conversation, so it is participation even though it is not
+   *  speech. Reading and navigating stay available. */
+  readOnly: boolean;
+}) {
+  // Non-empty by construction — MessageFeed above is the only caller and
+  // guards it, so nothing here has to re-check.
+  const currentChannel = channel;
   const clearMarkerId = useAppStore(
     (s) => s.clearedMessageIdsByChannel[currentChannel] ?? null,
   );
@@ -61,15 +119,31 @@ export function MessageFeed({ channel }: { channel?: string } = {}) {
   };
 
   const { data: rawMessages = [], isLoading } = useMessages(currentChannel);
-  const messages = useMemo(
-    () => messagesAfterClearMarker(rawMessages, clearMarkerId),
-    [rawMessages, clearMarkerId],
-  );
+  const messages = useMemo(() => {
+    const visible = messagesAfterClearMarker(rawMessages, clearMarkerId);
+    if (!readOnly) return visible;
+    // Read-only: drop reactions from the DATA rather than hiding the pills
+    // with CSS. The pill IS the toggle — there is no separate add-reaction
+    // control — so a `display: none` would leave a keyboard-reachable button
+    // that posts a reaction into a conversation the viewer is only permitted
+    // to read. Removing the data removes the control with it.
+    return visible.map((m) =>
+      m.reactions ? { ...m, reactions: undefined } : m,
+    );
+  }, [rawMessages, clearMarkerId, readOnly]);
 
   // Auto-scroll when new messages arrive
   useEffect(() => {
     if (messages.length > prevLengthRef.current && containerRef.current) {
+      // Scroll the newest message into view rather than setting scrollTop
+      // on this container: on the agent-detail chat the overflow lives on
+      // an ancestor, so scrollTop here was a no-op and the human had to
+      // scroll to their own just-sent message (human eval, 2026-09-03).
       containerRef.current.scrollTop = containerRef.current.scrollHeight;
+      const last = containerRef.current.lastElementChild;
+      if (last instanceof HTMLElement) {
+        last.scrollIntoView({ block: "end" });
+      }
     }
     prevLengthRef.current = messages.length;
   }, [messages.length]);
@@ -94,15 +168,14 @@ export function MessageFeed({ channel }: { channel?: string } = {}) {
           <span className="title">#{currentChannel} is empty. For now.</span>
           <span className="body">
             This is where your agents will argue, claim tasks, and show
-            progress. Unlike Ryan Howard, they actually ship.
+            progress. They notice things you did not ask them to notice.
           </span>
           <div className="channel-empty-hints">
             <div>
-              Try <code>@ceo what should we build this week?</code>
+              Try <code>@cos what should we build this week?</code>
             </div>
             <div>
-              Type <code>/</code> for commands, <code>@</code> to mention an
-              agent.
+              Type <code>/</code> for commands, <code>@</code> to mention a bot.
             </div>
           </div>
           <span className="channel-empty-foot">

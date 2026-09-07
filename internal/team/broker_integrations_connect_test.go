@@ -15,6 +15,10 @@ import (
 // (drives OAuth) or Skip (abandons the action). This is the user's "block on a
 // typed Connect decision" call, so it must register as a human decision.
 func TestConnectDecisionKindDefaults(t *testing.T) {
+	t.Setenv("COMPOSIO_API_KEY", "")
+	t.Setenv("COMPOSIO_USER_ID", "")
+	t.Setenv("COMPOSIO_INSTALL_DIR", "")
+	t.Setenv("COMPOSIO_CACHE_DIR", "")
 	options, recommended := requestOptionDefaults("connect")
 	if recommended != "connect" {
 		t.Fatalf("recommended option = %q, want connect", recommended)
@@ -59,6 +63,10 @@ func activeCardsWithDedupe(b *Broker, kind, dedupeKey string) []humanInterview {
 // did it by hand) or skip. One CLI is product-removed, so this is the only
 // fallback for a platform with no Composio path.
 func TestFallbackDecisionKindDefaults(t *testing.T) {
+	t.Setenv("COMPOSIO_API_KEY", "")
+	t.Setenv("COMPOSIO_USER_ID", "")
+	t.Setenv("COMPOSIO_INSTALL_DIR", "")
+	t.Setenv("COMPOSIO_CACHE_DIR", "")
 	options, recommended := requestOptionDefaults("fallback")
 	if recommended != "mark_done" {
 		t.Fatalf("recommended option = %q, want mark_done", recommended)
@@ -77,10 +85,19 @@ func TestFallbackDecisionKindDefaults(t *testing.T) {
 // itself is covered by the action resolver unit tests.)
 func TestEnsureFallbackRequestDedupesPerAction(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	b := NewBrokerAt(filepath.Join(t.TempDir(), "state.json"))
+	// Hermetic: these tests assert the UNCONFIGURED catalog, so they must not
+	// inherit a composio credential from the developer's environment or from
+	// another test's t.Setenv window. Observed failing in the full-package run
+	// while passing in isolation, with gmail reported "connected" -- the
+	// signature of ambient config leaking in.
+	t.Setenv("COMPOSIO_API_KEY", "")
+	t.Setenv("COMPOSIO_USER_ID", "")
+	t.Setenv("COMPOSIO_INSTALL_DIR", "")
+	t.Setenv("COMPOSIO_CACHE_DIR", "")
+	b := newBrokerWithTeamRoom(filepath.Join(t.TempDir(), "state.json"))
 
-	id1 := b.ensureFallbackRequest("notion", "NOTION_CREATE_PAGE", "general", "ceo", "Notion", "", "Create the launch page")
-	id1b := b.ensureFallbackRequest("notion", "NOTION_CREATE_PAGE", "general", "ceo", "Notion", "", "Create the launch page")
+	id1 := b.ensureFallbackRequest("notion", "NOTION_CREATE_PAGE", "team", "cos", "Notion", "", "Create the launch page")
+	id1b := b.ensureFallbackRequest("notion", "NOTION_CREATE_PAGE", "team", "cos", "Notion", "", "Create the launch page")
 	if id1 == "" || id1 != id1b {
 		t.Fatalf("same (platform, action) must dedupe: id1=%q id1b=%q", id1, id1b)
 	}
@@ -88,7 +105,7 @@ func TestEnsureFallbackRequestDedupesPerAction(t *testing.T) {
 		t.Fatalf("expected one handoff card for the repeated action, got %d", got)
 	}
 
-	id2 := b.ensureFallbackRequest("notion", "NOTION_APPEND_BLOCK", "general", "ceo", "Notion", "", "Append a block")
+	id2 := b.ensureFallbackRequest("notion", "NOTION_APPEND_BLOCK", "team", "cos", "Notion", "", "Append a block")
 	if id2 == id1 {
 		t.Fatalf("a different action type must raise its own card, got %q for both", id2)
 	}
@@ -111,6 +128,15 @@ func TestEnsureFallbackRequestDedupesPerAction(t *testing.T) {
 // onto the same card (workspace-wide) rather than stacking duplicates.
 func TestResolveRaisesAndDedupesConnectCard(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	// Hermetic: these tests assert the UNCONFIGURED catalog, so they must not
+	// inherit a composio credential from the developer's environment or from
+	// another test's t.Setenv window. Observed failing in the full-package run
+	// while passing in isolation, with gmail reported "connected" -- the
+	// signature of ambient config leaking in.
+	t.Setenv("COMPOSIO_API_KEY", "")
+	t.Setenv("COMPOSIO_USER_ID", "")
+	t.Setenv("COMPOSIO_INSTALL_DIR", "")
+	t.Setenv("COMPOSIO_CACHE_DIR", "")
 	// Force Composio unconfigured so the resolver classifies a mutating action as
 	// connect deterministically, with no network.
 	t.Setenv("WUPHF_COMPOSIO_API_KEY", "")
@@ -118,7 +144,7 @@ func TestResolveRaisesAndDedupesConnectCard(t *testing.T) {
 	t.Setenv("WUPHF_COMPOSIO_USER_ID", "")
 	t.Setenv("COMPOSIO_USER_ID", "")
 
-	b := NewBrokerAt(filepath.Join(t.TempDir(), "state.json"))
+	b := newBrokerWithTeamRoom(filepath.Join(t.TempDir(), "state.json"))
 	srv := newIntegrationsTestServer(t, b)
 	defer srv.Close()
 
@@ -126,8 +152,8 @@ func TestResolveRaisesAndDedupesConnectCard(t *testing.T) {
 		body, _ := json.Marshal(integrationResolveRequest{
 			Platform: "gmail",
 			ActionID: "GMAIL_SEND_EMAIL",
-			Agent:    "ceo",
-			Channel:  "general",
+			Bot:      "cos",
+			Channel:  "team",
 			Data:     map[string]any{"to": "lead@acme.com"},
 		})
 		return decodeResolve(t, integrationRequest(t, srv, b, http.MethodPost, "/integrations/resolve", body))
@@ -169,9 +195,18 @@ func TestResolveRaisesAndDedupesConnectCard(t *testing.T) {
 // action resumes with zero re-asking. It must be idempotent across repeat polls.
 func TestFanOutConnectedResolvesParkedCard(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	b := NewBrokerAt(filepath.Join(t.TempDir(), "state.json"))
+	// Hermetic: these tests assert the UNCONFIGURED catalog, so they must not
+	// inherit a composio credential from the developer's environment or from
+	// another test's t.Setenv window. Observed failing in the full-package run
+	// while passing in isolation, with gmail reported "connected" -- the
+	// signature of ambient config leaking in.
+	t.Setenv("COMPOSIO_API_KEY", "")
+	t.Setenv("COMPOSIO_USER_ID", "")
+	t.Setenv("COMPOSIO_INSTALL_DIR", "")
+	t.Setenv("COMPOSIO_CACHE_DIR", "")
+	b := newBrokerWithTeamRoom(filepath.Join(t.TempDir(), "state.json"))
 
-	reqID := b.ensureConnectRequest("gmail", "general", "ceo", "Gmail", "")
+	reqID := b.ensureConnectRequest("gmail", "team", "cos", "Gmail", "")
 	if reqID == "" {
 		t.Fatalf("ensureConnectRequest returned no id")
 	}
@@ -217,9 +252,18 @@ func TestFanOutConnectedResolvesParkedCard(t *testing.T) {
 // backstop.)
 func TestExpireStaleConnectCard(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	b := NewBrokerAt(filepath.Join(t.TempDir(), "state.json"))
+	// Hermetic: these tests assert the UNCONFIGURED catalog, so they must not
+	// inherit a composio credential from the developer's environment or from
+	// another test's t.Setenv window. Observed failing in the full-package run
+	// while passing in isolation, with gmail reported "connected" -- the
+	// signature of ambient config leaking in.
+	t.Setenv("COMPOSIO_API_KEY", "")
+	t.Setenv("COMPOSIO_USER_ID", "")
+	t.Setenv("COMPOSIO_INSTALL_DIR", "")
+	t.Setenv("COMPOSIO_CACHE_DIR", "")
+	b := newBrokerWithTeamRoom(filepath.Join(t.TempDir(), "state.json"))
 
-	id := b.ensureConnectRequest("gmail", "general", "ceo", "Gmail", "")
+	id := b.ensureConnectRequest("gmail", "team", "cos", "Gmail", "")
 	if id == "" {
 		t.Fatalf("ensureConnectRequest returned no id")
 	}
@@ -273,7 +317,7 @@ func TestConnectStatusFanOutEndToEnd(t *testing.T) {
 	t.Setenv("HOME", tmp)
 	t.Setenv("WUPHF_RUNTIME_HOME", tmp)
 	t.Setenv("WUPHF_COMPOSIO_API_KEY", "cmp_test")
-	t.Setenv("WUPHF_COMPOSIO_USER_ID", "ceo@example.com")
+	t.Setenv("WUPHF_COMPOSIO_USER_ID", "cos@example.com")
 
 	composioMux := http.NewServeMux()
 	composioMux.HandleFunc("/connected_accounts/ca_123", func(w http.ResponseWriter, _ *http.Request) {
@@ -285,13 +329,13 @@ func TestConnectStatusFanOutEndToEnd(t *testing.T) {
 	defer composioServer.Close()
 	t.Setenv("WUPHF_COMPOSIO_BASE_URL", composioServer.URL)
 
-	b := NewBrokerAt(filepath.Join(t.TempDir(), "state.json"))
+	b := newBrokerWithTeamRoom(filepath.Join(t.TempDir(), "state.json"))
 	srv := newIntegrationsTestServer(t, b)
 	defer srv.Close()
 
 	// Park a Connect card directly (the resolve path that raises it is covered
 	// separately; here we exercise the connect-status -> fan-out wiring).
-	reqID := b.ensureConnectRequest("gmail", "general", "ceo", "Gmail", "")
+	reqID := b.ensureConnectRequest("gmail", "team", "cos", "Gmail", "")
 	if got := len(activeConnectCards(b, "gmail")); got != 1 {
 		t.Fatalf("expected a parked connect card, got %d", got)
 	}

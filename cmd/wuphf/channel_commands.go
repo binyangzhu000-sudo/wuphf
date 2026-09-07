@@ -8,7 +8,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/nex-crm/wuphf/cmd/wuphf/channelui"
-	"github.com/nex-crm/wuphf/internal/config"
 	"github.com/nex-crm/wuphf/internal/team"
 	"github.com/nex-crm/wuphf/internal/tui"
 	"github.com/nex-crm/wuphf/internal/workspace"
@@ -31,7 +30,7 @@ func (m *channelModel) maybeActivateChannelPickerFromInput() bool {
 	case "/switch ", "/s ":
 		options := m.buildSwitchChannelPickerOptions()
 		if len(options) == 0 {
-			m.notice = "No channels yet. Even Michael Scott had a #general. Create one."
+			m.notice = "No channels yet. Create one and give the team somewhere to look."
 			return false
 		}
 		m.input = nil
@@ -123,12 +122,12 @@ func (m channelModel) runCommand(trimmed, threadTarget string) (tea.Model, tea.C
 		return m, nil
 	case strings.HasPrefix(trimmed, "/1o1 "):
 		clearCurrent()
-		agent := strings.TrimSpace(strings.TrimPrefix(trimmed, "/1o1"))
-		if agent == "" {
-			agent = team.DefaultOneOnOneAgent
+		bot := strings.TrimSpace(strings.TrimPrefix(trimmed, "/1o1"))
+		if bot == "" {
+			bot = team.DefaultOneOnOneBot
 		}
 		m.posting = true
-		return m, switchSessionMode(team.SessionModeOneOnOne, agent)
+		return m, switchSessionMode(team.SessionModeOneOnOne, bot)
 	case trimmed == "/messages" || trimmed == "/general":
 		clearCurrent()
 		m.activeApp = channelui.OfficeAppMessages
@@ -147,7 +146,7 @@ func (m channelModel) runCommand(trimmed, threadTarget string) (tea.Model, tea.C
 		}
 		m.activeApp = channelui.OfficeAppInbox
 		m.syncSidebarCursorToActive()
-		m.notice = "Viewing the selected agent inbox."
+		m.notice = "Viewing the selected bot inbox."
 		return m, nil
 	case trimmed == "/outbox":
 		clearCurrent()
@@ -157,7 +156,7 @@ func (m channelModel) runCommand(trimmed, threadTarget string) (tea.Model, tea.C
 		}
 		m.activeApp = channelui.OfficeAppOutbox
 		m.syncSidebarCursorToActive()
-		m.notice = "Viewing the selected agent outbox."
+		m.notice = "Viewing the selected bot outbox."
 		return m, nil
 	case trimmed == "/recover" || trimmed == "/resume":
 		clearCurrent()
@@ -166,7 +165,7 @@ func (m channelModel) runCommand(trimmed, threadTarget string) (tea.Model, tea.C
 		if m.isOneOnOne() {
 			m.notice = "Viewing the direct-session recovery summary."
 		} else {
-			m.notice = "Viewing the office recovery summary."
+			m.notice = "Viewing the team recovery summary."
 		}
 		return m, m.pollCurrentState()
 	case trimmed == "/rewind":
@@ -185,7 +184,7 @@ func (m channelModel) runCommand(trimmed, threadTarget string) (tea.Model, tea.C
 		clearCurrent()
 		options := m.buildInsertPickerOptions()
 		if len(options) == 0 {
-			m.notice = "Nothing to insert. Creed hasn't updated the archives yet."
+			m.notice = "Nothing to insert yet. Nobody has seen anything worth quoting."
 			return m, nil
 		}
 		m.picker = tui.NewPicker("Insert Reference", options)
@@ -197,7 +196,7 @@ func (m channelModel) runCommand(trimmed, threadTarget string) (tea.Model, tea.C
 		clearCurrent()
 		options := m.buildSearchPickerOptions()
 		if len(options) == 0 {
-			m.notice = "Nothing searchable yet. Creed is still organizing the filing system."
+			m.notice = "Nothing searchable yet. Nobody has noticed anything."
 			return m, nil
 		}
 		m.picker = tui.NewPicker("Search Workspace", options)
@@ -240,11 +239,11 @@ func (m channelModel) runCommand(trimmed, threadTarget string) (tea.Model, tea.C
 		}
 	case trimmed == "/collab":
 		clearCurrent()
-		m.notice = "Collaborative mode: all agents see all messages — open floor plan, Michael Scott style."
+		m.notice = "Collaborative mode: every bot sees every message in this room."
 		return m, switchFocusMode(false)
 	case trimmed == "/focus":
 		clearCurrent()
-		m.notice = "Delegation mode: CEO routes, specialists execute. This is how a real office works."
+		m.notice = "Delegation mode: Chief of Staff routes, specialists execute. This is how a real office works."
 		return m, switchFocusMode(true)
 	case trimmed == "/reset":
 		clearCurrent()
@@ -253,55 +252,42 @@ func (m channelModel) runCommand(trimmed, threadTarget string) (tea.Model, tea.C
 		return m, nil
 	case trimmed == "/reset-dm" || strings.HasPrefix(trimmed, "/reset-dm "):
 		clearCurrent()
-		agent := ""
+		bot := ""
 		if strings.HasPrefix(trimmed, "/reset-dm ") {
-			agent = strings.TrimSpace(strings.TrimPrefix(trimmed, "/reset-dm "))
-			agent = strings.TrimPrefix(agent, "@")
+			bot = strings.TrimSpace(strings.TrimPrefix(trimmed, "/reset-dm "))
+			bot = strings.TrimPrefix(bot, "@")
 		}
 		if m.isOneOnOne() {
-			agent = m.oneOnOneAgentSlug()
+			bot = m.oneOnOneBotSlug()
 		}
-		if agent == "" {
-			m.notice = "Usage: /reset-dm <agent> or use in 1:1 mode"
+		if bot == "" {
+			m.notice = "Usage: /reset-dm <bot> or use in 1:1 mode"
 			return m, nil
 		}
-		m.confirm = channelui.ConfirmationForResetDM(agent, m.activeChannel)
+		m.confirm = channelui.ConfirmationForResetDM(bot, m.activeChannel)
 		m.notice = "Confirm clearing the direct transcript."
 		return m, nil
 	case trimmed == "/dm":
 		clearCurrent()
-		m.notice = "Usage: /dm <agent-slug>"
+		m.notice = "Usage: /dm <bot-slug>"
 		return m, nil
 	case strings.HasPrefix(trimmed, "/dm "):
 		clearCurrent()
 		slug := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(trimmed, "/dm ")))
 		slug = strings.TrimPrefix(slug, "@")
 		if slug == "" {
-			m.notice = "Usage: /dm <agent-slug>"
+			m.notice = "Usage: /dm <bot-slug>"
 			return m, nil
 		}
 		m.notice = fmt.Sprintf("Opening DM with %s…", slug)
 		return m, createDMChannel(slug)
 	case trimmed == "/integrate":
 		clearCurrent()
-		memoryStatus := team.ResolveMemoryBackendStatus()
-		if memoryStatus.SelectedKind != config.MemoryBackendNex {
-			m.notice = "Managed integrations are Nex-only right now. Select the Nex memory backend to use /integrate."
-			return m, nil
-		}
-		if config.ResolveNoNex() {
-			m.notice = "Nex is disabled (--no-nex), so managed integrations are unavailable for this run."
-			return m, nil
-		}
-		if config.ResolveAPIKey("") == "" {
-			m.notice = "No WUPHF API key configured. Run /init — Ryan Howard skipped this step. Don't be Ryan."
-			m.initFlow, _ = m.initFlow.Start()
-			return m, nil
-		}
-		m.picker = tui.NewPicker("Choose Integration", channelIntegrationOptions())
-		m.picker.SetActive(true)
-		m.pickerMode = channelPickerIntegrations
-		m.notice = "Choose an integration to connect. Ryan Howard would've connected them all to one site."
+		// Integrations are Composio-backed and connected from the web UI's
+		// Integrations app, which owns the OAuth handoff. There is no TUI
+		// equivalent, so point at the real surface rather than opening a
+		// picker that cannot finish the job.
+		m.notice = "Connect integrations from the Integrations app in the web UI."
 		return m, nil
 	case trimmed == "/doctor":
 		clearCurrent()
@@ -311,7 +297,7 @@ func (m channelModel) runCommand(trimmed, threadTarget string) (tea.Model, tea.C
 		clearCurrent()
 		m.picker = tui.NewPicker("Connect a channel", []tui.PickerOption{
 			{Label: "Telegram", Value: "telegram", Description: "Connect a Telegram group as a shared office channel"},
-			{Label: "OpenClaw", Value: "openclaw", Description: "Bridge an OpenClaw session into the office"},
+			{Label: "OpenClaw", Value: "openclaw", Description: "Bridge an OpenClaw session onto the team"},
 			{Label: "Slack (coming soon)", Value: "slack", Description: "Connect a Slack workspace channel"},
 			{Label: "Discord (coming soon)", Value: "discord", Description: "Connect a Discord server channel"},
 		})
@@ -329,7 +315,7 @@ func (m channelModel) runCommand(trimmed, threadTarget string) (tea.Model, tea.C
 		clearCurrent()
 		options := m.buildSwitchChannelPickerOptions()
 		if len(options) == 0 {
-			m.notice = "No channels yet. Even Michael Scott had a #general. Create one."
+			m.notice = "No channels yet. Create one and give the team somewhere to look."
 			return m, nil
 		}
 		m.picker = tui.NewPicker("Switch Channel", options)
@@ -353,7 +339,7 @@ func (m channelModel) runCommand(trimmed, threadTarget string) (tea.Model, tea.C
 		clearCurrent()
 		options := m.buildChannelPickerOptions()
 		if len(options) == 0 {
-			m.notice = "No channels yet. Even Michael Scott had a #general. Create one."
+			m.notice = "No channels yet. Create one and give the team somewhere to look."
 			return m, nil
 		}
 		m.picker = tui.NewPicker("Channels", options)
@@ -413,13 +399,13 @@ func (m channelModel) runCommand(trimmed, threadTarget string) (tea.Model, tea.C
 		clearCurrent()
 		m.activeApp = channelui.OfficeAppPolicies
 		m.syncSidebarCursorToActive()
-		m.notice = "Viewing Nex and office insights."
+		m.notice = "Viewing office insights."
 		return m, pollOfficeLedger()
 	case trimmed == "/calendar" || trimmed == "/queue":
 		clearCurrent()
 		m.activeApp = channelui.OfficeAppCalendar
 		m.syncSidebarCursorToActive()
-		m.notice = "Viewing the office calendar."
+		m.notice = "Viewing the team calendar."
 		return m, pollOfficeLedger()
 	case strings.HasPrefix(trimmed, "/calendar "):
 		clearCurrent()
@@ -427,7 +413,7 @@ func (m channelModel) runCommand(trimmed, threadTarget string) (tea.Model, tea.C
 		m.activeApp = channelui.OfficeAppCalendar
 		m.syncSidebarCursorToActive()
 		if len(parts) < 2 {
-			m.notice = "Usage: /calendar [day|week|all|@agent|agent]"
+			m.notice = "Usage: /calendar [day|week|all|@bot|bot]"
 			return m, nil
 		}
 		arg := strings.TrimSpace(parts[1])
@@ -445,19 +431,19 @@ func (m channelModel) runCommand(trimmed, threadTarget string) (tea.Model, tea.C
 			m.notice = "Showing all teammate calendars."
 			return m, pollOfficeLedger()
 		case arg == "filter":
-			options := m.buildCalendarAgentPickerOptions()
+			options := m.buildCalendarBotPickerOptions()
 			if len(options) == 0 {
 				m.notice = "No teammate filters available."
 				return m, nil
 			}
 			m.picker = tui.NewPicker("Filter Calendar", options)
 			m.picker.SetActive(true)
-			m.pickerMode = channelPickerCalendarAgent
+			m.pickerMode = channelPickerCalendarBot
 			return m, nil
 		default:
 			filter := strings.TrimPrefix(arg, "@")
 			if filter == "" {
-				m.notice = "Usage: /calendar [day|week|all|@agent|agent]"
+				m.notice = "Usage: /calendar [day|week|all|@bot|bot]"
 				return m, nil
 			}
 			m.calendarFilter = filter
@@ -527,26 +513,26 @@ func (m channelModel) runCommand(trimmed, threadTarget string) (tea.Model, tea.C
 		}
 	case trimmed == "/agents":
 		clearCurrent()
-		options := m.buildAgentPickerOptions()
+		options := m.buildBotPickerOptions()
 		if len(options) == 0 {
-			m.notice = "No agent actions available for this channel."
+			m.notice = "No bot actions available for this channel."
 			return m, nil
 		}
-		m.picker = tui.NewPicker("Agents in #"+m.activeChannel, options)
+		m.picker = tui.NewPicker("Bots in #"+m.activeChannel, options)
 		m.picker.SetActive(true)
-		m.pickerMode = channelPickerAgents
+		m.pickerMode = channelPickerBots
 		return m, nil
 	case strings.HasPrefix(trimmed, "/agent "):
 		clearCurrent()
 		parts := strings.Fields(trimmed)
 		if len(parts) < 2 {
-			m.notice = "Usage: /agent <add|remove|disable|enable> <slug>, /agent create, /agent edit <slug>, or /agent prompt <request>"
+			m.notice = "Usage: /bot <add|remove|disable|enable> <slug>, /bot create, /bot edit <slug>, or /bot prompt <request>"
 			return m, nil
 		}
 		if parts[1] == "prompt" {
 			prompt := strings.TrimSpace(strings.TrimPrefix(trimmed, "/agent prompt"))
 			if prompt == "" {
-				m.notice = "Usage: /agent prompt <describe the teammate you want>"
+				m.notice = "Usage: /bot prompt <describe the teammate you want>"
 				return m, nil
 			}
 			m.posting = true
@@ -561,7 +547,7 @@ func (m channelModel) runCommand(trimmed, threadTarget string) (tea.Model, tea.C
 				return m, nil
 			}
 			if len(parts) < 4 {
-				m.notice = "Usage: /agent create <slug> <Display Name>"
+				m.notice = "Usage: /bot create <slug> <Display Name>"
 				return m, nil
 			}
 			m.posting = true
@@ -574,7 +560,7 @@ func (m channelModel) runCommand(trimmed, threadTarget string) (tea.Model, tea.C
 		}
 		if parts[1] == "edit" {
 			if len(parts) < 3 {
-				m.notice = "Usage: /agent edit <slug>"
+				m.notice = "Usage: /bot edit <slug>"
 				return m, nil
 			}
 			draft, ok := m.startEditMemberDraft(parts[2])
@@ -590,14 +576,14 @@ func (m channelModel) runCommand(trimmed, threadTarget string) (tea.Model, tea.C
 		}
 		if parts[1] == "retire" {
 			if len(parts) < 3 {
-				m.notice = "Usage: /agent retire <slug>"
+				m.notice = "Usage: /bot retire <slug>"
 				return m, nil
 			}
 			m.posting = true
 			return m, mutateOfficeMember("remove", parts[2], "")
 		}
 		if len(parts) < 3 {
-			m.notice = "Usage: /agent <add|remove|disable|enable> <slug>, /agent create, /agent edit <slug>, or /agent prompt <request>"
+			m.notice = "Usage: /bot <add|remove|disable|enable> <slug>, /bot create, /bot edit <slug>, or /bot prompt <request>"
 			return m, nil
 		}
 		m.posting = true
@@ -626,7 +612,7 @@ func (m channelModel) runCommand(trimmed, threadTarget string) (tea.Model, tea.C
 			if m.focus == focusThread {
 				m.focus = focusMain
 			}
-			m.notice = "Reply mode cleared. Thread closed — cleaner than a Dwight negotiation."
+			m.notice = "Reply mode cleared. Thread closed. They are still watching the room."
 		} else if m.doctor != nil {
 			m.doctor = nil
 			m.notice = "Health check done. The doctor says ship it (not medical advice)."
@@ -635,7 +621,7 @@ func (m channelModel) runCommand(trimmed, threadTarget string) (tea.Model, tea.C
 			m.picker.SetActive(false)
 			m.notice = "Setup canceled. Come back when you're ready. That's what she said."
 		} else {
-			m.notice = "Nothing to cancel. Even Michael Scott knows when there's nothing to cancel."
+			m.notice = "Nothing to cancel. Nothing was happening."
 		}
 		return m, nil
 	case strings.HasPrefix(trimmed, "/reply"):
@@ -646,7 +632,7 @@ func (m channelModel) runCommand(trimmed, threadTarget string) (tea.Model, tea.C
 			return m, nil
 		}
 		if _, ok := channelui.FindMessageByID(m.messages, target); !ok {
-			m.notice = fmt.Sprintf("Message %s not found. Maybe Creed filed it.", target)
+			m.notice = fmt.Sprintf("Message %s not found. Nobody saw it.", target)
 			return m, nil
 		}
 		m.replyToID = target
@@ -675,7 +661,7 @@ func (m channelModel) runCommand(trimmed, threadTarget string) (tea.Model, tea.C
 			return m, nil
 		}
 		if _, ok := channelui.FindMessageByID(m.messages, target); !ok {
-			m.notice = fmt.Sprintf("Message %s not found. Maybe Creed filed it.", target)
+			m.notice = fmt.Sprintf("Message %s not found. Nobody saw it.", target)
 			return m, nil
 		}
 		m.expandedThreads[target] = true
@@ -694,7 +680,7 @@ func (m channelModel) runCommand(trimmed, threadTarget string) (tea.Model, tea.C
 			return m, nil
 		}
 		if _, ok := channelui.FindMessageByID(m.messages, target); !ok {
-			m.notice = fmt.Sprintf("Message %s not found. Maybe Creed filed it.", target)
+			m.notice = fmt.Sprintf("Message %s not found. Nobody saw it.", target)
 			return m, nil
 		}
 		delete(m.expandedThreads, target)

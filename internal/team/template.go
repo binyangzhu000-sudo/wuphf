@@ -17,8 +17,8 @@ type generatedMemberTemplate struct {
 	Role        string   `json:"role"`
 	Expertise   []string `json:"expertise"`
 	Personality string   `json:"personality"`
-	// Provider and Model are CEO suggestions for the agent's runtime. The
-	// AgentWizard pre-fills its picker from these when the suggested
+	// Provider and Model are CEO suggestions for the bot's runtime. The
+	// BotWizard pre-fills its picker from these when the suggested
 	// provider is in the install's registered LLM provider list (i.e. a
 	// non-gateway kind). When absent or a gateway kind, the wizard falls
 	// back to "Inherit default" — the human always gets the final pick
@@ -54,7 +54,7 @@ Required schema:
 }
 
 Constraints:
-- Never use slug "ceo".
+- Never use slug "cos".
 - Keep the teammate narrow and domain-specific.
 - Pick a role that complements the existing office rather than overlapping heavily.
 - If the prompt is vague, still make a crisp decision.
@@ -84,10 +84,18 @@ Constraints:
 func parseGeneratedMemberTemplate(raw string) (generatedMemberTemplate, error) {
 	var tmpl generatedMemberTemplate
 	if err := json.Unmarshal([]byte(raw), &tmpl); err != nil {
-		return generatedMemberTemplate{}, fmt.Errorf("parse generated agent template: %w", err)
+		return generatedMemberTemplate{}, fmt.Errorf("parse generated bot template: %w", err)
+	}
+	// A generated MEMBER slug: actor normaliser, and reject on the raw value.
+	// normalizeChannelSlug turned an empty generated slug into "general", so
+	// the `== ""` rejection never fired and a model that returned no slug
+	// minted a bot named after a channel. This one is PERSISTED once the
+	// template is accepted.
+	if strings.TrimSpace(tmpl.Slug) == "" {
+		return generatedMemberTemplate{}, fmt.Errorf("generated invalid slug %q", tmpl.Slug)
 	}
 	tmpl.Slug = normalizeChannelSlug(tmpl.Slug)
-	if tmpl.Slug == "" || tmpl.Slug == "ceo" {
+	if tmpl.Slug == "cos" {
 		return generatedMemberTemplate{}, fmt.Errorf("generated invalid slug %q", tmpl.Slug)
 	}
 	if tmpl.Name == "" {
@@ -103,7 +111,7 @@ func parseGeneratedMemberTemplate(raw string) (generatedMemberTemplate, error) {
 		tmpl.Personality = inferOfficePersonality(tmpl.Slug, tmpl.Role)
 	}
 	// Sanitize provider/model: drop suggestions that name a gateway kind so
-	// the wizard never has to handle them. Per-agent gateway bindings are
+	// the wizard never has to handle them. Per-bot gateway bindings are
 	// established through the Integrations app, not through the CEO
 	// template generator — the wizard's runtime picker only shows the
 	// non-gateway registered LLM kinds.
@@ -116,7 +124,7 @@ func parseGeneratedMemberTemplate(raw string) (generatedMemberTemplate, error) {
 	return tmpl, nil
 }
 
-// GenerateAgentFileFromContext authors a richer version of one prose
+// GenerateBotFileFromContext authors a richer version of one prose
 // instruction file (SOUL / OPERATIONS, or the office USER.md) for human review.
 // It NEVER commits — the caller hands the result to the editor so the human
 // approves it with a save. On any LLM failure it returns an error (the file
@@ -124,8 +132,8 @@ func parseGeneratedMemberTemplate(raw string) (generatedMemberTemplate, error) {
 //
 // Reuses the same one-shot provider call as member/channel generation. The
 // WUPHF_AGENT_FILE_STUB env var short-circuits the model for tests.
-func (l *Launcher) GenerateAgentFileFromContext(ctx context.Context, relPath, hint string) (string, error) {
-	if err := validateAgentFilePath(relPath); err != nil {
+func (l *Launcher) GenerateBotFileFromContext(ctx context.Context, relPath, hint string) (string, error) {
+	if err := validateBotFilePath(relPath); err != nil {
 		return "", err
 	}
 	relPath = strings.TrimSpace(relPath)
@@ -134,7 +142,7 @@ func (l *Launcher) GenerateAgentFileFromContext(ctx context.Context, relPath, hi
 	if relPath == officeUserFileRel {
 		name = "USER"
 	} else {
-		parts := strings.Split(relPath, "/") // agents/<slug>/<NAME>.md
+		parts := strings.Split(relPath, "/") // bots/<slug>/<NAME>.md
 		slug = parts[1]
 		name = strings.TrimSuffix(parts[2], ".md")
 	}
@@ -157,7 +165,7 @@ func (l *Launcher) GenerateAgentFileFromContext(ctx context.Context, relPath, hi
 	} else {
 		member := l.officeMemberBySlug(slug)
 		isLead := slug == leadSlug
-		fmt.Fprintf(&info, "Agent: @%s\n", slug)
+		fmt.Fprintf(&info, "Bot: @%s\n", slug)
 		if r := strings.TrimSpace(member.Role); r != "" {
 			fmt.Fprintf(&info, "Role: %s\n", r)
 		}
@@ -168,16 +176,16 @@ func (l *Launcher) GenerateAgentFileFromContext(ctx context.Context, relPath, hi
 			fmt.Fprintf(&info, "Persona: %s\n", p)
 		}
 		if isLead {
-			info.WriteString("This agent is the office lead: it coordinates and delegates rather than doing all the work itself.\n")
+			info.WriteString("This bot is the team lead: it coordinates and delegates rather than doing all the work itself.\n")
 		}
-		example = renderAgentFileContent(member, name, isLead)
+		example = renderBotFileContent(member, name, isLead)
 	}
 
 	systemPrompt := l.buildPrompt(leadSlug) + fmt.Sprintf(`
 
-You are authoring the %s.md instruction file for a WUPHF office agent. This
-file is loaded verbatim into the agent's system prompt, so write it as direct
-second-person instructions to that agent ("You ...").
+You are authoring the %s.md instruction file for a WUPHF office bot. This
+file is loaded verbatim into the bot's system prompt, so write it as direct
+second-person instructions to that bot ("You ...").
 
 Purpose of %s.md: %s
 
@@ -190,7 +198,7 @@ the content specific, vivid, and genuinely useful — not generic filler.
 ----- CURRENT VERSION -----
 %s
 ---------------------------
-`, name, name, agentFilePurpose(name), example)
+`, name, name, botFilePurpose(name), example)
 
 	var ub strings.Builder
 	ub.WriteString(info.String())
@@ -241,13 +249,13 @@ Required schema:
   "slug": "lowercase-hyphen-slug",
   "name": "Display Name",
   "description": "One sentence explaining the channel purpose",
-  "members": ["ceo", "relevant-member-slug"]
+  "members": ["cos", "relevant-member-slug"]
 }
 
 Constraints:
 - Never use slug "general".
 - Keep the channel focused on a specific topic or workstream.
-- Always include "ceo" in members.
+- Always include "cos" in members.
 - Pick members that match the channel topic from the existing office roster.
 - If the prompt is vague, still make a crisp decision.
 `
@@ -268,8 +276,17 @@ func parseGeneratedChannelTemplate(raw string) (generatedChannelTemplate, error)
 	if err := json.Unmarshal([]byte(raw), &tmpl); err != nil {
 		return generatedChannelTemplate{}, fmt.Errorf("parse generated channel template: %w", err)
 	}
+	// This one IS a channel slug, so normalizeChannelSlug is correct and stays.
+	// Only the emptiness test moves ahead of it. Behaviour is unchanged: an
+	// empty generated slug normalised to "general" and was already rejected by
+	// the second clause, so this is honest tidying rather than a bug fix — but
+	// it stops the rejection depending on a coincidence between the lobby
+	// fallback and the value this function happens to blacklist.
+	if strings.TrimSpace(tmpl.Slug) == "" {
+		return generatedChannelTemplate{}, fmt.Errorf("generated invalid slug %q", tmpl.Slug)
+	}
 	tmpl.Slug = normalizeChannelSlug(tmpl.Slug)
-	if tmpl.Slug == "" || tmpl.Slug == "general" {
+	if tmpl.Slug == GeneralChannelSlug {
 		return generatedChannelTemplate{}, fmt.Errorf("generated invalid slug %q", tmpl.Slug)
 	}
 	if tmpl.Name == "" {
@@ -280,13 +297,13 @@ func parseGeneratedChannelTemplate(raw string) (generatedChannelTemplate, error)
 	}
 	hasCEO := false
 	for _, m := range tmpl.Members {
-		if m == "ceo" {
+		if m == "cos" {
 			hasCEO = true
 			break
 		}
 	}
 	if !hasCEO {
-		tmpl.Members = append([]string{"ceo"}, tmpl.Members...)
+		tmpl.Members = append([]string{"cos"}, tmpl.Members...)
 	}
 	return tmpl, nil
 }

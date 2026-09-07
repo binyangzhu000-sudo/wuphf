@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nex-crm/wuphf/internal/agent"
+	"github.com/nex-crm/wuphf/internal/bot"
 )
 
 // (TestPostAutomationMessage_DedupesByEventID removed: the relocated
@@ -25,15 +25,15 @@ import (
 func TestPostMessage_SetsTimestampAndChannel(t *testing.T) {
 	b := newTestBroker(t)
 	b.mu.Lock()
-	b.members = append(b.members, officeMember{Slug: "ceo", Name: "CEO", Role: "lead"})
+	b.members = append(b.members, officeMember{Slug: "cos", Name: "CEO", Role: "lead"})
 	for i := range b.channels {
-		if b.channels[i].Slug == "general" {
-			b.channels[i].Members = append(b.channels[i].Members, "ceo")
+		if b.channels[i].Slug == "team" {
+			b.channels[i].Members = append(b.channels[i].Members, "cos")
 		}
 	}
 	b.mu.Unlock()
 
-	got, err := b.PostMessage("ceo", "general", "hello", nil, "")
+	got, err := b.PostMessage("cos", "team", "hello", nil, "")
 	if err != nil {
 		t.Fatalf("PostMessage: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestPostMessage_SetsTimestampAndChannel(t *testing.T) {
 	if got.Timestamp == "" {
 		t.Error("expected non-empty Timestamp")
 	}
-	if got.Channel != "general" {
+	if got.Channel != "team" {
 		t.Errorf("Channel: want general, got %q", got.Channel)
 	}
 	all := b.Messages()
@@ -56,7 +56,7 @@ func TestPostMessageAllowsRichArtifactReferenceMarkers(t *testing.T) {
 	b := newTestBroker(t)
 	content := "I made the visual review.\n\nvisual-artifact:ra_8e8ac69a85291409"
 
-	posted, err := b.PostMessage("ceo", "general", content, nil, "")
+	posted, err := b.PostMessage("cos", "team", content, nil, "")
 	if err != nil {
 		t.Fatalf("PostMessage: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestPostMessageAllowsRichArtifactReferenceMarkers(t *testing.T) {
 
 	for name, messages := range map[string][]channelMessage{
 		"Messages":        b.Messages(),
-		"ChannelMessages": b.ChannelMessages("general"),
+		"ChannelMessages": b.ChannelMessages("team"),
 		"AllMessages":     b.AllMessages(),
 	} {
 		if len(messages) == 0 {
@@ -87,7 +87,7 @@ func TestPostMessageAllowsRichArtifactReferenceMarkers(t *testing.T) {
 		}
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/messages?channel=general&viewer_slug=human&limit=10", nil)
+	req := httptest.NewRequest(http.MethodGet, "/messages?channel=team&viewer_slug=human&limit=10", nil)
 	rec := httptest.NewRecorder()
 	b.handleGetMessages(rec, req)
 	if rec.Code != http.StatusOK {
@@ -117,7 +117,7 @@ func TestPostMessageAllowsRichArtifactReferenceMarkers(t *testing.T) {
 // TestPostMessage_DoesNotAutoWriteNotebook is the regression guard for the
 // TestNormalizeMessageScope_KnownAndDefaults pins the normalizer
 // contract: "", "all", "channel", and any unknown value collapse to ""
-// (channel-wide). "agent", "inbox", "outbox" pass through (lower-cased,
+// (channel-wide). "bot", "inbox", "outbox" pass through (lower-cased,
 // trimmed). The handler dispatches on this output, so drift here would
 // silently change visibility semantics.
 func TestNormalizeMessageScope_KnownAndDefaults(t *testing.T) {
@@ -141,7 +141,7 @@ func TestNormalizeMessageScope_KnownAndDefaults(t *testing.T) {
 
 func TestFormatChannelViewIncludesThreadReference(t *testing.T) {
 	got := FormatChannelView([]channelMessage{
-		{ID: "msg-1", From: "ceo", Content: "Root topic", Timestamp: "2026-03-24T10:00:00Z"},
+		{ID: "msg-1", From: "cos", Content: "Root topic", Timestamp: "2026-03-24T10:00:00Z"},
 		{ID: "msg-2", From: "fe", Content: "Replying here", ReplyTo: "msg-1", Timestamp: "2026-03-24T10:01:00Z"},
 	})
 
@@ -172,7 +172,7 @@ func TestBrokerCanonicalizesLegacyDMSlugs(t *testing.T) {
 	}
 
 	resp := postJSON("/channels/dm", map[string]any{
-		"members": []string{"human", "ceo"},
+		"members": []string{"human", "cos"},
 		"type":    "direct",
 	})
 	defer resp.Body.Close()
@@ -186,7 +186,7 @@ func TestBrokerCanonicalizesLegacyDMSlugs(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
 		t.Fatalf("decode create dm: %v", err)
 	}
-	wantSlug := channelDirectSlug("human", "ceo")
+	wantSlug := channelDirectSlug("human", "cos")
 	if created.Slug != wantSlug {
 		t.Fatalf("expected canonical slug %q, got %q", wantSlug, created.Slug)
 	}
@@ -194,7 +194,7 @@ func TestBrokerCanonicalizesLegacyDMSlugs(t *testing.T) {
 	msgResp := postJSON("/messages", map[string]any{
 		"from":    "human",
 		"channel": "dm-human-ceo",
-		"content": "hello ceo",
+		"content": "hello cos",
 	})
 	defer msgResp.Body.Close()
 	if msgResp.StatusCode != http.StatusOK {
@@ -241,8 +241,8 @@ func TestBrokerMessageKindAndTitleRoundTrip(t *testing.T) {
 
 	base := fmt.Sprintf("http://%s", b.Addr())
 	body, _ := json.Marshal(map[string]any{
-		"from":    "ceo",
-		"channel": "general",
+		"from":    "cos",
+		"channel": "team",
 		"kind":    "human_report",
 		"title":   "Frontend ready for review",
 		"content": "The launch page skeleton is ready for you to review.",
@@ -260,7 +260,7 @@ func TestBrokerMessageKindAndTitleRoundTrip(t *testing.T) {
 		t.Fatalf("expected 200 posting message, got %d: %s", resp.StatusCode, raw)
 	}
 
-	req, _ = http.NewRequest(http.MethodGet, base+"/messages?channel=general", nil)
+	req, _ = http.NewRequest(http.MethodGet, base+"/messages?channel=team", nil)
 	req.Header.Set("Authorization", "Bearer "+b.Token())
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
@@ -296,20 +296,20 @@ func TestBrokerMessagesCanScopeToThread(t *testing.T) {
 	}
 	defer b.Stop()
 
-	root, err := b.PostMessage("ceo", "general", "Root topic", nil, "")
+	root, err := b.PostMessage("cos", "team", "Root topic", nil, "")
 	if err != nil {
 		t.Fatalf("post root: %v", err)
 	}
-	reply, err := b.PostMessage("ceo", "general", "Reply in thread", nil, root.ID)
+	reply, err := b.PostMessage("cos", "team", "Reply in thread", nil, root.ID)
 	if err != nil {
 		t.Fatalf("post reply: %v", err)
 	}
-	if _, err := b.PostMessage("you", "general", "Separate topic", nil, ""); err != nil {
+	if _, err := b.PostMessage("you", "team", "Separate topic", nil, ""); err != nil {
 		t.Fatalf("post unrelated: %v", err)
 	}
 
 	base := fmt.Sprintf("http://%s", b.Addr())
-	req, _ := http.NewRequest(http.MethodGet, base+"/messages?channel=general&thread_id="+root.ID, nil)
+	req, _ := http.NewRequest(http.MethodGet, base+"/messages?channel=team&thread_id="+root.ID, nil)
 	req.Header.Set("Authorization", "Bearer "+b.Token())
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -335,7 +335,7 @@ func TestBrokerMessagesCanScopeToThread(t *testing.T) {
 	}
 }
 
-func TestBrokerMessagesCanScopeToAgentInbox(t *testing.T) {
+func TestBrokerMessagesCanScopeToBotInbox(t *testing.T) {
 	b := newTestBroker(t)
 	b.mu.Lock()
 	b.members = append(b.members,
@@ -343,7 +343,7 @@ func TestBrokerMessagesCanScopeToAgentInbox(t *testing.T) {
 		officeMember{Slug: "fe", Name: "Frontend Engineer"},
 	)
 	for i := range b.channels {
-		if b.channels[i].Slug == "general" {
+		if b.channels[i].Slug == "team" {
 			b.channels[i].Members = append(b.channels[i].Members, "pm", "fe")
 			break
 		}
@@ -354,32 +354,32 @@ func TestBrokerMessagesCanScopeToAgentInbox(t *testing.T) {
 	}
 	defer b.Stop()
 
-	if _, err := b.PostMessage("you", "general", "Global direction", nil, ""); err != nil {
+	if _, err := b.PostMessage("you", "team", "Global direction", nil, ""); err != nil {
 		t.Fatalf("post human message: %v", err)
 	}
-	if _, err := b.PostMessage("pm", "general", "Unrelated PM update", nil, ""); err != nil {
+	if _, err := b.PostMessage("pm", "team", "Unrelated PM update", nil, ""); err != nil {
 		t.Fatalf("post unrelated message: %v", err)
 	}
-	tagged, err := b.PostMessage("ceo", "general", "Frontend, take this next.", []string{"fe"}, "")
+	tagged, err := b.PostMessage("cos", "team", "Frontend, take this next.", []string{"fe"}, "")
 	if err != nil {
 		t.Fatalf("post tagged message: %v", err)
 	}
-	own, err := b.PostMessage("fe", "general", "I am on it.", nil, "")
+	own, err := b.PostMessage("fe", "team", "I am on it.", nil, "")
 	if err != nil {
 		t.Fatalf("post own message: %v", err)
 	}
 
 	base := fmt.Sprintf("http://%s", b.Addr())
-	req, _ := http.NewRequest(http.MethodGet, base+"/messages?channel=general&my_slug=fe&viewer_slug=fe&scope=agent", nil)
+	req, _ := http.NewRequest(http.MethodGet, base+"/messages?channel=team&my_slug=fe&viewer_slug=fe&scope=agent", nil)
 	req.Header.Set("Authorization", "Bearer "+b.Token())
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("agent-scoped messages request failed: %v", err)
+		t.Fatalf("bot-scoped messages request failed: %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
-		t.Fatalf("expected 200 listing agent-scoped messages, got %d: %s", resp.StatusCode, raw)
+		t.Fatalf("expected 200 listing bot-scoped messages, got %d: %s", resp.StatusCode, raw)
 	}
 
 	var result struct {
@@ -387,7 +387,7 @@ func TestBrokerMessagesCanScopeToAgentInbox(t *testing.T) {
 		TaggedCount int              `json:"tagged_count"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		t.Fatalf("decode agent-scoped messages: %v", err)
+		t.Fatalf("decode bot-scoped messages: %v", err)
 	}
 	if len(result.Messages) != 3 {
 		t.Fatalf("expected human, tagged, and own messages only, got %+v", result.Messages)
@@ -399,7 +399,7 @@ func TestBrokerMessagesCanScopeToAgentInbox(t *testing.T) {
 	for _, msg := range result.Messages {
 		seen[msg.ID] = true
 		if strings.Contains(msg.Content, "Unrelated PM update") {
-			t.Fatalf("did not expect unrelated message in agent scope: %+v", result.Messages)
+			t.Fatalf("did not expect unrelated message in bot scope: %+v", result.Messages)
 		}
 	}
 	if !seen[tagged.ID] || !seen[own.ID] {
@@ -417,7 +417,7 @@ func TestHandleMessagesSupportsInboxAndOutboxScopes(t *testing.T) {
 		officeMember{Slug: "fe", Name: "Frontend Engineer"},
 	)
 	for i := range b.channels {
-		if b.channels[i].Slug == "general" {
+		if b.channels[i].Slug == "team" {
 			b.channels[i].Members = append(b.channels[i].Members, "pm", "fe")
 			break
 		}
@@ -428,29 +428,29 @@ func TestHandleMessagesSupportsInboxAndOutboxScopes(t *testing.T) {
 	}
 	defer b.Stop()
 
-	root, err := b.PostMessage("ceo", "general", "Frontend, take the signup thread.", nil, "")
+	root, err := b.PostMessage("cos", "team", "Frontend, take the signup thread.", nil, "")
 	if err != nil {
 		t.Fatalf("post root message: %v", err)
 	}
-	ownReply, err := b.PostMessage("fe", "general", "I can own the signup thread.", nil, root.ID)
+	ownReply, err := b.PostMessage("fe", "team", "I can own the signup thread.", nil, root.ID)
 	if err != nil {
 		t.Fatalf("post own reply: %v", err)
 	}
-	threadReply, err := b.PostMessage("pm", "general", "Please include the pricing copy in that thread.", nil, ownReply.ID)
+	threadReply, err := b.PostMessage("pm", "team", "Please include the pricing copy in that thread.", nil, ownReply.ID)
 	if err != nil {
 		t.Fatalf("post thread reply: %v", err)
 	}
-	ownTopLevel, err := b.PostMessage("fe", "general", "Shipped the initial branch.", nil, "")
+	ownTopLevel, err := b.PostMessage("fe", "team", "Shipped the initial branch.", nil, "")
 	if err != nil {
 		t.Fatalf("post own top-level message: %v", err)
 	}
-	if _, err := b.PostMessage("pm", "general", "Unrelated roadmap chatter.", nil, ""); err != nil {
+	if _, err := b.PostMessage("pm", "team", "Unrelated roadmap chatter.", nil, ""); err != nil {
 		t.Fatalf("post unrelated message: %v", err)
 	}
 
 	base := fmt.Sprintf("http://%s", b.Addr())
 	fetch := func(scope string) []channelMessage {
-		req, _ := http.NewRequest(http.MethodGet, base+"/messages?channel=general&viewer_slug=fe&scope="+scope, nil)
+		req, _ := http.NewRequest(http.MethodGet, base+"/messages?channel=team&viewer_slug=fe&scope="+scope, nil)
 		req.Header.Set("Authorization", "Bearer "+b.Token())
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -487,7 +487,7 @@ func TestHandleMessagesSupportsInboxAndOutboxScopes(t *testing.T) {
 	}
 }
 
-func TestBrokerGetMessagesAgentScopeKeepsHumanAndCEOContext(t *testing.T) {
+func TestBrokerGetMessagesBotScopeKeepsHumanAndCEOContext(t *testing.T) {
 	b := newTestBroker(t)
 	b.mu.Lock()
 	b.members = append(b.members,
@@ -495,7 +495,7 @@ func TestBrokerGetMessagesAgentScopeKeepsHumanAndCEOContext(t *testing.T) {
 		officeMember{Slug: "fe", Name: "Frontend Engineer"},
 	)
 	for i := range b.channels {
-		if b.channels[i].Slug == "general" {
+		if b.channels[i].Slug == "team" {
 			b.channels[i].Members = append(b.channels[i].Members, "pm", "fe")
 			break
 		}
@@ -524,12 +524,12 @@ func TestBrokerGetMessagesAgentScopeKeepsHumanAndCEOContext(t *testing.T) {
 		}
 	}
 
-	postMessage(map[string]any{"channel": "general", "from": "you", "content": "Frontend, should we ship this?", "tagged": []string{"fe"}})
-	postMessage(map[string]any{"channel": "general", "from": "pm", "content": "Unrelated roadmap chatter."})
-	postMessage(map[string]any{"channel": "general", "from": "ceo", "content": "Keep scope tight and focus on signup."})
-	postMessage(map[string]any{"channel": "general", "from": "fe", "content": "I can take the signup work."})
+	postMessage(map[string]any{"channel": "team", "from": "you", "content": "Frontend, should we ship this?", "tagged": []string{"fe"}})
+	postMessage(map[string]any{"channel": "team", "from": "pm", "content": "Unrelated roadmap chatter."})
+	postMessage(map[string]any{"channel": "team", "from": "cos", "content": "Keep scope tight and focus on signup."})
+	postMessage(map[string]any{"channel": "team", "from": "fe", "content": "I can take the signup work."})
 
-	req, _ := http.NewRequest(http.MethodGet, base+"/messages?channel=general&viewer_slug=fe&scope=agent", nil)
+	req, _ := http.NewRequest(http.MethodGet, base+"/messages?channel=team&viewer_slug=fe&scope=agent", nil)
 	req.Header.Set("Authorization", "Bearer "+b.Token())
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -546,7 +546,7 @@ func TestBrokerGetMessagesAgentScopeKeepsHumanAndCEOContext(t *testing.T) {
 	if len(result.Messages) != 3 {
 		t.Fatalf("expected scoped transcript to keep 3 messages, got %+v", result.Messages)
 	}
-	if got := result.Messages[1].From; got != "ceo" {
+	if got := result.Messages[1].From; got != "cos" {
 		t.Fatalf("expected CEO context to remain visible, got %+v", result.Messages)
 	}
 	for _, msg := range result.Messages {
@@ -563,12 +563,12 @@ func TestBrokerGetMessagesAgentScopeKeepsHumanAndCEOContext(t *testing.T) {
 func TestLastTaggedAtSetOnPost(t *testing.T) {
 	b := newTestBroker(t)
 	b.mu.Lock()
-	b.channels = []teamChannel{{Slug: "general", Members: []string{"ceo", "pm"}}}
-	b.members = []officeMember{{Slug: "ceo", Name: "CEO"}, {Slug: "pm", Name: "PM"}}
+	b.channels = []teamChannel{{Slug: "team", Members: []string{"cos", "pm"}}}
+	b.members = []officeMember{{Slug: "cos", Name: "CEO"}, {Slug: "pm", Name: "PM"}}
 	b.rebuildMemberIndexLocked()
 	b.mu.Unlock()
 
-	postBody := strings.NewReader(`{"from":"you","channel":"general","content":"@ceo what should we do?","tagged":["ceo"]}`)
+	postBody := strings.NewReader(`{"from":"you","channel":"team","content":"@cos what should we do?","tagged":["cos"]}`)
 	req, err := http.NewRequest(http.MethodPost, "/messages", postBody)
 	if err != nil {
 		t.Fatalf("new request: %v", err)
@@ -581,11 +581,11 @@ func TestLastTaggedAtSetOnPost(t *testing.T) {
 	}
 
 	b.mu.Lock()
-	_, ceoTagged := b.lastTaggedAt["ceo"]
+	_, ceoTagged := b.lastTaggedAt["cos"]
 	_, pmTagged := b.lastTaggedAt["pm"]
 	b.mu.Unlock()
 	if !ceoTagged {
-		t.Fatal("expected ceo to be in lastTaggedAt after handlePostMessage")
+		t.Fatal("expected cos to be in lastTaggedAt after handlePostMessage")
 	}
 	if pmTagged {
 		t.Fatal("did not expect pm to be in lastTaggedAt")
@@ -598,7 +598,7 @@ func TestBrokerSurfaceMetadataPersists(t *testing.T) {
 	b.channels = append(b.channels, teamChannel{
 		Slug:    "tg-ops",
 		Name:    "tg-ops",
-		Members: []string{"ceo"},
+		Members: []string{"cos"},
 		Surface: &channelSurface{
 			Provider:    "telegram",
 			RemoteID:    "-100999",
@@ -654,19 +654,19 @@ func TestBrokerSurfaceChannelsFilter(t *testing.T) {
 		teamChannel{
 			Slug:    "tg-ch",
 			Name:    "tg-ch",
-			Members: []string{"ceo"},
+			Members: []string{"cos"},
 			Surface: &channelSurface{Provider: "telegram", RemoteID: "-100"},
 		},
 		teamChannel{
 			Slug:    "slack-ch",
 			Name:    "slack-ch",
-			Members: []string{"ceo"},
+			Members: []string{"cos"},
 			Surface: &channelSurface{Provider: "slack", RemoteID: "C123"},
 		},
 		teamChannel{
 			Slug:    "native-ch",
 			Name:    "native-ch",
-			Members: []string{"ceo"},
+			Members: []string{"cos"},
 		},
 	)
 	b.mu.Unlock()
@@ -706,17 +706,17 @@ func TestBrokerExternalQueueDeduplication(t *testing.T) {
 	b.channels = append(b.channels, teamChannel{
 		Slug:    "ext",
 		Name:    "ext",
-		Members: []string{"ceo"},
+		Members: []string{"cos"},
 		Surface: &channelSurface{Provider: "telegram", RemoteID: "-100"},
 	})
 	b.mu.Unlock()
 
 	// Post two messages — surface setup errors as test failures so a
 	// silent PostMessage failure can't masquerade as a dedupe regression.
-	if _, err := b.PostMessage("ceo", "ext", "msg one", nil, ""); err != nil {
+	if _, err := b.PostMessage("cos", "ext", "msg one", nil, ""); err != nil {
 		t.Fatalf("PostMessage one: %v", err)
 	}
-	if _, err := b.PostMessage("ceo", "ext", "msg two", nil, ""); err != nil {
+	if _, err := b.PostMessage("cos", "ext", "msg two", nil, ""); err != nil {
 		t.Fatalf("PostMessage two: %v", err)
 	}
 
@@ -732,7 +732,7 @@ func TestBrokerExternalQueueDeduplication(t *testing.T) {
 	}
 
 	// Post one more
-	if _, err := b.PostMessage("ceo", "ext", "msg three", nil, ""); err != nil {
+	if _, err := b.PostMessage("cos", "ext", "msg three", nil, ""); err != nil {
 		t.Fatalf("PostMessage three: %v", err)
 	}
 	queue3 := b.ExternalQueue("telegram")
@@ -750,7 +750,7 @@ func TestBrokerPostInboundSurfaceMessage(t *testing.T) {
 	b.channels = append(b.channels, teamChannel{
 		Slug:    "surf",
 		Name:    "surf",
-		Members: []string{"ceo"},
+		Members: []string{"cos"},
 		Surface: &channelSurface{Provider: "telegram", RemoteID: "-100"},
 	})
 	b.mu.Unlock()
@@ -783,10 +783,10 @@ func TestRecentHumanMessagesReturnsLastNHumanMessages(t *testing.T) {
 	b := newTestBroker(t)
 	b.mu.Lock()
 	b.messages = []channelMessage{
-		{ID: "m1", From: "fe", Content: "agent reply 1", Timestamp: "2026-04-14T10:00:00Z"},
+		{ID: "m1", From: "fe", Content: "bot reply 1", Timestamp: "2026-04-14T10:00:00Z"},
 		{ID: "m2", From: "you", Content: "human says hi", Timestamp: "2026-04-14T10:01:00Z"},
 		{ID: "m3", From: "nex", Content: "nex automation", Timestamp: "2026-04-14T10:02:00Z"},
-		{ID: "m4", From: "be", Content: "agent reply 2", Timestamp: "2026-04-14T10:03:00Z"},
+		{ID: "m4", From: "be", Content: "bot reply 2", Timestamp: "2026-04-14T10:03:00Z"},
 		{ID: "m5", From: "human", Content: "human follow-up", Timestamp: "2026-04-14T10:04:00Z"},
 		{ID: "m6", From: "you", Content: "human again", Timestamp: "2026-04-14T10:05:00Z"},
 	}
@@ -847,7 +847,7 @@ func TestRecentHumanMessagesIncludesNexSender(t *testing.T) {
 	b := newTestBroker(t)
 	b.mu.Lock()
 	b.messages = []channelMessage{
-		{ID: "m1", From: "fe", Content: "agent msg", Timestamp: "2026-04-14T10:00:00Z"},
+		{ID: "m1", From: "fe", Content: "bot msg", Timestamp: "2026-04-14T10:00:00Z"},
 		{ID: "m2", From: "nex", Content: "nex automation context", Timestamp: "2026-04-14T10:01:00Z"},
 		{ID: "m3", From: "you", Content: "human question", Timestamp: "2026-04-14T10:02:00Z"},
 	}
@@ -871,14 +871,14 @@ func TestRecentHumanMessagesIncludesNexSender(t *testing.T) {
 		t.Error("expected human message m3 to be included")
 	}
 	if ids["m1"] {
-		t.Error("expected agent message m1 to be excluded")
+		t.Error("expected bot message m1 to be excluded")
 	}
 }
 
 func TestPostAutomationMessageDeduplicatesByEventID(t *testing.T) {
 	b := newTestBroker(t)
 
-	first, dup1, err := b.PostAutomationMessage("nex", "general", "Signal", "first post", "evt-001", "nex", "Nex", nil, "")
+	first, dup1, err := b.PostAutomationMessage("nex", "team", "Signal", "first post", "evt-001", "nex", "Nex", nil, "")
 	if err != nil {
 		t.Fatalf("first PostAutomationMessage: %v", err)
 	}
@@ -886,7 +886,7 @@ func TestPostAutomationMessageDeduplicatesByEventID(t *testing.T) {
 		t.Fatal("first call should not be a duplicate")
 	}
 
-	second, dup2, err := b.PostAutomationMessage("nex", "general", "Signal", "second post", "evt-001", "nex", "Nex", nil, "")
+	second, dup2, err := b.PostAutomationMessage("nex", "team", "Signal", "second post", "evt-001", "nex", "Nex", nil, "")
 	if err != nil {
 		t.Fatalf("second PostAutomationMessage: %v", err)
 	}
@@ -917,7 +917,7 @@ func TestPostAutomationMessageDeduplicatesByEventID(t *testing.T) {
 // ─── Focus mode routing ───────────────────────────────────────────────────
 
 // makeFocusModeLauncher builds a Launcher backed by a real broker with three
-// members (ceo, eng, pm) wired into the general channel, and focus mode on.
+// members (cos, eng, pm) wired into the general channel, and focus mode on.
 func makeFocusModeLauncher(t *testing.T) (*Launcher, *Broker) {
 	t.Helper()
 	b := newTestBroker(t)
@@ -925,23 +925,23 @@ func makeFocusModeLauncher(t *testing.T) (*Launcher, *Broker) {
 	// Add eng and pm members to the broker so they appear in EnabledMembers.
 	b.mu.Lock()
 	b.members = []officeMember{
-		{Slug: "ceo", Name: "CEO", Role: "CEO", BuiltIn: true},
+		{Slug: "cos", Name: "CEO", Role: "CEO", BuiltIn: true},
 		{Slug: "eng", Name: "Engineer", Role: "Engineer"},
 		{Slug: "pm", Name: "Product Manager", Role: "Product Manager"},
 	}
 	for i := range b.channels {
-		if b.channels[i].Slug == "general" {
-			b.channels[i].Members = []string{"ceo", "eng", "pm"}
+		if b.channels[i].Slug == "team" {
+			b.channels[i].Members = []string{"cos", "eng", "pm"}
 		}
 	}
 	b.focusMode = true
 	b.mu.Unlock()
 
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "eng", Name: "Engineer"},
 				{Slug: "pm", Name: "Product Manager"},
 			},
@@ -968,7 +968,7 @@ func TestFocusModeRouting_UntaggedMessageWakesLeadOnly(t *testing.T) {
 	msg := channelMessage{
 		ID:      "msg-1",
 		From:    "you",
-		Channel: "general",
+		Channel: "team",
 		Content: "What should we do today?",
 		Tagged:  nil,
 	}
@@ -977,8 +977,8 @@ func TestFocusModeRouting_UntaggedMessageWakesLeadOnly(t *testing.T) {
 	if len(immediate) != 1 {
 		t.Fatalf("focus mode untagged: expected 1 target (CEO), got %d: %v", len(immediate), immediate)
 	}
-	if immediate[0].Slug != "ceo" {
-		t.Fatalf("focus mode untagged: expected ceo, got %q", immediate[0].Slug)
+	if immediate[0].Slug != "cos" {
+		t.Fatalf("focus mode untagged: expected cos, got %q", immediate[0].Slug)
 	}
 }
 
@@ -991,7 +991,7 @@ func TestFocusModeRouting_TaggedSpecialistWakesSpecialistOnly(t *testing.T) {
 	msg := channelMessage{
 		ID:      "msg-2",
 		From:    "you",
-		Channel: "general",
+		Channel: "team",
 		Content: "Hey eng, can you review the PR?",
 		Tagged:  []string{"eng"},
 	}
@@ -1017,23 +1017,23 @@ func TestFocusModeRouting_CollaborativeUntaggedWakesLead(t *testing.T) {
 	b := newTestBroker(t)
 	b.mu.Lock()
 	b.members = []officeMember{
-		{Slug: "ceo", Name: "CEO", Role: "CEO", BuiltIn: true},
+		{Slug: "cos", Name: "CEO", Role: "CEO", BuiltIn: true},
 		{Slug: "eng", Name: "Engineer", Role: "Engineer"},
 		{Slug: "pm", Name: "Product Manager", Role: "Product Manager"},
 	}
 	for i := range b.channels {
-		if b.channels[i].Slug == "general" {
-			b.channels[i].Members = []string{"ceo", "eng", "pm"}
+		if b.channels[i].Slug == "team" {
+			b.channels[i].Members = []string{"cos", "eng", "pm"}
 		}
 	}
 	b.focusMode = false // collaborative mode
 	b.mu.Unlock()
 
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "eng", Name: "Engineer"},
 				{Slug: "pm", Name: "Product Manager"},
 			},
@@ -1052,7 +1052,7 @@ func TestFocusModeRouting_CollaborativeUntaggedWakesLead(t *testing.T) {
 	msg := channelMessage{
 		ID:      "msg-3",
 		From:    "you",
-		Channel: "general",
+		Channel: "team",
 		Content: "What should we do today?",
 		Tagged:  nil,
 	}
@@ -1061,8 +1061,8 @@ func TestFocusModeRouting_CollaborativeUntaggedWakesLead(t *testing.T) {
 	// Collaborative mode + untagged human + no task owner = CEO only.
 	// Specialists wake on explicit @-tags or as task owners; an untagged
 	// channel message goes through the lead. Lock that contract here.
-	if len(immediate) != 1 || immediate[0].Slug != "ceo" {
-		t.Fatalf("collaborative mode untagged: expected exactly [ceo], got %v", immediate)
+	if len(immediate) != 1 || immediate[0].Slug != "cos" {
+		t.Fatalf("collaborative mode untagged: expected exactly [cos], got %v", immediate)
 	}
 }
 
@@ -1071,17 +1071,17 @@ func TestFocusModeRouting_CollaborativeUntaggedWakesLead(t *testing.T) {
 // invariants:
 //
 //  1. Fresh broker reports humanHasPosted=false.
-//  2. Agent-only and system messages do NOT flip the bit.
+//  2. Bot-only and system messages do NOT flip the bit.
 //  3. Once a human posts in any channel the bit flips true and STAYS true,
-//     even after subsequent messages from agents.
+//     even after subsequent messages from bots.
 func TestHumanHasPosted_FlipsOnFirstHumanMessageAndStays(t *testing.T) {
 	b := newTestBroker(t)
 	b.mu.Lock()
-	b.members = append(b.members, officeMember{Slug: "ceo", Name: "CEO", Role: "lead"})
+	b.members = append(b.members, officeMember{Slug: "cos", Name: "CEO", Role: "lead"})
 	b.members = append(b.members, officeMember{Slug: "tess", Name: "Tess", Role: "engineer"})
 	for i := range b.channels {
-		if b.channels[i].Slug == "general" {
-			b.channels[i].Members = uniqueSlugs(append(b.channels[i].Members, "ceo", "tess"))
+		if b.channels[i].Slug == "team" {
+			b.channels[i].Members = uniqueSlugs(append(b.channels[i].Members, "cos", "tess"))
 		}
 	}
 	b.mu.Unlock()
@@ -1090,30 +1090,30 @@ func TestHumanHasPosted_FlipsOnFirstHumanMessageAndStays(t *testing.T) {
 		t.Fatal("fresh broker must report humanHasPosted=false")
 	}
 
-	// Agent-authored message must not flip the bit.
-	if _, err := b.PostMessage("tess", "general", "agent saying hello", nil, ""); err != nil {
+	// Bot-authored message must not flip the bit.
+	if _, err := b.PostMessage("tess", "team", "bot saying hello", nil, ""); err != nil {
 		t.Fatalf("PostMessage(tess): %v", err)
 	}
 	if b.HumanHasPosted() {
-		t.Fatal("humanHasPosted must stay false after agent-only traffic")
+		t.Fatal("humanHasPosted must stay false after bot-only traffic")
 	}
 
 	// System message must not flip the bit either.
-	b.PostSystemMessage("general", "system note", "system")
+	b.PostSystemMessage("team", "system note", "system")
 	if b.HumanHasPosted() {
 		t.Fatal("humanHasPosted must stay false after system message")
 	}
 
 	// First human message flips the bit.
-	if _, err := b.PostMessage("human:najm", "general", "hi from a human", nil, ""); err != nil {
+	if _, err := b.PostMessage("human:najm", "team", "hi from a human", nil, ""); err != nil {
 		t.Fatalf("PostMessage(human): %v", err)
 	}
 	if !b.HumanHasPosted() {
 		t.Fatal("humanHasPosted must flip true on first human-authored message")
 	}
 
-	// Subsequent agent traffic must not flip the bit back.
-	if _, err := b.PostMessage("tess", "general", "agent reply", nil, ""); err != nil {
+	// Subsequent bot traffic must not flip the bit back.
+	if _, err := b.PostMessage("tess", "team", "bot reply", nil, ""); err != nil {
 		t.Fatalf("PostMessage(tess after human): %v", err)
 	}
 	if !b.HumanHasPosted() {
@@ -1128,10 +1128,10 @@ func TestHumanHasPosted_FlipsOnFirstHumanMessageAndStays(t *testing.T) {
 func TestOfficeMembersListIncludesHumanHasPostedMeta(t *testing.T) {
 	b := newTestBroker(t)
 	b.mu.Lock()
-	b.members = append(b.members, officeMember{Slug: "ceo", Name: "CEO", Role: "lead"})
+	b.members = append(b.members, officeMember{Slug: "cos", Name: "CEO", Role: "lead"})
 	for i := range b.channels {
-		if b.channels[i].Slug == "general" {
-			b.channels[i].Members = uniqueSlugs(append(b.channels[i].Members, "ceo"))
+		if b.channels[i].Slug == "team" {
+			b.channels[i].Members = uniqueSlugs(append(b.channels[i].Members, "cos"))
 		}
 	}
 	b.mu.Unlock()
@@ -1160,7 +1160,7 @@ func TestOfficeMembersListIncludesHumanHasPostedMeta(t *testing.T) {
 
 	// Post a human message. The next /office-members call must report
 	// meta.humanHasPosted=true.
-	if _, err := b.PostMessage("human:najm", "general", "hello office", nil, ""); err != nil {
+	if _, err := b.PostMessage("human:najm", "team", "hello office", nil, ""); err != nil {
 		t.Fatalf("PostMessage(human): %v", err)
 	}
 
@@ -1181,5 +1181,5 @@ func TestOfficeMembersListIncludesHumanHasPostedMeta(t *testing.T) {
 
 // ─── Push semantics ───────────────────────────────────────────────────────
 
-// TestHeadlessQueue_EmptyBeforePush verifies that the agent headless queue
+// TestHeadlessQueue_EmptyBeforePush verifies that the bot headless queue
 // starts empty — no timers or background goroutines pre-populate it.

@@ -170,12 +170,11 @@ func TestOneCLIHappyPath(t *testing.T) {
 	}
 }
 
-func TestNewOneCLIFromEnvUsesManagedIdentity(t *testing.T) {
+func TestNewOneCLIFromEnvUsesConfiguredIdentity(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := config.Save(config.Config{
-		APIKey:    "nex-key",
 		OneAPIKey: "one-secret",
-		Email:     "ceo@example.com",
+		Email:     "cos@example.com",
 	}); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
@@ -185,7 +184,7 @@ func TestNewOneCLIFromEnvUsesManagedIdentity(t *testing.T) {
 	if !strings.Contains(got, "ONE_SECRET=one-secret") {
 		t.Fatalf("expected ONE_SECRET env, got %q", got)
 	}
-	if !strings.Contains(got, "ONE_IDENTITY=ceo@example.com") {
+	if !strings.Contains(got, "ONE_IDENTITY=cos@example.com") {
 		t.Fatalf("expected ONE_IDENTITY env, got %q", got)
 	}
 	if !strings.Contains(got, "ONE_IDENTITY_TYPE=user") {

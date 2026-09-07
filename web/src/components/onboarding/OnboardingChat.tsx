@@ -1,20 +1,20 @@
 /**
  * OnboardingChat — full-screen CEO wizard.
  *
- * The user is NOT yet "in the office": until the broker flips
+ * The user is NOT yet "on the team": until the broker flips
  * `onboarded=true`, RootRoute mounts this component instead of the office
  * Shell. It masquerades as a chat with the CEO, but the only valid input
  * zone is the chip / form-field card surfaced by InterviewBar (which falls
- * back to CeoCardSection when no agent interview request is pending). No
+ * back to CeoCardSection when no bot interview request is pending). No
  * sidebar, no workspace rail, no workbench panes — those are the
  * destination, not the wizard.
  *
  * Lifts from the onboarding spec (docs/specs/onboarding-into-office.md):
- *   "Onboarding is a wizard mocked as a CEO chat. The user is not really in
- *    the office yet until onboarding finishes."
+ *   "Onboarding is a wizard mocked as a Chief of Staff chat. The user is not really in
+ *    the team yet until onboarding finishes."
  *
  * Component shape mirrors DMView's chat region but drops the workbench
- * (`AgentWorkbenchPane`) and the free-form `Composer`. We keep the same
+ * (`BotWorkbenchPane`) and the free-form `Composer`. We keep the same
  * `useMessages` / `MessageBubble` / `InterviewBar` plumbing so streaming
  * updates and pending-suggestion cards behave identically.
  */
@@ -30,8 +30,8 @@ import { OnboardingDMContextProvider } from "./OnboardingDMRoute";
 import type { CeoSuggestion } from "./types";
 import { useOnboardingState } from "./useOnboardingState";
 
-/** Agent slug used in the broker for the onboarding CEO. */
-const CEO_AGENT_SLUG = "ceo";
+/** Bot slug used in the broker for the onboarding CEO. */
+const CEO_AGENT_SLUG = "cos";
 
 /** The broker canonicalises DM channels as pair-sorted slugs. */
 const CEO_ONBOARDING_CHANNEL = directChannelSlug(CEO_AGENT_SLUG);
@@ -52,11 +52,11 @@ const PHASE_LABELS: Record<string, string> = {
   scan: "Scanning your site",
   blueprint: "Pick a starter",
   team: "Confirm the team",
-  seed: "Setting up your office",
+  seed: "Setting up your team",
   bridge: "First task",
   draft: "Drafting your first issue",
   approve: "Review and approve",
-  kickoff: "Starting your office",
+  kickoff: "Starting your team",
   complete: "Done",
 };
 
@@ -98,7 +98,7 @@ export function OnboardingChat() {
         data-phase={phase ?? "loading"}
       >
         <header className="onboarding-chat-header">
-          <span className="onboarding-chat-brand">WUPHF</span>
+          <span className="onboarding-chat-brand">gawkbot</span>
           <span className="onboarding-chat-phase">{phaseLabel(phase)}</span>
         </header>
 
@@ -106,7 +106,7 @@ export function OnboardingChat() {
           <div className="onboarding-chat-stream">
             {messages.length === 0 ? (
               <p className="onboarding-chat-stream-empty">
-                CEO is opening the office…
+                Chief of Staff is opening the office…
               </p>
             ) : (
               messages.map((msg) => (
@@ -120,12 +120,12 @@ export function OnboardingChat() {
         <footer className="onboarding-chat-footer">
           <div className="onboarding-chat-footer-inner">
             <InterviewBar channelSlug={CEO_ONBOARDING_CHANNEL} />
-            {/* When there's no pending suggestion AND no agent interview
+            {/* When there's no pending suggestion AND no bot interview
                 request, InterviewBar renders nothing. Surface a hint so the
                 user knows the wizard is mid-transition rather than stuck. */}
             {!pendingSuggestion && (
               <p className="onboarding-chat-hint">
-                Hang tight — the CEO is composing the next step.
+                Hang tight — the Chief of Staff is composing the next step.
               </p>
             )}
           </div>

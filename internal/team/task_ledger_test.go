@@ -10,12 +10,12 @@ import (
 
 func TestAppendTaskLedgerEntryCapsAndPersists(t *testing.T) {
 	b := newVerificationTestBroker(t)
-	task, _, err := b.EnsureTask("general", "Long-running build", "many turns", "eng", "ceo", "")
+	task, _, err := b.EnsureTask("team", "Long-running build", "many turns", "eng", "cos", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < taskLedgerMaxEntries+5; i++ {
-		b.AppendTaskLedgerEntry(task.ID, TaskLedgerEntry{Agent: "eng", Outcome: "ok"})
+		b.AppendTaskLedgerEntry(task.ID, TaskLedgerEntry{Bot: "eng", Outcome: "ok"})
 	}
 	got := b.TaskByID(task.ID)
 	if len(got.Ledger) != taskLedgerMaxEntries {
@@ -25,7 +25,7 @@ func TestAppendTaskLedgerEntryCapsAndPersists(t *testing.T) {
 
 func TestRecordTaskLedgerEntryAssemblesFromBrokerFacts(t *testing.T) {
 	b := newVerificationTestBroker(t)
-	task, _, err := b.EnsureTask("general", "Instrumented work", "watch the journal", "eng", "ceo", "")
+	task, _, err := b.EnsureTask("team", "Instrumented work", "watch the journal", "eng", "cos", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,17 +46,17 @@ func TestRecordTaskLedgerEntryAssemblesFromBrokerFacts(t *testing.T) {
 		t.Fatalf("want 1 entry; got %d", len(got.Ledger))
 	}
 	e := got.Ledger[0]
-	if e.Agent != "eng" || !strings.Contains(e.Outcome, "timed out") {
-		t.Fatalf("entry agent/outcome wrong: %+v", e)
+	if e.Bot != "eng" || !strings.Contains(e.Outcome, "timed out") {
+		t.Fatalf("entry bot/outcome wrong: %+v", e)
 	}
 	if !strings.Contains(e.Said, "flag approach") {
-		t.Fatalf("entry must carry the agent's last message; got %q", e.Said)
+		t.Fatalf("entry must carry the bot's last message; got %q", e.Said)
 	}
 	if len(e.Actions) == 0 || !strings.Contains(e.Actions[0], "flaky fixture") {
 		t.Fatalf("entry must carry the task mutations; got %v", e.Actions)
 	}
 
-	packet := l.notifyCtx().BuildTaskExecutionPacket("eng", officeActionLog{Actor: "ceo"}, *got, "Next attempt.")
+	packet := l.notifyCtx().BuildTaskExecutionPacket("eng", officeActionLog{Actor: "cos"}, *got, "Next attempt.")
 	if !strings.Contains(packet, "TASK JOURNAL") || !strings.Contains(packet, "flag approach") {
 		t.Fatalf("packet must carry the journal; got:\n%s", packet)
 	}
@@ -65,7 +65,7 @@ func TestRecordTaskLedgerEntryAssemblesFromBrokerFacts(t *testing.T) {
 func TestRecordTaskLedgerEntrySkipsTasklessTurns(t *testing.T) {
 	b := newVerificationTestBroker(t)
 	l := launcherForBrokerFixture(b)
-	l.recordTaskLedgerEntry("eng", headlessCodexTurn{Channel: "general"}, time.Now(), nil)
+	l.recordTaskLedgerEntry("eng", headlessCodexTurn{Channel: "team"}, time.Now(), nil)
 	// Nothing to assert on a specific task — the contract is simply that a
 	// task-less turn must not panic or write anywhere.
 }
@@ -75,7 +75,7 @@ func TestRecordTaskLedgerEntrySkipsTasklessTurns(t *testing.T) {
 // ledger entry verbatim and survives the JSON wire (additive field).
 func TestRecordTaskLedgerEntryCarriesContextUsed(t *testing.T) {
 	b := newVerificationTestBroker(t)
-	task, _, err := b.EnsureTask("general", "Context audit work", "track what was injected", "eng", "ceo", "")
+	task, _, err := b.EnsureTask("team", "Context audit work", "track what was injected", "eng", "cos", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,12 +111,12 @@ func TestRecordTaskLedgerEntryCarriesContextUsed(t *testing.T) {
 // settled turn appears as a kind="turn" event carrying its context manifest.
 func TestIssueActivityCarriesTurnEvents(t *testing.T) {
 	b := newVerificationTestBroker(t)
-	task, _, err := b.EnsureTask("general", "Activity rail work", "surface the turns", "eng", "ceo", "")
+	task, _, err := b.EnsureTask("team", "Activity rail work", "surface the turns", "eng", "cos", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	b.AppendTaskLedgerEntry(task.ID, TaskLedgerEntry{
-		Agent: "eng", Outcome: "ok", Said: "shipped the slice",
+		Bot: "eng", Outcome: "ok", Said: "shipped the slice",
 		ContextUsed: []string{"learning:l-9", "wiki:people/sam"},
 	})
 	b.mu.Lock()

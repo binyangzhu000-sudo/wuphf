@@ -1,12 +1,15 @@
 package team
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/nex-crm/wuphf/internal/company"
 	"github.com/nex-crm/wuphf/internal/config"
 	"github.com/nex-crm/wuphf/internal/onboarding"
 	"github.com/nex-crm/wuphf/internal/operations"
@@ -16,16 +19,16 @@ import (
 // onboardingCompleteFn is invoked by the onboarding package when the user
 // finishes the wizard. It seeds the team from the user's picked blueprint
 // (or synthesizes one if blueprintID is empty — the "from scratch" path),
-// honors the wizard's per-agent checkbox filter, and posts the kickoff
-// task to #general tagged to the blueprint's lead agent.
+// honors the wizard's per-bot checkbox filter, and posts the kickoff
+// task to the lead's DM tagged to the blueprint's lead bot.
 //
 // Contract:
 //   - blueprintID is the curated blueprint the user selected. Empty means
 //     "from scratch" — the broker synthesizes a blueprint from the
 //     onboarding-state goals.
-//   - selectedAgents mirrors the wizard's toggle state:
+//   - selectedBots mirrors the wizard's toggle state:
 //     nil   → no filtering (internal / synthesis callers, legacy client);
-//     []    → user unchecked every agent; seed lead only + system notice;
+//     []    → user unchecked every bot; seed lead only + system notice;
 //     [...] → keep only those slugs (plus the lead, which is unremovable).
 //
 // Side effects happen BEFORE the onboarding package writes the completion
@@ -33,24 +36,17 @@ import (
 // re-enters the wizard. The dedupe guard below (onboarding_origin by task
 // content) prevents double-posting on crash recovery.
 //
-// The DefaultManifest roster (ceo/planner/executor/reviewer) is NEVER
-// reached via this path. It remains only as a true-recovery fallback in
+// The DefaultManifest roster (the Chief of Staff alone) is NEVER reached
+// via this path. It remains only as a true-recovery fallback in
 // ensureDefaultOfficeMembersLocked for corrupted/zero-member state.
-func (b *Broker) onboardingCompleteFn(task string, skipTask bool, blueprintID string, selectedAgents []string, companyName string) error {
+func (b *Broker) onboardingCompleteFn(task string, skipTask bool, blueprintID string, selectedBots []string, companyName string) error {
 	task = strings.TrimSpace(task)
 	if !skipTask && task == "" {
 		return fmt.Errorf("onboarding: task is required when skip_task=false")
 	}
 
 	blueprintID = strings.TrimSpace(blueprintID)
-
-	// No-team mode: the wizard sends blueprint="" AND an explicit empty agents
-	// list. Since the packs/CEO removal there is no starting roster at all —
-	// people spin up agents that execute their workflows end to end, so the
-	// office seeds empty and the first agent is created by the user. Legacy
-	// clients that send agents=nil keep the synthesis path below.
-	noTeam := blueprintID == "" && selectedAgents != nil && len(selectedAgents) == 0
-	synthesized := blueprintID == "" && !noTeam
+	synthesized := blueprintID == ""
 
 	// Resolve the blueprint OUTSIDE the broker lock. LoadBlueprint reads YAML
 	// from disk and runs validation; holding b.mu during that blocks every
@@ -64,7 +60,7 @@ func (b *Broker) onboardingCompleteFn(task string, skipTask bool, blueprintID st
 			return fmt.Errorf("onboarding: load blueprint %q: %w", blueprintID, err)
 		}
 		bp = loaded
-	} else if !noTeam {
+	} else {
 		bp = synthesizeBlueprintFromState(task)
 	}
 
@@ -76,35 +72,76 @@ func (b *Broker) onboardingCompleteFn(task string, skipTask bool, blueprintID st
 		// If a prior call already posted this exact task as an onboarding_origin
 		// message (crash-recovery scenario), skip re-seeding and preserve the
 		// earlier team.
+		//
+		// Matched on kind + content only. It also required
+		// Channel == "general", which was the room the kickoff used to be
+		// posted to — now that the kickoff lands in the lead's DM that clause
+		// could never match again, the dedupe would silently stop firing, and
+		// a crash-recovered onboarding would re-seed the entire team on top of
+		// the existing one. The kind is already unique to this message and the
+		// content is the task itself, so the channel added nothing but the
+		// coupling.
 		if !skipTask && task != "" {
 			for _, existing := range b.messages {
-				if existing.Channel == "general" && existing.Kind == "onboarding_origin" && existing.Content == task {
+				if existing.Kind == "onboarding_origin" && existing.Content == task {
 					return b.saveLocked()
 				}
 			}
 		}
 
-		if noTeam {
-			return b.seedEmptyOfficeLocked(task, skipTask)
-		}
-		return b.seedFromBlueprintLocked(bp, selectedAgents, task, skipTask, synthesized)
+		return b.seedFromBlueprintLocked(bp, selectedBots, task, skipTask, synthesized)
 	}()
 	if seedErr != nil {
 		return seedErr
 	}
-	b.backfillAgentFilesForRoster()
+	b.backfillBotFilesForRoster()
 
-	// The company brain starts EMPTY. No getting-started pages, no blueprint
-	// wiki skeleton — we do not seed content. The brain holds what the user
-	// (and later their agents) put in it.
+	// Materialize the blueprint's LLM wiki outside the broker lock. Lane A
+	// owns the git repo at ~/.wuphf/wiki; we write the skeleton files, commit
+	// them under the reserved `wuphf-bootstrap` author, then regenerate the
+	// index. Wiki materialization is best-effort: a failure here should NOT
+	// fail onboarding (the user should land on an empty-but-functional wiki
+	// rather than a broken onboarding flow). Log and move on.
+	b.materializeBlueprintWiki(bp)
+
+	// Seed the team/getting-started/ pages here too. The wizard onboarding
+	// completes through THIS path (onboardingCompleteFn), not the chat-phase
+	// runSeedPhase where materializeGettingStarted is also wired, so without
+	// this call a wizard-onboarded office lands on a wiki with no Getting
+	// Started section (and on the scratch path, no wiki content at all, since
+	// materializeBlueprintWiki no-ops without a WikiSchema). Mirrors the
+	// runSeedPhase seed; best-effort and idempotent (skip-if-exists). The
+	// trailing index regen mirrors runSeedPhase so index/all.md reflects the
+	// pages that land via atomicWrite outside the WikiWorker commit path.
+	b.materializeGettingStarted()
+	regenCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	b.regenWikiIndexAfterSeed(regenCtx, "wizard complete")
+	cancel()
 
 	// Sync the company name captured during onboarding to the workspace
 	// registry so the rail can display it without a separate API call.
 	companyName = strings.TrimSpace(companyName)
 	if companyName != "" {
 		if runtimeHome := config.RuntimeHomeDir(); runtimeHome != "" {
-			if err := workspaces.UpdateCompanyNameByRuntimeHome(runtimeHome, companyName); err != nil {
+			// Ad-hoc runtime homes (a --runtime-home never added to the
+			// registry) are legitimately absent — the config fallback below
+			// carries the name for them, so not-found is not an error.
+			if err := workspaces.UpdateCompanyNameByRuntimeHome(runtimeHome, companyName); err != nil && !errors.Is(err, workspaces.ErrWorkspaceNotFound) {
 				log.Printf("onboarding: sync company name to registry: %v", err)
+			}
+		}
+		// Persist into config too: cfg.CompanyName is what GET /config and
+		// the office-channel payloads read, and until now onboarding never
+		// wrote it — every surface reading config saw an empty company name
+		// (the registry sync above also misses ad-hoc runtime homes that
+		// were never registered). Load-then-save so a transient read failure
+		// never clobbers the rest of the file.
+		if cfg, err := config.Load(); err != nil {
+			log.Printf("onboarding: load config for company name: %v", err)
+		} else if strings.TrimSpace(cfg.CompanyName) == "" {
+			cfg.CompanyName = companyName
+			if err := config.Save(cfg); err != nil {
+				log.Printf("onboarding: save company name to config: %v", err)
 			}
 		}
 		// Re-derive the Linear-style Issue ID prefix now that the workspace
@@ -119,18 +156,83 @@ func (b *Broker) onboardingCompleteFn(task string, skipTask bool, blueprintID st
 	return nil
 }
 
+// materializeBlueprintWiki resolves ~/.wuphf/wiki, runs the skeleton
+// materializer, commits any newly-written skeletons as `wuphf-bootstrap`,
+// then regenerates the index so a fresh install has both the files AND the
+// audit trail from day 1.
+//
+// Errors are logged, never returned — onboarding succeeds regardless. A
+// blueprint without a WikiSchema (e.g. a synthesized from-scratch
+// blueprint) is silently skipped.
+//
+// Important: this runs OUTSIDE the broker lock (see caller), and initializes
+// the wiki worker before writing when the markdown backend is active. That
+// keeps skeleton files and git history coupled from the first render. If the
+// worker is not live (memory backend != markdown), we still materialize files
+// best-effort for read-only fallback, but no git commit is possible.
+func (b *Broker) materializeBlueprintWiki(bp operations.Blueprint) {
+	if bp.WikiSchema == nil {
+		return
+	}
+	b.ensureWikiWorker()
+	worker := b.WikiWorker()
+
+	wikiRoot := ""
+	if worker != nil && worker.Repo() != nil {
+		wikiRoot = worker.Repo().Root()
+	} else {
+		wikiRoot = WikiRootDir()
+	}
+	result, err := operations.MaterializeWiki(context.Background(), wikiRoot, bp.WikiSchema)
+	if err != nil {
+		log.Printf("onboarding: wiki materialize failed (wiki left empty): %v", err)
+		return
+	}
+	if len(result.ArticlesCreated) > 0 || len(result.DirsCreated) > 0 {
+		log.Printf("onboarding: wiki materialized blueprint=%s dirs=%d articles_created=%d articles_skipped=%d",
+			bp.ID, len(result.DirsCreated), len(result.ArticlesCreated), len(result.ArticlesSkipped))
+	}
+	// Nothing to commit if only existing articles were observed.
+	if len(result.ArticlesCreated) == 0 && len(result.DirsCreated) == 0 {
+		return
+	}
+	if worker == nil || worker.Repo() == nil {
+		// Non-markdown backend — skeletons stay on disk as read-only files.
+		return
+	}
+	repo := worker.Repo()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	// Regenerate the index FIRST so CommitBootstrap picks up index/all.md in
+	// the same commit as the skeletons. Leaving it untracked would cause
+	// RecoverDirtyTree on the next launch to fold it into a `wuphf-recovery`
+	// commit, which misattributes a derived artefact.
+	if err := repo.IndexRegen(ctx); err != nil {
+		log.Printf("onboarding: wiki index regen failed (continuing): %v", err)
+	}
+	bootstrapMsg := fmt.Sprintf("wuphf: materialize %s blueprint skeletons", bp.ID)
+	sha, err := repo.CommitBootstrap(ctx, bootstrapMsg)
+	if err != nil {
+		log.Printf("onboarding: wiki commit-bootstrap failed: %v", err)
+		return
+	}
+	if sha != "" {
+		log.Printf("onboarding: wiki bootstrap committed %s (blueprint=%s)", sha, bp.ID)
+	}
+}
+
 // synthesizeBlueprintFromState builds a blueprint for the "From scratch"
 // wizard path. Reads onboarding state from disk, so it must be called
 // OUTSIDE the broker mutex. Unlike the old seedBlankSlateOperationLocked
 // it does not mutate broker state — the caller feeds the returned
 // Blueprint to seedFromBlueprintLocked.
 //
-// The starter roster is a fixed 5-agent founding team (CEO lead plus GTM
+// The starter roster is a fixed 5-bot founding team (CEO lead plus GTM
 // Lead, Founding Engineer, Product Manager, Designer) rather than the
 // generic operator/planner/executor/reviewer shape. This is the product
 // default for a brand-new WUPHF office: it covers the four functions a
 // real early-stage team needs (strategy, revenue, build, design) with a
-// named CEO as the human-facing lead. Users can still uncheck agents in
+// named CEO as the human-facing lead. Users can still uncheck bots in
 // the wizard's Team step; unchecked ones are dropped via the filter.
 func synthesizeBlueprintFromState(task string) operations.Blueprint {
 	state, err := onboarding.Load()
@@ -155,23 +257,23 @@ func scratchFoundingTeamBlueprint(companyName, description, directive string) op
 	if displayName == "" {
 		displayName = "Your company"
 	}
-	agents := []operations.StarterAgent{
-		{Slug: "ceo", Name: "CEO", Role: "lead", Checked: true, Type: "assistant", BuiltIn: true, Expertise: []string{"strategy", "prioritization", "delegation"}, Personality: "Sets direction, breaks directives into specialist assignments, and owns the outcome."},
+	bots := []operations.StarterBot{
+		{Slug: "cos", Name: "Chief of Staff", Role: "lead", Checked: true, Type: "assistant", BuiltIn: true, Expertise: []string{"strategy", "prioritization", "delegation"}, Personality: "Sets direction, breaks directives into specialist assignments, and owns the outcome."},
 		{Slug: "gtm-lead", Name: "GTM Lead", Role: "go-to-market", Checked: true, Type: "assistant", Expertise: []string{"positioning", "sales", "marketing", "growth"}, Personality: "Turns the product into pipeline — messaging, outbound, launches, and early revenue."},
 		{Slug: "founding-engineer", Name: "Founding Engineer", Role: "engineering", Checked: true, Type: "assistant", Expertise: []string{"full-stack", "architecture", "infrastructure", "shipping"}, Personality: "Full-stack engineer who ships end-to-end and makes pragmatic architectural calls."},
 		{Slug: "pm", Name: "Product Manager", Role: "product", Checked: true, Type: "assistant", Expertise: []string{"roadmap", "user-stories", "requirements", "specs"}, Personality: "Translates business goals into specs the engineering and design functions can execute against."},
 		{Slug: "designer", Name: "Designer", Role: "design", Checked: true, Type: "assistant", Expertise: []string{"UI-UX-design", "branding", "prototyping"}, Personality: "Owns the look, feel, and flow — from first sketch to shipped interface."},
 	}
 	channels := []operations.StarterChannel{
-		{Slug: "general", Name: "general", Description: "Primary coordination channel.", Members: []string{"ceo", "gtm-lead", "founding-engineer", "pm", "designer"}},
-		{Slug: "product", Name: "product", Description: "Roadmap, specs, and design reviews.", Members: []string{"ceo", "pm", "designer", "founding-engineer"}},
-		{Slug: "gtm", Name: "gtm", Description: "Positioning, pipeline, and launches.", Members: []string{"ceo", "gtm-lead", "pm"}},
+		{Slug: "general", Name: "general", Description: "Primary coordination channel.", Members: []string{"cos", "gtm-lead", "founding-engineer", "pm", "designer"}},
+		{Slug: "product", Name: "product", Description: "Roadmap, specs, and design reviews.", Members: []string{"cos", "pm", "designer", "founding-engineer"}},
+		{Slug: "gtm", Name: "gtm", Description: "Positioning, pipeline, and launches.", Members: []string{"cos", "gtm-lead", "pm"}},
 	}
 	var tasks []operations.StarterTask
 	if directive != "" {
 		tasks = []operations.StarterTask{{
 			Channel: "general",
-			Owner:   "ceo",
+			Owner:   "cos",
 			Title:   "Kick off the directive",
 			Details: directive,
 		}}
@@ -183,10 +285,10 @@ func scratchFoundingTeamBlueprint(companyName, description, directive string) op
 		Description: description,
 		Objective:   directive,
 		Starter: operations.StarterPlan{
-			LeadSlug:                  "ceo",
+			LeadSlug:                  "cos",
 			GeneralChannelDescription: "Primary coordination channel.",
 			KickoffPrompt:             directive,
-			Agents:                    agents,
+			Bots:                      bots,
 			Channels:                  channels,
 			Tasks:                     tasks,
 		},
@@ -196,74 +298,25 @@ func scratchFoundingTeamBlueprint(companyName, description, directive string) op
 // seedFromBlueprintLocked is the single seed path used by both picked-
 // blueprint and from-scratch flows. It replaces the prior dual-path code
 // (seedBlankSlateOperationLocked + ensureDefaultOfficeMembersLocked+manual
-// kickoff). selectedAgents filters the blueprint's starter roster; see the
+// kickoff). selectedBots filters the blueprint's starter roster; see the
 // onboardingCompleteFn doc comment for the three-mode contract.
-// seedEmptyOfficeLocked seeds an office with NO agents. This is the wizard's
-// contract since the packs/CEO removal: there are no built-in agents and no
-// starting roster — people spin up agents that execute their workflows end to
-// end, so a fresh office holds only #general, the welcome (or the first
-// workflow handoff, untagged, waiting for the first agent), and the system
-// Backup & Migration task that owns the channel.
-func (b *Broker) seedEmptyOfficeLocked(task string, skipTask bool) error {
-	b.members = nil
-	b.channels = []teamChannel{{
-		Slug:        "general",
-		Name:        "general",
-		Description: "Primary coordination channel.",
-		Members:     []string{},
-	}}
-	b.tasks = nil
-	b.messages = nil
-	b.counter = 0
-	b.lastTaggedAt = make(map[string]time.Time)
-	b.ensureBackupMigrationTaskLocked()
-
-	now := time.Now().UTC().Format(time.RFC3339)
-	if skipTask {
-		b.counter++
-		b.appendMessageLocked(channelMessage{
-			ID:        fmt.Sprintf("msg-%d", b.counter),
-			From:      "system",
-			Channel:   "general",
-			Kind:      "system",
-			Content:   emptyOfficeWelcome,
-			Timestamp: now,
-		})
-	} else {
-		task = strings.TrimSpace(task)
-		if task == "" {
-			return fmt.Errorf("onboarding: task is required when skip_task=false")
-		}
-		// The first workflow lands untagged: there is no lead to hand it to.
-		// It waits in #general for the first agent the user spins up.
-		b.counter++
-		b.appendMessageLocked(channelMessage{
-			ID:        fmt.Sprintf("msg-%d", b.counter),
-			From:      "human",
-			Channel:   "general",
-			Kind:      "onboarding_origin",
-			Content:   task,
-			Timestamp: now,
-		})
-	}
-
-	b.publishOfficeChangeLocked(officeChangeEvent{Kind: "office_reseeded"})
-	return b.saveLocked()
-}
-
-func (b *Broker) seedFromBlueprintLocked(bp operations.Blueprint, selectedAgents []string, task string, skipTask bool, synthesized bool) error {
-	b.members = blankSlateOfficeMembersFromBlueprint(bp, selectedAgents)
+func (b *Broker) seedFromBlueprintLocked(bp operations.Blueprint, selectedBots []string, task string, skipTask bool, synthesized bool) error {
+	b.members = blankSlateOfficeMembersFromBlueprint(bp, selectedBots)
 	if len(b.members) == 0 {
-		// Defensive: blueprint had no parseable agents AND no lead fallback
+		// Defensive: blueprint had no parseable bots AND no lead fallback
 		// kicked in. Seed the DefaultManifest so the user has SOMETHING.
 		b.members = defaultOfficeMembers()
 	}
 	b.channels = blankSlateOfficeChannelsFromBlueprint(bp, b.members)
 	b.tasks = blankSlateOfficeTasksFromBlueprint(bp)
-	if len(b.channels) == 0 {
+	// #general kill switch, gate 5 of 7: the zero-channel fallback. With the
+	// switch off, gate 4 legitimately returns an empty channel list, so this
+	// must not fabricate general to "rescue" it — an office with no shared
+	// room is the intended end state, and conversation lives in DMs.
+	if len(b.channels) == 0 && generalChannelEnabled() {
 		b.channels = []teamChannel{{
-			Slug:        "general",
-			Name:        "general",
+			Slug:        GeneralChannelSlug,
+			Name:        GeneralChannelSlug,
 			Description: "Primary coordination channel.",
 			Members:     memberSlugsFromMembers(b.members),
 		}}
@@ -274,7 +327,15 @@ func (b *Broker) seedFromBlueprintLocked(bp operations.Blueprint, selectedAgents
 	// Seed the "Backup & Migration" system task that owns #general so the
 	// ~141 fallback call sites that post to "general" keep working.
 	b.ensureBackupMigrationTaskLocked()
-	if err := b.postKickoffLocked(bp, selectedAgents, task, skipTask, synthesized); err != nil {
+	// Every bot gets a DM, HERE and not only on the next Load.
+	//
+	// Onboarding replaces the roster wholesale, so the DMs seeded at boot are
+	// for members that no longer exist. Without this the human finishes
+	// onboarding and has the blueprint's working channels but no 1:1 with
+	// anyone -- and with #general retired, no way to talk to the lead at all
+	// until the process is restarted.
+	b.ensureBotDMsLocked()
+	if err := b.postKickoffLocked(bp, selectedBots, task, skipTask, synthesized); err != nil {
 		return err
 	}
 	// Pack/blueprint seeds follow the same contract as every other create
@@ -311,47 +372,56 @@ func (b *Broker) seedFromBlueprintLocked(bp operations.Blueprint, selectedAgents
 	return nil
 }
 
-func (b *Broker) postKickoffLocked(bp operations.Blueprint, selectedAgents []string, task string, skipTask bool, synthesized bool) error {
+func (b *Broker) postKickoffLocked(bp operations.Blueprint, selectedBots []string, task string, skipTask bool, synthesized bool) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	// Lead-only warning: the wizard sent agents=[] (explicit empty = every
-	// toggle unchecked). The seed helper fell back to lead-only; surface
-	// that via a system message so the user knows the team is minimal. The
-	// built-in Librarian and App Builder are always present and don't count as
-	// specialists, so a roster of lead + Librarian + App Builder is still
-	// "lead only".
-	specialistMembers := 0
-	for i := range b.members {
-		if !isLibrarianSlug(b.members[i].Slug) && !isAppBuilderSlug(b.members[i].Slug) {
-			specialistMembers++
-		}
+	// Every message below goes to the LEAD's DM.
+	//
+	// All five were addressed to "general". With the shared room retired that
+	// is a channel with no readers, so a freshly onboarded workspace wrote its
+	// origin task, its welcome, and its blueprint markers into nothing and
+	// opened completely silent — the worst possible first paint, and invisible
+	// because appendMessageLocked does not check that the channel exists.
+	//
+	// homeChannelForLocked both resolves the DM and creates it if missing, and
+	// ensureBotDMsLocked has just run one call up, so the lead's
+	// conversation is there. Failing loudly is right if it somehow is not:
+	// this is the first thing the human ever sees, and an office seeded with
+	// an unreachable kickoff is worse than one that refuses to seed.
+	lead := officeLeadSlugFromMembers(b.members)
+	if lead == "" {
+		// Every shipped blueprint declares cos as lead (guarded by
+		// TestAllOperationBlueprintsUseCEOLead). The fallback here only fires
+		// for malformed/synthesized blueprints with no identifiable lead.
+		lead = "cos"
 	}
-	if selectedAgents != nil && len(selectedAgents) == 0 && specialistMembers == 1 {
-		b.counter++
-		b.appendMessageLocked(channelMessage{
-			ID:        fmt.Sprintf("msg-%d", b.counter),
-			From:      "system",
-			Channel:   "general",
-			Kind:      "system",
-			Content:   "Team seeded with lead only. Add specialists from Team settings.",
-			Timestamp: now,
-		})
+	leadHome, err := b.homeChannelForLocked(lead)
+	if err != nil {
+		return fmt.Errorf("onboarding: no conversation to post the kickoff into: %w", err)
 	}
 
+	// No lead-only warning any more. A roster of exactly the Chief of Staff
+	// is the intended default, not an anomaly to apologize for: specialists
+	// are created on demand. (The old warning also counted "specialists" by
+	// excluding the Librarian and App Builder, two bots that no longer
+	// seed.)
+
 	if skipTask {
-		// Without a seeded task, #general would otherwise be empty (or hold
-		// only the lead-only warning) and the office looks broken on first
-		// open. Post a system welcome so the channel always has an
-		// affordance for what to do next. No staged agent presence lines:
-		// the core loop wants a real first paint, not a fake-staffed one
-		// (core-loop R6 removed the demo_seed machinery).
+		// No task was kicked off, so the Chief of Staff opens the DM itself.
+		// Founder: "the Chief of Staff should have a first prompt to introduce
+		// itself and the features and ask for the person's goal to plan the
+		// first thing to do." It speaks as the bot (From: lead), not as
+		// "system": the point of landing in a DM is that somebody is there.
+		// No staged bot presence lines and no invented team: the roster is
+		// one bot and the message says only what the product actually does
+		// (core-loop R6 removed the demo_seed machinery; the honesty doctrine
+		// keeps it out).
 		b.counter++
 		b.appendMessageLocked(channelMessage{
 			ID:        fmt.Sprintf("msg-%d", b.counter),
-			From:      "system",
-			Channel:   "general",
-			Kind:      "system",
-			Content:   welcomeMessageForMembers(b.members),
+			From:      lead,
+			Channel:   leadHome,
+			Content:   chiefOfStaffIntroMessage(b.members),
 			Timestamp: now,
 		})
 		// seedFromBlueprintLocked mutated b.members/channels/tasks above; we
@@ -366,19 +436,11 @@ func (b *Broker) postKickoffLocked(bp operations.Blueprint, selectedAgents []str
 		return fmt.Errorf("onboarding: task is required when skip_task=false")
 	}
 
-	lead := officeLeadSlugFromMembers(b.members)
-	if lead == "" {
-		// Every shipped blueprint declares ceo as lead (guarded by
-		// TestAllOperationBlueprintsUseCEOLead). The fallback here only fires
-		// for malformed/synthesized blueprints with no identifiable lead.
-		lead = "ceo"
-	}
-
 	b.counter++
 	b.appendMessageLocked(channelMessage{
 		ID:        fmt.Sprintf("msg-%d", b.counter),
 		From:      "human",
-		Channel:   "general",
+		Channel:   leadHome,
 		Kind:      "onboarding_origin",
 		Content:   task,
 		Tagged:    []string{lead},
@@ -390,7 +452,7 @@ func (b *Broker) postKickoffLocked(bp operations.Blueprint, selectedAgents []str
 	b.lastTaggedAt[lead] = time.Now()
 
 	// Synthesized blueprints (from-scratch path) post two extra markers so
-	// the downstream agents know they are running against a just-invented
+	// the downstream bots know they are running against a just-invented
 	// operation rather than a curated one.
 	if synthesized {
 		if strings.TrimSpace(bp.Name) != "" {
@@ -398,7 +460,7 @@ func (b *Broker) postKickoffLocked(bp operations.Blueprint, selectedAgents []str
 			b.appendMessageLocked(channelMessage{
 				ID:        fmt.Sprintf("msg-%d", b.counter),
 				From:      "system",
-				Channel:   "general",
+				Channel:   leadHome,
 				Kind:      "synthesized_blueprint",
 				Content:   fmt.Sprintf("Synthesized operation: %s (%s)", bp.Name, bp.Kind),
 				Timestamp: now,
@@ -408,7 +470,7 @@ func (b *Broker) postKickoffLocked(bp operations.Blueprint, selectedAgents []str
 		b.appendMessageLocked(channelMessage{
 			ID:        fmt.Sprintf("msg-%d", b.counter),
 			From:      "system",
-			Channel:   "general",
+			Channel:   leadHome,
 			Kind:      "from_scratch_contract",
 			Content:   "Run this as a real business workflow. If a needed specialist, channel, skill, or tooling path is missing, create it and keep going. Local proof packets, review bundles, and other internal substitute artifacts do not count when a live business step is possible.",
 			Timestamp: now,
@@ -421,19 +483,25 @@ func (b *Broker) postKickoffLocked(bp operations.Blueprint, selectedAgents []str
 // welcomeMessageForMembers builds the system welcome posted to #general when
 // the user finishes onboarding without seeding a task. Names the lead so the
 // office feels staffed (not abstract) and points the user at the composer.
-// emptyOfficeWelcome is the first message of an office with no agents yet:
-// the affordance is spinning up the first agent, not talking to a team.
-const emptyOfficeWelcome = "Welcome to WUPHF. Spin up your first agent and hand it a workflow. It runs the whole thing end to end and reports back here."
-
-func welcomeMessageForMembers(members []officeMember) string {
+// chiefOfStaffIntroMessage is the Chief of Staff's opening line in a fresh
+// office where no task was kicked off. It replaces welcomeMessageForMembers,
+// whose copy ("the team are online and ready ... they'll claim work, argue,
+// and ship") described a six-bot default office that no longer exists and
+// spoke as "system" about bots instead of letting the one bot present
+// speak.
+//
+// The copy promises only what the product does today: absorbing menial work,
+// microapps to manage outcomes, teach-by-screenshare, and the approval gate.
+// It closes by asking for the goal, which is the founder's spec: introduce
+// itself, cover the features, ask what the person wants so it can plan the
+// first thing.
+func chiefOfStaffIntroMessage(members []officeMember) string {
 	_, leadName := leadSlugAndName(members)
 	if leadName == "" {
-		// No lead means no roster to speak for — since the packs/CEO removal
-		// an empty office is the normal fresh state, so welcome accordingly.
-		return emptyOfficeWelcome
+		leadName = "your Chief of Staff"
 	}
 	return fmt.Sprintf(
-		"Welcome to your office. %s and the team are online and ready. Type a directive in the composer below — they'll claim work, argue, and ship.",
+		"I am %s. Hand me the boring part: I read the threads, chase the follow ups, and do the menial work, and when you want a screen to manage the outcome I build you a microapp for it. You can also show me a workflow once on a screenshare and I will handle it from then on. Anything that leaves this office waits for your approval first.\n\nSo, what are you trying to get done? Give me the goal and I will plan the first thing. If the work needs more bots, I will propose them as we go.",
 		leadName,
 	)
 }
@@ -471,94 +539,113 @@ func onboardingPartialString(partial *onboarding.PartialProgress, step, key stri
 }
 
 // blankSlateOfficeMembersFromBlueprint projects a blueprint's starter
-// agent list into broker officeMembers, applying the wizard's
-// selectedAgents filter. See onboardingCompleteFn doc for the nil / empty
+// bot list into broker officeMembers, applying the wizard's
+// selectedBots filter. See onboardingCompleteFn doc for the nil / empty
 // / populated contract.
 //
-// The lead agent (from blueprint.Starter.LeadSlug) is always kept,
+// The lead bot (from blueprint.Starter.LeadSlug) is always kept,
 // regardless of the filter — removing the lead leaves downstream code with
 // no one to tag for kickoff and no BuiltIn member for channel ownership.
-func blankSlateOfficeMembersFromBlueprint(blueprint operations.Blueprint, selectedAgents []string) []officeMember {
-	agents := blueprint.Starter.Agents
+func blankSlateOfficeMembersFromBlueprint(blueprint operations.Blueprint, selectedBots []string) []officeMember {
+	bots := blueprint.Starter.Bots
 	leadSlug := normalizeChannelSlug(blueprint.Starter.LeadSlug)
-	filter := agentSelectionFilter(selectedAgents, leadSlug)
-	availableSlugs := starterAgentSlugSet(agents)
+	filter := botSelectionFilter(selectedBots, leadSlug)
+	availableSlugs := starterBotSlugSet(bots)
 
-	members := blankSlateOfficeMembersFromAgents(agents, leadSlug, filter)
+	members := blankSlateOfficeMembersFromBots(bots, leadSlug, filter)
 	// A stale web bundle can post scratch-team slugs from a different
 	// synthesized roster. In that case the filter keeps only the lead; prefer
-	// the full current roster over a misleading one-agent office.
-	if selectionLooksStaleForStarterAgents(selectedAgents, leadSlug, availableSlugs, members) {
-		members = blankSlateOfficeMembersFromAgents(agents, leadSlug, nil)
+	// the full current roster over a misleading one-bot office.
+	if selectionLooksStaleForStarterBots(selectedBots, leadSlug, availableSlugs, members) {
+		members = blankSlateOfficeMembersFromBots(bots, leadSlug, nil)
 	}
 	if len(members) > 0 {
-		// The Librarian and App Builder are built-in, like the lead — present in
-		// every workspace regardless of blueprint or agent selection. Without the
-		// App Builder here, an onboarded office has no app-builder roster member,
-		// so app-builder-owned tasks fall back to the CEO — which lacks the
-		// register_app tool (gated to the app-builder slug) and bypasses the
-		// host-owned build + publish gates.
-		return ensureAppBuilderOfficeMember(ensureLibrarianMember(members))
+		// The blueprint roster stands as selected. The Librarian and App
+		// Builder are no longer appended here: both are retired as default
+		// bots, and their jobs (wiki contribution, app building) are system
+		// skills every bot carries rather than bots of their own.
+		return members
 	}
 	// Defensive fallback used only when the blueprint had zero parseable
-	// agents. Keeps the broker from crashing on empty rosters.
+	// bots. The smallest office that works is the Chief of Staff alone; it
+	// creates specialists on demand instead of shipping an invented team.
 	now := time.Now().UTC().Format(time.RFC3339)
-	return ensureAppBuilderOfficeMember(ensureLibrarianMember([]officeMember{
-		{Slug: "founder", Name: "Founder", Role: "Founder", BuiltIn: true, CreatedBy: "wuphf", CreatedAt: now},
-		{Slug: "operator", Name: "Operator", Role: "Operator", BuiltIn: true, CreatedBy: "wuphf", CreatedAt: now},
-		{Slug: "builder", Name: "Builder", Role: "Builder", CreatedBy: "wuphf", CreatedAt: now},
-		{Slug: "reviewer", Name: "Reviewer", Role: "Reviewer", CreatedBy: "wuphf", CreatedAt: now},
-	}))
+	return []officeMember{
+		{Slug: "cos", Name: company.ChiefOfStaffName(), Role: company.ChiefOfStaffRole(), BuiltIn: true, CreatedBy: "wuphf", CreatedAt: now},
+	}
 }
 
-func blankSlateOfficeMembersFromAgents(agents []operations.StarterAgent, leadSlug string, filter func(string) bool) []officeMember {
-	members := make([]officeMember, 0, len(agents))
+func blankSlateOfficeMembersFromBots(bots []operations.StarterBot, leadSlug string, filter func(string) bool) []officeMember {
+	members := make([]officeMember, 0, len(bots))
 	now := time.Now().UTC().Format(time.RFC3339)
-	for _, agent := range agents {
-		slug := normalizeChannelSlug(operationFirstNonEmpty(agent.Slug, agent.EmployeeBlueprint, operationSlug(agent.Name)))
-		if slug == "" {
+	for _, bot := range bots {
+		// The skip tests the RAW value: normalizeChannelSlug turns a nameless
+		// starter bot into a bot literally called "general".
+		//
+		// Normaliser deliberately UNCHANGED — this becomes officeMember.Slug,
+		// which is persisted and looked up by findMemberLocked. Switching it is
+		// a migration; see broker_indexes.go.
+		raw := operationFirstNonEmpty(bot.Slug, bot.EmployeeBlueprint, operationSlug(bot.Name))
+		if strings.TrimSpace(raw) == "" {
 			continue
 		}
+		slug := normalizeChannelSlug(raw)
 		if filter != nil && !filter(slug) {
 			continue
 		}
-		name := strings.TrimSpace(agent.Name)
+		name := strings.TrimSpace(bot.Name)
 		if name == "" {
 			name = humanizeSlug(slug)
 		}
-		role := strings.TrimSpace(agent.Role)
+		role := strings.TrimSpace(bot.Role)
 		if role == "" {
 			role = name
+		}
+		// The lead's display name is owned by the code, not the blueprint.
+		// Blueprint files predating the rename still say "CEO", and the load
+		// reconciler only fixes that on the NEXT boot — so without this, the
+		// very first session (including the Chief of Staff's intro message,
+		// which interpolates the name) ran under the retired title.
+		if slug == "cos" {
+			name = company.ChiefOfStaffName()
+			role = company.ChiefOfStaffRole()
 		}
 		members = append(members, officeMember{
 			Slug:         slug,
 			Name:         name,
 			Role:         role,
-			Expertise:    normalizeStringList(agent.Expertise),
-			Personality:  strings.TrimSpace(agent.Personality),
+			Expertise:    normalizeStringList(bot.Expertise),
+			Personality:  strings.TrimSpace(bot.Personality),
 			AllowedTools: nil,
 			CreatedBy:    "wuphf",
 			CreatedAt:    now,
-			BuiltIn:      agent.BuiltIn || slug == leadSlug || slug == "operator" || slug == "founder" || slug == "ceo",
+			BuiltIn:      bot.BuiltIn || slug == leadSlug || slug == "operator" || slug == "founder" || slug == "cos",
 		})
 	}
 	return members
 }
 
-func starterAgentSlugSet(agents []operations.StarterAgent) map[string]struct{} {
-	out := make(map[string]struct{}, len(agents))
-	for _, agent := range agents {
-		slug := normalizeChannelSlug(operationFirstNonEmpty(agent.Slug, agent.EmployeeBlueprint, operationSlug(agent.Name)))
-		if slug == "" {
+func starterBotSlugSet(bots []operations.StarterBot) map[string]struct{} {
+	out := make(map[string]struct{}, len(bots))
+	for _, bot := range bots {
+		// The skip tests the RAW value: normalizeChannelSlug turns a nameless
+		// starter bot into a bot literally called "general".
+		//
+		// Normaliser deliberately UNCHANGED — this becomes officeMember.Slug,
+		// which is persisted and looked up by findMemberLocked. Switching it is
+		// a migration; see broker_indexes.go.
+		raw := operationFirstNonEmpty(bot.Slug, bot.EmployeeBlueprint, operationSlug(bot.Name))
+		if strings.TrimSpace(raw) == "" {
 			continue
 		}
+		slug := normalizeChannelSlug(raw)
 		out[slug] = struct{}{}
 	}
 	return out
 }
 
-func selectionLooksStaleForStarterAgents(selectedAgents []string, leadSlug string, availableSlugs map[string]struct{}, members []officeMember) bool {
-	if len(selectedAgents) == 0 || len(members) != 1 {
+func selectionLooksStaleForStarterBots(selectedBots []string, leadSlug string, availableSlugs map[string]struct{}, members []officeMember) bool {
+	if len(selectedBots) == 0 || len(members) != 1 {
 		return false
 	}
 	if leadSlug == "" || members[0].Slug != leadSlug {
@@ -566,11 +653,12 @@ func selectionLooksStaleForStarterAgents(selectedAgents []string, leadSlug strin
 	}
 	hasUnknown := false
 	hasKnownNonLead := false
-	for _, raw := range selectedAgents {
-		slug := normalizeChannelSlug(raw)
-		if slug == "" {
+	for _, raw := range selectedBots {
+		// Bot slugs from the wizard selection: actor normaliser, raw skip.
+		if strings.TrimSpace(raw) == "" {
 			continue
 		}
+		slug := normalizeChannelSlug(raw)
 		if _, ok := availableSlugs[slug]; !ok {
 			hasUnknown = true
 			continue
@@ -582,17 +670,17 @@ func selectionLooksStaleForStarterAgents(selectedAgents []string, leadSlug strin
 	return hasUnknown && !hasKnownNonLead
 }
 
-// agentSelectionFilter returns a membership predicate for the wizard's
-// selectedAgents array. nil input disables filtering (keep all); empty
+// botSelectionFilter returns a membership predicate for the wizard's
+// selectedBots array. nil input disables filtering (keep all); empty
 // array keeps only the lead so the team isn't empty (the caller relies on
 // len(members) == 1 to emit the lead-only system message); a populated
 // array keeps only those slugs, always including the lead.
-func agentSelectionFilter(selectedAgents []string, leadSlug string) func(string) bool {
-	if selectedAgents == nil {
+func botSelectionFilter(selectedBots []string, leadSlug string) func(string) bool {
+	if selectedBots == nil {
 		return nil
 	}
-	allowed := make(map[string]bool, len(selectedAgents)+1)
-	for _, s := range selectedAgents {
+	allowed := make(map[string]bool, len(selectedBots)+1)
+	for _, s := range selectedBots {
 		if slug := normalizeChannelSlug(s); slug != "" {
 			allowed[slug] = true
 		}
@@ -616,25 +704,48 @@ func blankSlateOfficeChannelsFromBlueprint(blueprint operations.Blueprint, membe
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	lead := officeLeadSlugFromMembers(members)
-	channels := []teamChannel{{
-		Slug:        "general",
-		Name:        "general",
-		Description: operationRenderTemplateString(blueprint.Starter.GeneralChannelDescription, replacements),
-		Members:     memberSlugsFromMembers(members),
-		CreatedBy:   "wuphf",
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	}}
+	// #general kill switch, gate 4 of 7. This prepends general as channels[0]
+	// unconditionally, independent of what the blueprint declares, so it is a
+	// resurrection point for every seeded and synthesized office.
+	var channels []teamChannel
+	if generalChannelEnabled() {
+		channels = append(channels, teamChannel{
+			Slug:        GeneralChannelSlug,
+			Name:        GeneralChannelSlug,
+			Description: operationRenderTemplateString(blueprint.Starter.GeneralChannelDescription, replacements),
+			Members:     memberSlugsFromMembers(members),
+			CreatedBy:   "wuphf",
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		})
+	}
+	// Named-channel retirement. A blueprint's own rooms (#product, #gtm, and
+	// whatever a curated blueprint declares) are ordinary named channels, so
+	// they go with the rest of them. Gated as a whole rather than per-slug: the
+	// decision is "does this office get named rooms at all", not "which ones".
+	// The general branch above has its own switch and is unaffected.
+	if !namedChannelsEnabled() {
+		return channels
+	}
 	for _, starter := range blueprint.Starter.Channels {
-		slug := normalizeChannelSlug(operationRenderTemplateString(starter.Slug, replacements))
-		if slug == "" || slug == "general" {
+		rawSlug := operationRenderTemplateString(starter.Slug, replacements)
+		slug := normalizeChannelSlug(rawSlug)
+		// A blueprint that declares general is skipped either way: when the
+		// switch is on it is already channels[0] above, and when it is off it
+		// must not come back in through the blueprint.
+		// Cosmetic: an empty starter slug already normalised to "general" and
+		// was caught by the second clause, so this is honest tidying, not a fix.
+		if strings.TrimSpace(rawSlug) == "" || slug == GeneralChannelSlug {
 			continue
 		}
 		membersList := make([]string, 0, len(starter.Members))
 		for _, member := range starter.Members {
-			memberSlug := normalizeChannelSlug(operationRenderTemplateString(member, replacements))
-			if memberSlug != "" {
-				membersList = append(membersList, memberSlug)
+			// Channel MEMBERS are actor slugs. Under the channel normaliser a
+			// blank entry became "general" and the `!= ""` test kept it, so a
+			// starter channel silently listed #general as one of its members.
+			rawMember := operationRenderTemplateString(member, replacements)
+			if strings.TrimSpace(rawMember) != "" {
+				membersList = append(membersList, normalizeChannelSlug(rawMember))
 			}
 		}
 		channels = append(channels, teamChannel{
@@ -708,9 +819,23 @@ func memberSlugsFromMembers(members []officeMember) []string {
 // so the answer is order-independent — same rationale as officeLeadSlugFrom
 // in office_targets.go (callers pass differently-ordered snapshots; without
 // the sort they'd disagree on the lead in BuiltIn-free rosters).
+//
+// The CEO pass mirrors officeLeadSlugFrom and is load-bearing, not cosmetic.
+// The Librarian and the App Builder are BuiltIn service bots present in
+// every office, and "app-builder" sorts ahead of "cos", so a BuiltIn-first
+// scan handed the lead to the App Builder on every seeded roster: the
+// onboarding kickoff issue was tagged to it instead of the CEO, and the
+// non-general starter channels listed it as their lead. Every other lead
+// lookup in the broker already resolves to the CEO, so this one did too once
+// it stopped answering first.
 func officeLeadSlugFromMembers(members []officeMember) string {
 	sorted := append([]officeMember(nil), members...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Slug < sorted[j].Slug })
+	for _, member := range sorted {
+		if strings.TrimSpace(member.Slug) == "cos" {
+			return "cos"
+		}
+	}
 	for _, member := range sorted {
 		if member.BuiltIn {
 			return strings.TrimSpace(member.Slug)

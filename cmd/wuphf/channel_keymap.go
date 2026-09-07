@@ -58,7 +58,7 @@ func (m channelModel) handleKeyMsg(msg tea.KeyMsg) (channelModel, tea.Cmd) {
 			return m, tea.Quit
 		}
 		m.lastCtrlCAt = now
-		m.setTransientNotice("Press Ctrl+C again to quit WUPHF. Toby will file the exit paperwork.")
+		m.setTransientNotice("Press Ctrl+C again to quit gawkbot. They will wait.")
 		return m, nil
 	case "ctrl+b":
 		if m.isOneOnOne() {
@@ -68,26 +68,26 @@ func (m channelModel) handleKeyMsg(msg tea.KeyMsg) (channelModel, tea.Cmd) {
 		return m, nil
 	case "ctrl+g":
 		if m.isOneOnOne() {
-			m.setTransientNotice("1:1 mode: no sidebar, no distractions, no Toby. Ideal.")
+			m.setTransientNotice("1:1 mode: no sidebar, no distractions. Just the two of you, and one of you is a bot.")
 			return m, nil
 		}
 		if m.quickJumpTarget == quickJumpChannels {
 			m.quickJumpTarget = quickJumpNone
 		} else {
 			m.quickJumpTarget = quickJumpChannels
-			m.setTransientNotice("Quick nav: 1-9 switches channels. Faster than Dwight in a fire drill.")
+			m.setTransientNotice("Quick nav: 1-9 switches channels. The team keeps up.")
 		}
 		return m, nil
 	case "ctrl+o":
 		if m.isOneOnOne() {
-			m.setTransientNotice("1:1 mode: just the direct conversation. Like a conference room with no Toby.")
+			m.setTransientNotice("1:1 mode: just the direct conversation.")
 			return m, nil
 		}
 		if m.quickJumpTarget == quickJumpApps {
 			m.quickJumpTarget = quickJumpNone
 		} else {
 			m.quickJumpTarget = quickJumpApps
-			m.setTransientNotice("Quick nav: 1-9 switches apps. Even faster than Stanley doing the crossword.")
+			m.setTransientNotice("Quick nav: 1-9 switches apps. Still being watched.")
 		}
 		return m, nil
 	case "ctrl+d":
@@ -96,7 +96,7 @@ func (m channelModel) handleKeyMsg(msg tea.KeyMsg) (channelModel, tea.Cmd) {
 			m.activeChannel = "general"
 			m.lastID = ""
 			m.messages = nil
-			m.setTransientNotice("Back to #general — the heart of the office.")
+			m.setTransientNotice("Back to #general — the heart of the team.")
 			return m, pollBroker("", m.activeChannel)
 		}
 		return m, nil
@@ -116,7 +116,7 @@ func (m channelModel) handleKeyMsg(msg tea.KeyMsg) (channelModel, tea.Cmd) {
 			if target == quickJumpChannels {
 				m.setTransientNotice("No channel on that number. Even Michael checks the directory first.")
 			} else {
-				m.setTransientNotice("No app on that number. Try a different one — WUPHF believes in you.")
+				m.setTransientNotice("No app on that number. Try a different one — gawkbot believes in you.")
 			}
 			return m, nil
 		case "esc":
@@ -140,12 +140,8 @@ func (m channelModel) handleKeyMsg(msg tea.KeyMsg) (channelModel, tea.Cmd) {
 			return m, nil
 		case contextPicker:
 			m.picker.SetActive(false)
-			if m.pickerMode == channelPickerIntegrations {
-				m.notice = "Integration canceled."
-			} else {
-				m.initFlow = tui.NewInitFlow()
-				m.notice = "Setup canceled. Come back when you're ready. That's what she said."
-			}
+			m.initFlow = tui.NewInitFlow()
+			m.notice = "Setup canceled. Come back when you're ready. That's what she said."
 			m.pickerMode = channelPickerNone
 			return m, nil
 		case contextAutocomplete, contextMention:
@@ -158,7 +154,7 @@ func (m channelModel) handleKeyMsg(msg tea.KeyMsg) (channelModel, tea.Cmd) {
 			m.memberDraft = nil
 			m.input = nil
 			m.inputPos = 0
-			m.notice = "Agent setup canceled."
+			m.notice = "Bot setup canceled."
 			return m, nil
 		case contextDoctor:
 			m.doctor = nil
@@ -220,11 +216,6 @@ func (m channelModel) handleKeyMsg(msg tea.KeyMsg) (channelModel, tea.Cmd) {
 		m.picker, cmd = m.picker.Update(msg)
 		return m, cmd
 	}
-	if m.initFlow.IsActive() && m.initFlow.Phase() == tui.InitAPIKey {
-		var cmd tea.Cmd
-		m.initFlow, cmd = m.initFlow.Update(msg)
-		return m, cmd
-	}
 	if m.autocomplete.IsVisible() {
 		switch msg.String() {
 		case "tab":
@@ -278,14 +269,14 @@ func (m channelModel) handleKeyMsg(msg tea.KeyMsg) (channelModel, tea.Cmd) {
 			m.notice = "Calendar now shows this week."
 			return m, nil
 		case "f":
-			options := m.buildCalendarAgentPickerOptions()
+			options := m.buildCalendarBotPickerOptions()
 			if len(options) == 0 {
 				m.notice = "No teammate filters available."
 				return m, nil
 			}
 			m.picker = tui.NewPicker("Filter Calendar", options)
 			m.picker.SetActive(true)
-			m.pickerMode = channelPickerCalendarAgent
+			m.pickerMode = channelPickerCalendarBot
 			return m, nil
 		case "a":
 			m.calendarFilter = ""

@@ -1,20 +1,28 @@
 import { create } from "zustand";
 
+import type { ComputerEventPayload } from "../api/computer";
 import {
-  __internal as agentEventTimerInternal,
+  __internal as botEventTimerInternal,
   computePillState,
   type PillState,
-} from "../lib/agentEventTimer";
+} from "../lib/botEventTimer";
 import { DEFAULT_THEME, isTheme, type Theme } from "../lib/themes";
+import {
+  applyComputerEvent,
+  type ComputerLiveState,
+  type ComputerRuntimeBuild,
+  EMPTY_COMPUTER_RUNTIME_BUILD,
+} from "./computerState";
 
-export type { Theme };
+export { MAX_COMPUTER_BUILD_LINES } from "./computerState";
+export type { ComputerLiveState, ComputerRuntimeBuild, Theme };
 
 /**
  * Snapshot payload for the SSE "activity" event. Lane A may not yet emit
  * `kind`; consumers must default to "routine". Lane A omits the field when
  * the classifier hasn't run, which is acceptable.
  */
-export interface AgentActivitySnapshot {
+export interface BotActivitySnapshot {
   slug: string;
   status?: string;
   activity?: string;
@@ -31,7 +39,7 @@ export interface AgentActivitySnapshot {
  * Stored snapshot — extends the wire payload with client-side timestamps used
  * to drive halo decay and idle/dim transitions.
  */
-export interface StoredActivitySnapshot extends AgentActivitySnapshot {
+export interface StoredActivitySnapshot extends BotActivitySnapshot {
   /** Wall-clock ms when this snapshot was received by the client. */
   receivedAtMs: number;
   /**
@@ -41,10 +49,10 @@ export interface StoredActivitySnapshot extends AgentActivitySnapshot {
   haloUntilMs: number;
 }
 
-const { HALO_DECAY_MS } = agentEventTimerInternal;
+const { HALO_DECAY_MS } = botEventTimerInternal;
 
 /**
- * Cap on per-slug history depth in agentActivityHistory. The Tier 2 hover
+ * Cap on per-slug history depth in botActivityHistory. The Tier 2 hover
  * peek surfaces the most recent ≤6 prior events; the buffer holds 8 so the
  * peek has a small forward margin if display rules change.
  */
@@ -73,7 +81,7 @@ const SIDEBAR_SECTIONS_KEY = "wuphf-sidebar-sections";
 
 const _storedSidebarSections = ((): SidebarSectionsState => {
   // v3 MVP (2026-05-25 product call): Channels are first-class and open
-  // by default. Chat is the primary surface; the agent subspace is an
+  // by default. Chat is the primary surface; the bot subspace is an
   // additional view. Existing sessions keep whatever value they previously
   // persisted.
   const def: SidebarSectionsState = {
@@ -103,19 +111,10 @@ function persistSidebarSections(state: SidebarSectionsState): void {
   } catch {}
 }
 
-/**
- * Build the broker's canonical direct-message channel slug for an agent.
- * The broker pairs `<lower>__<higher>` for stable ordering across sides;
- * we pass `humanSlug="human"` to match what `/dm` API endpoints expect.
- */
-export function directChannelSlug(
-  agentSlug: string,
-  humanSlug = "human",
-): string {
-  const a = humanSlug.trim().toLowerCase();
-  const b = agentSlug.trim().toLowerCase();
-  return a > b ? `${b}__${a}` : `${a}__${b}`;
-}
+// directChannelSlug moved to lib/channels.ts so the API layer can build a DM
+// slug without importing this store. Re-exported here because a dozen
+// components import it from this module.
+export { botHomeChannel, directChannelSlug } from "../lib/channels";
 
 /**
  * Sentinel "channel" the onboarding wizard seeds the first-issue draft under so
@@ -150,8 +149,8 @@ export interface AppStore {
   setTheme: (t: Theme) => void;
 
   // Sidebar
-  sidebarAgentsOpen: boolean;
-  toggleSidebarAgents: () => void;
+  sidebarBotsOpen: boolean;
+  toggleSidebarBots: () => void;
   sidebarChannelsOpen: boolean;
   toggleSidebarChannels: () => void;
   /** Tasks group open/closed state. */
@@ -192,9 +191,9 @@ export interface AppStore {
   incrementUnread: (channel: string) => void;
   clearUnread: (channel: string) => void;
 
-  // Agent panel
-  activeAgentSlug: string | null;
-  setActiveAgentSlug: (slug: string | null) => void;
+  // Bot panel
+  activeBotSlug: string | null;
+  setActiveBotSlug: (slug: string | null) => void;
 
   // Command palette — Cmd+K / Ctrl+K quick-jump surface
   commandPaletteOpen: boolean;
@@ -247,6 +246,17 @@ export interface AppStore {
   openUpdateAppDialog: (appId: string, name?: string, seed?: string) => void;
   closeAppBuilderDialog: () => void;
 
+  // Task modal: the ONE surface every task affordance opens. A task card in
+  // the chat stream, a board row, a sub-task row, an inline `DUNDE-72`
+  // reference — all of them set this id instead of navigating, because a
+  // task is not a doorway to a chat room (the office channel owns the
+  // conversation now). Holds the task id, or null when closed. Global rather
+  // than prop-drilled because the call sites live in a dozen unrelated
+  // subtrees; TaskModalHost (mounted once in RootRoute) reads it.
+  taskModalTaskId: string | null;
+  openTaskModal: (taskId: string) => void;
+  closeTaskModal: () => void;
+
   // Optimistic "building…" rows for the Apps sidebar: a 20-60s App Builder
   // build would otherwise be dead air between submit and the app appearing.
   // Keyed by lowercased app name -> { display name, started-at epoch ms }.
@@ -259,20 +269,30 @@ export interface AppStore {
   setOnboardingComplete: (v: boolean) => void;
   resetForOnboarding: () => void;
 
-  // Agent activity (SSE-driven event bubbles)
-  agentActivitySnapshots: Record<string, StoredActivitySnapshot>;
+  // Bot activity (SSE-driven event bubbles)
+  botActivitySnapshots: Record<string, StoredActivitySnapshot>;
   // Per-slug ring buffer of prior snapshots, newest-first, capped at
   // MAX_AGENT_HISTORY. Powers the Tier 2 hover-peek "Recent" list. The
-  // current snapshot lives in agentActivitySnapshots; history holds only
+  // current snapshot lives in botActivitySnapshots; history holds only
   // what was previously current and got displaced by a newer event.
-  agentActivityHistory: Record<string, StoredActivitySnapshot[]>;
-  recordActivitySnapshot: (snap: AgentActivitySnapshot) => void;
+  botActivityHistory: Record<string, StoredActivitySnapshot[]>;
+  recordActivitySnapshot: (snap: BotActivitySnapshot) => void;
 
   // SSE reconnect grace — true after the EventSource has stayed in a
   // not-OPEN state for >5s. Drives the row-dim + bottom-of-rail
   // "Reconnecting…" indicator (eng decision A3).
   isReconnecting: boolean;
   setIsReconnecting: (v: boolean) => void;
+
+  // Bot computers (SSE `computer` events, docs/specs/gawkbot-bot-computers.md).
+  // Per-slug live state: the latest frame, who holds the wheel, and the
+  // lifecycle state. The Computer tab merges its 5s status poll into this
+  // record too, so every surface (tab, chat thumbnails, sidebar glyph)
+  // reads one truth.
+  computerStates: Record<string, ComputerLiveState>;
+  // Machine-wide desktop-image build: events arrive with slug "".
+  computerRuntimeBuild: ComputerRuntimeBuild;
+  recordComputerEvent: (payload: ComputerEventPayload) => void;
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -299,10 +319,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ theme: t });
   },
 
-  sidebarAgentsOpen: _storedSidebarSections.agents,
-  toggleSidebarAgents: () => {
-    const next = !get().sidebarAgentsOpen;
-    set({ sidebarAgentsOpen: next });
+  sidebarBotsOpen: _storedSidebarSections.agents,
+  toggleSidebarBots: () => {
+    const next = !get().sidebarBotsOpen;
+    set({ sidebarBotsOpen: next });
     persistSidebarSections({
       agents: next,
       channels: get().sidebarChannelsOpen,
@@ -315,7 +335,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const next = !get().sidebarChannelsOpen;
     set({ sidebarChannelsOpen: next });
     persistSidebarSections({
-      agents: get().sidebarAgentsOpen,
+      agents: get().sidebarBotsOpen,
       channels: next,
       tasks: get().sidebarTasksOpen,
       apps: get().sidebarAppsOpen,
@@ -326,7 +346,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const next = !get().sidebarTasksOpen;
     set({ sidebarTasksOpen: next });
     persistSidebarSections({
-      agents: get().sidebarAgentsOpen,
+      agents: get().sidebarBotsOpen,
       channels: get().sidebarChannelsOpen,
       tasks: next,
       apps: get().sidebarAppsOpen,
@@ -337,7 +357,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const next = !get().sidebarAppsOpen;
     set({ sidebarAppsOpen: next });
     persistSidebarSections({
-      agents: get().sidebarAgentsOpen,
+      agents: get().sidebarBotsOpen,
       channels: get().sidebarChannelsOpen,
       tasks: get().sidebarTasksOpen,
       apps: next,
@@ -369,7 +389,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setLastMessageId: (id) => set({ lastMessageId: id }),
   clearedMessageIdsByChannel: {},
   setChannelClearMarker: (channel, messageId) => {
-    const ch = channel.trim() || "general";
+    // No "general" fallback. These maps are keyed BY channel; an empty slug
+    // has no channel to key on, so filing it under the lobby silently
+    // attributes state to a room the message never came from -- and once
+    // #general is retired, to a room that does not exist.
+    const ch = channel.trim();
+    if (!ch) return;
     const id = messageId?.trim() || "";
     set((state) => {
       const next = { ...state.clearedMessageIdsByChannel };
@@ -380,7 +405,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
   unreadByChannel: {},
   incrementUnread: (channel) => {
-    const ch = channel.trim() || "general";
+    const ch = channel.trim();
+    if (!ch) return;
     set((state) => ({
       unreadByChannel: {
         ...state.unreadByChannel,
@@ -389,7 +415,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }));
   },
   clearUnread: (channel) => {
-    const ch = channel.trim() || "general";
+    const ch = channel.trim();
+    if (!ch) return;
     set((state) => {
       if ((state.unreadByChannel[ch] ?? 0) === 0) return state;
       return {
@@ -398,8 +425,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     });
   },
 
-  activeAgentSlug: null,
-  setActiveAgentSlug: (slug) => set({ activeAgentSlug: slug }),
+  activeBotSlug: null,
+  setActiveBotSlug: (slug) => set({ activeBotSlug: slug }),
 
   commandPaletteOpen: false,
   setCommandPaletteOpen: (v) => set({ commandPaletteOpen: v }),
@@ -437,6 +464,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ appBuilderDialog: { mode: "update", appId, name, seed } }),
   closeAppBuilderDialog: () => set({ appBuilderDialog: null }),
 
+  taskModalTaskId: null,
+  // Empty / whitespace ids are ignored: a card whose payload lost its task_id
+  // should stay inert rather than pop an un-loadable modal.
+  openTaskModal: (taskId) => {
+    const id = taskId.trim();
+    if (!id) return;
+    set({ taskModalTaskId: id });
+  },
+  closeTaskModal: () => set({ taskModalTaskId: null }),
+
   appBuilds: {},
   noteAppBuilding: (name) =>
     set((state) => ({
@@ -457,14 +494,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
       return { appBuilds: next };
     }),
 
-  agentActivitySnapshots: {},
-  agentActivityHistory: {},
+  botActivitySnapshots: {},
+  botActivityHistory: {},
   recordActivitySnapshot: (snap) => {
     if (typeof snap?.slug !== "string" || snap.slug.length === 0) return;
     const { slug } = snap;
     const now = Date.now();
     set((state) => {
-      const previous = state.agentActivitySnapshots[slug];
+      const previous = state.botActivitySnapshots[slug];
       // Stuck snapshots must NOT bump the halo window — a stuck transition
       // would otherwise visually read as "alive" via the halo glow. Preserve
       // the previous haloUntilMs (or default to a past value if none) so the
@@ -475,23 +512,23 @@ export const useAppStore = create<AppStore>((set, get) => ({
           : now + HALO_DECAY_MS;
       // Push the previous current snapshot onto the per-slug history ring
       // buffer (newest-first). The current snapshot itself stays in
-      // agentActivitySnapshots; history holds only displaced events. First
+      // botActivitySnapshots; history holds only displaced events. First
       // event for a slug leaves history untouched (no previous to keep).
-      const prevHistory = state.agentActivityHistory[slug] ?? [];
+      const prevHistory = state.botActivityHistory[slug] ?? [];
       const nextHistory = previous
         ? [previous, ...prevHistory].slice(0, MAX_AGENT_HISTORY)
         : prevHistory;
       return {
-        agentActivitySnapshots: {
-          ...state.agentActivitySnapshots,
+        botActivitySnapshots: {
+          ...state.botActivitySnapshots,
           [slug]: {
             ...snap,
             receivedAtMs: now,
             haloUntilMs,
           },
         },
-        agentActivityHistory: {
-          ...state.agentActivityHistory,
+        botActivityHistory: {
+          ...state.botActivityHistory,
           [slug]: nextHistory,
         },
       };
@@ -504,6 +541,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ isReconnecting: v });
   },
 
+  computerStates: {},
+  computerRuntimeBuild: EMPTY_COMPUTER_RUNTIME_BUILD,
+  recordComputerEvent: (payload) => {
+    const now = Date.now();
+    set((state) => applyComputerEvent(state, payload, now));
+  },
+
   onboardingComplete: false,
   setOnboardingComplete: (v) => set({ onboardingComplete: v }),
   resetForOnboarding: () =>
@@ -512,7 +556,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       activeThread: null,
       lastMessageId: null,
       clearedMessageIdsByChannel: {},
-      activeAgentSlug: null,
+      activeBotSlug: null,
       lastConversationalChannel: null,
       commandPaletteOpen: false,
       searchOpen: false,
@@ -528,18 +572,18 @@ export const useAppStore = create<AppStore>((set, get) => ({
 }));
 
 /**
- * Derive the current pill state for an agent slug at `nowMs`. When no
+ * Derive the current pill state for a bot slug at `nowMs`. When no
  * snapshot exists for that slug yet, returns "idle" so the pill renders the
  * Office-voice fallback copy. Pure function: relies entirely on the store
  * snapshot and the injected `nowMs`, so the same call site is deterministic
  * under test.
  */
 export function selectPillState(
-  state: Pick<AppStore, "agentActivitySnapshots">,
+  state: Pick<AppStore, "botActivitySnapshots">,
   slug: string,
   nowMs: number,
 ): PillState {
-  const snapshot = state.agentActivitySnapshots[slug];
+  const snapshot = state.botActivitySnapshots[slug];
   if (!snapshot) {
     return "idle";
   }
@@ -551,12 +595,12 @@ export function selectPillState(
   });
 }
 
-export interface AgentPeekData {
+export interface BotPeekData {
   current: StoredActivitySnapshot | undefined;
   history: StoredActivitySnapshot[];
 }
 
-// Stable empty-history reference so selectAgentPeek does not allocate a fresh
+// Stable empty-history reference so selectBotPeek does not allocate a fresh
 // array on every call. Important if the selector is later subscribed via
 // Zustand — equal references avoid spurious re-renders.
 const EMPTY_AGENT_HISTORY: readonly StoredActivitySnapshot[] = Object.freeze(
@@ -568,14 +612,14 @@ const EMPTY_AGENT_HISTORY: readonly StoredActivitySnapshot[] = Object.freeze(
  * Returns an empty history array (not undefined) when nothing has streamed
  * past for that slug yet, so consumers can `.map` without a guard.
  */
-export function selectAgentPeek(
-  state: Pick<AppStore, "agentActivitySnapshots" | "agentActivityHistory">,
+export function selectBotPeek(
+  state: Pick<AppStore, "botActivitySnapshots" | "botActivityHistory">,
   slug: string,
-): AgentPeekData {
+): BotPeekData {
   return {
-    current: state.agentActivitySnapshots[slug],
+    current: state.botActivitySnapshots[slug],
     history:
-      state.agentActivityHistory[slug] ??
+      state.botActivityHistory[slug] ??
       (EMPTY_AGENT_HISTORY as StoredActivitySnapshot[]),
   };
 }

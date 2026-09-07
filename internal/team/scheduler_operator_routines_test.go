@@ -1,8 +1,8 @@
 package team
 
 // Operator routine dispatch: a scheduler job owned by a CUSTOM APP fires the
-// operator agent service (POST /routines/run) instead of posting into an
-// office channel, and the outcome lands in the per-slug run ring. The agent
+// operator bot service (POST /routines/run) instead of posting into an
+// office channel, and the outcome lands in the per-slug run ring. The bot
 // service is stubbed with httptest — everything here is offline.
 
 import (
@@ -20,7 +20,7 @@ import (
 const testOperatorAppID = "app_00000000000000ab"
 
 // registerOperatorRoutine creates an operator routine (owner = custom app id)
-// via the same POST /scheduler/routines contract agents use, then backdates
+// via the same POST /scheduler/routines contract bots use, then backdates
 // NextRun so the next watchdog tick fires it.
 func registerOperatorRoutine(t *testing.T, b *Broker, srv *httptest.Server, prompt string) string {
 	t.Helper()
@@ -89,13 +89,13 @@ func awaitRun(t *testing.T, b *Broker, recorded <-chan string, slug string) sche
 	}
 }
 
-func TestOperatorRoutineFireHitsAgentServiceAndRecordsRun(t *testing.T) {
+func TestOperatorRoutineFireHitsBotServiceAndRecordsRun(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "broker-state.json")
-	b := NewBrokerAt(statePath)
+	b := newBrokerWithTeamRoom(statePath)
 	srv := newRoutineTestServer(t, b)
 
 	var gotBody atomic.Value
-	agentSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	botSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/routines/run" {
 			http.NotFound(w, r)
 			return
@@ -104,8 +104,8 @@ func TestOperatorRoutineFireHitsAgentServiceAndRecordsRun(t *testing.T) {
 		gotBody.Store(string(raw))
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "digest": "the recap", "session_id": "s1"})
 	}))
-	t.Cleanup(agentSrv.Close)
-	t.Setenv("WUPHF_AGENT_URL", agentSrv.URL)
+	t.Cleanup(botSrv.Close)
+	t.Setenv("WUPHF_AGENT_URL", botSrv.URL)
 
 	slug := registerOperatorRoutine(t, b, srv, "Summarize last week's pipeline movement")
 	w, recorded := operatorWatchdog(b)
@@ -121,12 +121,12 @@ func TestOperatorRoutineFireHitsAgentServiceAndRecordsRun(t *testing.T) {
 	raw, _ := gotBody.Load().(string)
 	for _, want := range []string{testOperatorAppID, slug, "Monday pipeline recap", "Summarize last week's pipeline movement"} {
 		if !strings.Contains(raw, want) {
-			t.Fatalf("agent service body missing %q: %s", want, raw)
+			t.Fatalf("bot service body missing %q: %s", want, raw)
 		}
 	}
 	// No office channel got the prompt (operator routines never post to chat).
-	if msgs := b.ChannelMessages("general"); len(msgs) != 0 {
-		t.Fatalf("operator routine leaked into #general: %+v", msgs)
+	if msgs := b.ChannelMessages("team"); len(msgs) != 0 {
+		t.Fatalf("operator routine leaked into #team: %+v", msgs)
 	}
 	// The cron stays alive and re-armed into the future.
 	b.mu.Lock()
@@ -172,11 +172,11 @@ func TestOperatorRoutineOutcomeMapping(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			statePath := filepath.Join(t.TempDir(), "broker-state.json")
-			b := NewBrokerAt(statePath)
+			b := newBrokerWithTeamRoom(statePath)
 			srv := newRoutineTestServer(t, b)
-			agentSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { tc.respond(w) }))
-			t.Cleanup(agentSrv.Close)
-			t.Setenv("WUPHF_AGENT_URL", agentSrv.URL)
+			botSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { tc.respond(w) }))
+			t.Cleanup(botSrv.Close)
+			t.Setenv("WUPHF_AGENT_URL", botSrv.URL)
 
 			slug := registerOperatorRoutine(t, b, srv, "do the thing")
 			w, recorded := operatorWatchdog(b)
@@ -195,7 +195,7 @@ func TestOperatorRoutineOutcomeMapping(t *testing.T) {
 
 func TestOperatorRoutineUnreachableServiceRecordsFailureAndKeepsCron(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "broker-state.json")
-	b := NewBrokerAt(statePath)
+	b := newBrokerWithTeamRoom(statePath)
 	srv := newRoutineTestServer(t, b)
 	// A dead endpoint: the port is closed the moment the server stops.
 	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))

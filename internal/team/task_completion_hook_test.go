@@ -11,14 +11,14 @@ import (
 func newCompletionHookBroker(t *testing.T) *Broker {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
-	b := NewBrokerAt(filepath.Join(t.TempDir(), "state.json"))
+	b := newBrokerWithTeamRoom(filepath.Join(t.TempDir(), "state.json"))
 	b.mu.Lock()
 	b.members = []officeMember{
-		{Slug: "ceo", Name: "CEO"},
+		{Slug: "cos", Name: "CEO"},
 		{Slug: "eng", Name: "Engineer"},
 	}
 	b.channels = []teamChannel{
-		{Slug: "general", Name: "general", Members: []string{"human", "ceo", "eng"}},
+		{Slug: "team", Name: "team", Members: []string{"human", "cos", "eng"}},
 	}
 	b.mu.Unlock()
 	return b
@@ -27,15 +27,15 @@ func newCompletionHookBroker(t *testing.T) *Broker {
 func completionHookCreateDefinedTask(t *testing.T, b *Broker) string {
 	t.Helper()
 	created, err := b.MutateTask(TaskPostRequest{
-		Action: "create", Channel: "general", Title: "Close the Acme Corp renewal",
+		Action: "create", Channel: "team", Title: "Close the Acme Corp renewal",
 		Details: "Coordinate with @eng on the Acme Corp renewal brief.",
-		Owner:   "eng", CreatedBy: "ceo",
+		Owner:   "eng", CreatedBy: "cos",
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	if _, err := b.MutateTask(TaskPostRequest{
-		Action: "define", ID: created.Task.ID, Channel: "general", CreatedBy: "ceo",
+		Action: "define", ID: created.Task.ID, Channel: "team", CreatedBy: "cos",
 		Definition: &TaskDefinition{
 			Goal:            "Renew Acme Corp for 12 months",
 			Deliverables:    []TaskDeliverable{{Name: "renewal brief", Format: "markdown in the wiki"}},
@@ -55,14 +55,14 @@ func completionHookCreateDefinedTask(t *testing.T, b *Broker) string {
 func finishTask(t *testing.T, b *Broker, taskID, artifactPath string) error {
 	t.Helper()
 	if _, err := b.MutateTask(TaskPostRequest{
-		Action: "complete", ID: taskID, Channel: "general", CreatedBy: "eng",
+		Action: "complete", ID: taskID, Channel: "team", CreatedBy: "eng",
 		ArtifactPath: artifactPath,
 	}); err != nil {
 		return err
 	}
 	if cur := b.TaskByID(taskID); cur != nil && !strings.EqualFold(strings.TrimSpace(cur.status), "done") {
 		_, err := b.MutateTask(TaskPostRequest{
-			Action: "approve", ID: taskID, Channel: "general", CreatedBy: "ceo",
+			Action: "approve", ID: taskID, Channel: "team", CreatedBy: "cos",
 			ArtifactPath: artifactPath,
 		})
 		return err
@@ -89,10 +89,18 @@ func TestArtifactGate_BlocksDefinedTaskWithoutArtifact(t *testing.T) {
 	}
 }
 
-// Passing artifact_path on the completing mutation clears the gate, stores
-// the artifact on the wire shape, and fires the deterministic done-post +
-// Inbox notice.
-func TestArtifactGate_DonePostAndNoticeWithArtifact(t *testing.T) {
+// Passing artifact_path on the completing mutation clears the gate, stores the
+// artifact on the wire shape, and fires the deterministic done-post — and
+// nothing else.
+//
+// This test used to also require exactly one Inbox notice alongside the post
+// (and asserted it was non-blocking, unscheduled, and active). That card is
+// gone: it repeated the chat post's sentence verbatim and offered a single
+// "Acknowledge" button, so the only thing a human could do with it was dismiss
+// it — every finished task cost a click for news they had already read in the
+// channel. Cards are for requests that need a decision. The assertion is
+// inverted rather than dropped so a re-introduced card fails here.
+func TestArtifactGate_DonePostAndNoInboxCard(t *testing.T) {
 	b := newCompletionHookBroker(t)
 	taskID := completionHookCreateDefinedTask(t, b)
 
@@ -107,34 +115,27 @@ func TestArtifactGate_DonePostAndNoticeWithArtifact(t *testing.T) {
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	// Exactly one chat post announces the delivery.
+	donePosts := 0
 	donePost := ""
 	for _, msg := range b.messages {
 		if msg.Kind == taskDeliveredMessageKind && msg.SourceTaskID == taskID {
+			donePosts++
 			donePost = msg.Content
 		}
+	}
+	if donePosts != 1 {
+		t.Fatalf("expected exactly one done-post, got %d", donePosts)
 	}
 	if !strings.Contains(donePost, "delivered: Renewal brief published to the wiki") ||
 		!strings.Contains(donePost, "artifact: "+artifact) {
 		t.Fatalf("done-post missing summary/artifact: %q", donePost)
 	}
-	noticeCount := 0
+	// And no Inbox card is raised for it.
 	for _, req := range b.requests {
-		if req.Kind != "notice" || strings.TrimSpace(req.IssueID) != taskID {
-			continue
+		if req.Kind == "notice" && strings.TrimSpace(req.IssueID) == taskID {
+			t.Fatalf("a delivery must raise no Inbox card, got %+v", req)
 		}
-		noticeCount++
-		if req.Blocking || req.Required {
-			t.Fatalf("delivery notice must be non-blocking/non-required: %+v", req)
-		}
-		if !requestIsActive(req) {
-			t.Fatalf("delivery notice must be active: %+v", req)
-		}
-		if req.ReminderAt != "" || req.FollowUpAt != "" {
-			t.Fatalf("delivery notice must not schedule reminders: %+v", req)
-		}
-	}
-	if noticeCount != 1 {
-		t.Fatalf("expected exactly one delivery notice, got %d", noticeCount)
 	}
 }
 
@@ -143,8 +144,8 @@ func TestArtifactGate_DonePostAndNoticeWithArtifact(t *testing.T) {
 func TestArtifactGate_LegacyTaskWithoutDefinitionUnaffected(t *testing.T) {
 	b := newCompletionHookBroker(t)
 	created, err := b.MutateTask(TaskPostRequest{
-		Action: "create", Channel: "general", Title: "Send the weekly digest",
-		Details: "Send it to the list.", Owner: "eng", CreatedBy: "ceo",
+		Action: "create", Channel: "team", Title: "Send the weekly digest",
+		Details: "Send it to the list.", Owner: "eng", CreatedBy: "cos",
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -165,7 +166,7 @@ func TestArtifactGate_RejectsInvalidArtifactPath(t *testing.T) {
 	taskID := completionHookCreateDefinedTask(t, b)
 	for _, bad := range []string{"/etc/passwd", "../../secrets.md"} {
 		_, err := b.MutateTask(TaskPostRequest{
-			Action: "comment", ID: taskID, Channel: "general", CreatedBy: "eng",
+			Action: "comment", ID: taskID, Channel: "team", CreatedBy: "eng",
 			Details: "note", ArtifactPath: bad,
 		})
 		var mutationErr *TaskMutationError
@@ -181,8 +182,8 @@ func TestArtifactGate_RejectsInvalidArtifactPath(t *testing.T) {
 func TestReopen_OwnedTaskReturnsToRunning(t *testing.T) {
 	b := newCompletionHookBroker(t)
 	created, err := b.MutateTask(TaskPostRequest{
-		Action: "create", Channel: "general", Title: "Ship the launch checklist",
-		Details: "Checklist work.", Owner: "eng", CreatedBy: "ceo",
+		Action: "create", Channel: "team", Title: "Ship the launch checklist",
+		Details: "Checklist work.", Owner: "eng", CreatedBy: "cos",
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -191,7 +192,7 @@ func TestReopen_OwnedTaskReturnsToRunning(t *testing.T) {
 	if err := finishTask(t, b, created.Task.ID, ""); err != nil {
 		t.Fatalf("finish: %v", err)
 	}
-	if _, err := b.MutateTask(TaskPostRequest{Action: "reopen", ID: created.Task.ID, Channel: "general", CreatedBy: "ceo"}); err != nil {
+	if _, err := b.MutateTask(TaskPostRequest{Action: "reopen", ID: created.Task.ID, Channel: "team", CreatedBy: "cos"}); err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
 	task := b.TaskByID(created.Task.ID)
@@ -209,16 +210,16 @@ func TestReopen_OwnedTaskReturnsToRunning(t *testing.T) {
 func TestReopen_OwnerlessTaskReturnsToReady(t *testing.T) {
 	b := newCompletionHookBroker(t)
 	created, err := b.MutateTask(TaskPostRequest{
-		Action: "create", Channel: "general", Title: "Backlog item to triage",
-		Details: "No owner yet.", CreatedBy: "ceo",
+		Action: "create", Channel: "team", Title: "Backlog item to triage",
+		Details: "No owner yet.", CreatedBy: "cos",
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if _, err := b.MutateTask(TaskPostRequest{Action: "cancel", ID: created.Task.ID, Channel: "general", CreatedBy: "ceo"}); err != nil {
+	if _, err := b.MutateTask(TaskPostRequest{Action: "cancel", ID: created.Task.ID, Channel: "team", CreatedBy: "cos"}); err != nil {
 		t.Fatalf("cancel: %v", err)
 	}
-	if _, err := b.MutateTask(TaskPostRequest{Action: "reopen", ID: created.Task.ID, Channel: "general", CreatedBy: "ceo"}); err != nil {
+	if _, err := b.MutateTask(TaskPostRequest{Action: "reopen", ID: created.Task.ID, Channel: "team", CreatedBy: "cos"}); err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
 	task := b.TaskByID(created.Task.ID)
@@ -267,7 +268,7 @@ func TestTaskCompletionEntities_Deterministic(t *testing.T) {
 	task := teamTask{
 		ID:      "TASK-9",
 		Title:   "Close the renewal with @eng",
-		Details: "Loop in @ceo and @human for sign-off. cc @eng again.",
+		Details: "Loop in @cos and @human for sign-off. cc @eng again.",
 		Definition: &TaskDefinition{
 			Goal: "Renew the Acme Corp account and brief Globex Industries on timing",
 			Deliverables: []TaskDeliverable{
@@ -278,7 +279,7 @@ func TestTaskCompletionEntities_Deterministic(t *testing.T) {
 	got := taskCompletionEntities(task)
 	want := map[string]EntityKind{
 		"eng":               EntityKindPeople,
-		"ceo":               EntityKindPeople,
+		"cos":               EntityKindPeople,
 		"acme-corp":         EntityKindCompanies,
 		"globex-industries": EntityKindCompanies,
 	}
@@ -337,8 +338,12 @@ func TestTaskDeliveredContentLine(t *testing.T) {
 	if got := taskDeliveredContentLine(task); got != "Close the renewal delivered: Renew Acme" {
 		t.Fatalf("goal fallback wrong: %q", got)
 	}
+	// No definition at all → the summary falls back to the title, so there is
+	// nothing to add. Saying it twice ("Close the renewal delivered: Close the
+	// renewal") is what this line used to do and what shipped to a founder's
+	// screen; the title is stated once now.
 	task.Definition = nil
-	if got := taskDeliveredContentLine(task); got != "Close the renewal delivered: Close the renewal" {
+	if got := taskDeliveredContentLine(task); got != "Close the renewal delivered" {
 		t.Fatalf("title fallback wrong: %q", got)
 	}
 }

@@ -13,7 +13,7 @@ import { SeverityGradeCard } from "./SeverityGradeCard";
 
 interface DecisionPacketViewProps {
   packet: DecisionPacket;
-  /** Streaming state: owner agent still working. Locks decision buttons. */
+  /** Streaming state: owner bot still working. Locks decision buttons. */
   isStreaming?: boolean;
   /** Persistence-error banner shown above everything else. */
   hasPersistenceError?: boolean;
@@ -146,8 +146,7 @@ export function DecisionPacketView({
           </h3>
           {isStreaming ? (
             <p className="packet-streaming-hint">
-              Owner agent still working… acceptance criteria can update
-              mid-view.
+              Owner bot still working… acceptance criteria can update mid-view.
             </p>
           ) : null}
           <div className="packet-report">
@@ -435,27 +434,10 @@ function DiscussionSection({ feedback, channel }: DiscussionSectionProps) {
       {feedback.length === 0 ? (
         <p className="packet-discussion-empty">
           No review notes yet. Approvals, requested changes, and reviewer notes
-          appear here.{" "}
-          {channelSlug ? (
-            <>
-              Chat about this task in{" "}
-              <button
-                type="button"
-                className="packet-discussion-channel-link"
-                onClick={() =>
-                  void router.navigate({
-                    to: "/channels/$channelSlug",
-                    params: { channelSlug },
-                  })
-                }
-              >
-                #{channelSlug}
-              </button>
-              .
-            </>
-          ) : (
-            "Chat about this task in its channel."
-          )}
+          appear here.
+          {/* No channel doorway from a task: the office is one room, and the
+              discussion lives in the channel the task was created from, which
+              the sidebar lists directly. */}
         </p>
       ) : (
         <ol className="packet-discussion-thread">

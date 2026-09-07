@@ -10,7 +10,7 @@ package team
 //     (pins the adversarial-fix: isHumanMessageSender("") returns true,
 //     but the empty-From guard in appendMessageLocked and bootstrap must
 //     prevent a false positive).
-//  4. Agent-only message in log → restart → humanHasPosted == false.
+//  4. Bot-only message in log → restart → humanHasPosted == false.
 //
 // Each test uses the standard newTestBroker/saveLocked/reloadedBroker
 // pattern (same as TestBrokerSurfaceMetadataPersists and friends) so
@@ -68,7 +68,7 @@ func seedAndReload(t *testing.T, b *Broker) *Broker {
 	}
 	b.mu.Unlock()
 
-	fresh := NewBrokerAt(b.statePath)
+	fresh := newBrokerWithTeamRoom(b.statePath)
 	if err := fresh.loadState(); err != nil {
 		t.Fatalf("loadState: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestBootstrapHumanHasPosted_HumanMessage(t *testing.T) {
 		{
 			ID:        "msg-1",
 			From:      "human:najm",
-			Channel:   "general",
+			Channel:   "team",
 			Content:   "hello from a human",
 			Timestamp: "2026-05-06T10:00:00Z",
 		},
@@ -146,7 +146,7 @@ func TestBootstrapHumanHasPosted_EmptyFromLatch(t *testing.T) {
 				{
 					ID:        "msg-1",
 					From:      tc.from,
-					Channel:   "general",
+					Channel:   "team",
 					Content:   "mysterious origin",
 					Timestamp: "2026-05-06T10:00:00Z",
 				},
@@ -166,7 +166,7 @@ func TestBootstrapHumanHasPosted_EmptyFromLatch(t *testing.T) {
 }
 
 // TestBootstrapHumanHasPosted_AgentOnlyMessages verifies that a log
-// containing only agent-authored messages leaves humanHasPosted false
+// containing only bot-authored messages leaves humanHasPosted false
 // after a broker restart.
 func TestBootstrapHumanHasPosted_AgentOnlyMessages(t *testing.T) {
 	b := newTestBroker(t)
@@ -175,16 +175,16 @@ func TestBootstrapHumanHasPosted_AgentOnlyMessages(t *testing.T) {
 	b.messages = []channelMessage{
 		{
 			ID:        "msg-1",
-			From:      "ceo",
-			Channel:   "general",
-			Content:   "agent message one",
+			From:      "cos",
+			Channel:   "team",
+			Content:   "bot message one",
 			Timestamp: "2026-05-06T10:00:00Z",
 		},
 		{
 			ID:        "msg-2",
 			From:      "eng",
-			Channel:   "general",
-			Content:   "agent message two",
+			Channel:   "team",
+			Content:   "bot message two",
 			Timestamp: "2026-05-06T10:01:00Z",
 		},
 	}
@@ -193,9 +193,9 @@ func TestBootstrapHumanHasPosted_AgentOnlyMessages(t *testing.T) {
 	reloaded := seedAndReload(t, b)
 
 	if reloaded.HumanHasPosted() {
-		t.Fatal("agent-only log: expected humanHasPosted=false after restart, got true")
+		t.Fatal("bot-only log: expected humanHasPosted=false after restart, got true")
 	}
 	if metaHumanHasPosted(t, reloaded) {
-		t.Fatal("agent-only log: expected meta.humanHasPosted=false on /office-members, got true")
+		t.Fatal("bot-only log: expected meta.humanHasPosted=false on /office-members, got true")
 	}
 }

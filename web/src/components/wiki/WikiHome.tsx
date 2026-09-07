@@ -7,7 +7,7 @@ import {
   type WikiCatalogEntry,
   type WikiSearchHit,
 } from "../../api/wiki";
-import { formatAgentName } from "../../lib/agentName";
+import { formatBotName } from "../../lib/botName";
 import { formatRelativeTime, pluralize } from "../../lib/format";
 import NewArticleModal from "./NewArticleModal";
 import { categoryLabel } from "./WikiCategoryPage";
@@ -123,7 +123,7 @@ export default function WikiHome({
   return (
     <main className="wk-home" data-testid="wk-home">
       <header className="wk-home-masthead">
-        <h1 className="wk-home-title">Company Brain</h1>
+        <h1 className="wk-home-title">Team Wiki</h1>
         <p className="wk-home-tagline">
           Your team’s encyclopedia ·{" "}
           {`${catalog.length} ${pluralize(catalog.length, "article")}`}
@@ -144,8 +144,8 @@ export default function WikiHome({
             type="search"
             className="wk-home-search-input"
             data-testid="wk-home-search"
-            placeholder="Search the company brain"
-            aria-label="Search the company brain"
+            placeholder="Search the wiki"
+            aria-label="Search the wiki"
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
@@ -240,7 +240,7 @@ export default function WikiHome({
                 <li key={entry.sha}>
                   <span className="wk-home-recent-msg">{entry.message}</span>
                   <span className="wk-home-recent-meta">
-                    {formatAgentName(entry.author_slug)} ·{" "}
+                    {formatBotName(entry.author_slug)} ·{" "}
                     {safeRelative(entry.timestamp)}
                   </span>
                   {entry.paths.slice(0, 3).map((p) => (
@@ -273,7 +273,7 @@ export default function WikiHome({
                     {entry.title}
                   </a>
                   <span className="wk-home-recent-meta">
-                    {formatAgentName(entry.author_slug)} ·{" "}
+                    {formatBotName(entry.author_slug)} ·{" "}
                     {safeRelative(entry.last_edited_ts)}
                   </span>
                 </li>

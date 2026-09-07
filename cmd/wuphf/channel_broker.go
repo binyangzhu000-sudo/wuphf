@@ -17,7 +17,6 @@ import (
 	"github.com/nex-crm/wuphf/cmd/wuphf/channelui"
 	"github.com/nex-crm/wuphf/internal/brokeraddr"
 	"github.com/nex-crm/wuphf/internal/config"
-	"github.com/nex-crm/wuphf/internal/setup"
 	"github.com/nex-crm/wuphf/internal/team"
 	"github.com/nex-crm/wuphf/internal/tui"
 )
@@ -186,21 +185,21 @@ func pollChannels() tea.Cmd {
 	}
 }
 
-// createDMChannel calls POST /channels/dm to open or find a 1:1 DM with agentSlug.
-func createDMChannel(agentSlug string) tea.Cmd {
+// createDMChannel calls POST /channels/dm to open or find a 1:1 DM with botSlug.
+func createDMChannel(botSlug string) tea.Cmd {
 	return func() tea.Msg {
 		body, _ := json.Marshal(map[string]any{
-			"members": []string{"human", agentSlug},
+			"members": []string{"human", botSlug},
 			"type":    "direct",
 		})
 		req, err := newBrokerRequest(context.Background(), http.MethodPost, "http://127.0.0.1:7890/channels/dm", bytes.NewReader(body))
 		if err != nil {
-			return channelDMCreatedMsg{err: err, agentSlug: agentSlug}
+			return channelDMCreatedMsg{err: err, botSlug: botSlug}
 		}
 		client := &http.Client{Timeout: 2 * time.Second}
 		resp, err := client.Do(req)
 		if err != nil {
-			return channelDMCreatedMsg{err: err, agentSlug: agentSlug}
+			return channelDMCreatedMsg{err: err, botSlug: botSlug}
 		}
 		defer resp.Body.Close()
 		var result struct {
@@ -208,9 +207,9 @@ func createDMChannel(agentSlug string) tea.Cmd {
 			Name string `json:"name"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return channelDMCreatedMsg{err: err, agentSlug: agentSlug}
+			return channelDMCreatedMsg{err: err, botSlug: botSlug}
 		}
-		return channelDMCreatedMsg{slug: result.Slug, name: result.Name, agentSlug: agentSlug}
+		return channelDMCreatedMsg{slug: result.Slug, name: result.Name, botSlug: botSlug}
 	}
 }
 
@@ -230,17 +229,17 @@ func pollHealth() tea.Cmd {
 			return channelHealthMsg{}
 		}
 		var result struct {
-			Status        string `json:"status"`
-			SessionMode   string `json:"session_mode"`
-			OneOnOneAgent string `json:"one_on_one_agent"`
+			Status      string `json:"status"`
+			SessionMode string `json:"session_mode"`
+			OneOnOneBot string `json:"one_on_one_agent"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 			return channelHealthMsg{Connected: true}
 		}
 		return channelHealthMsg{
-			Connected:     true,
-			SessionMode:   result.SessionMode,
-			OneOnOneAgent: result.OneOnOneAgent,
+			Connected:   true,
+			SessionMode: result.SessionMode,
+			OneOnOneBot: result.OneOnOneBot,
 		}
 	}
 }
@@ -411,8 +410,8 @@ func pollUsage() tea.Cmd {
 		if err := json.Unmarshal(body, &result); err != nil {
 			return channelUsageMsg{}
 		}
-		if result.Agents == nil {
-			result.Agents = make(map[string]channelui.UsageTotals)
+		if result.Bots == nil {
+			result.Bots = make(map[string]channelui.UsageTotals)
 		}
 		return channelUsageMsg{usage: result}
 	}
@@ -723,7 +722,7 @@ func postInterviewAnswer(interview channelui.Interview, choiceID, choiceText, cu
 // them here keeps the wire shape and timeout/error handling visible in
 // one file; the call sites in channel_commands.go just say "post X."
 //
-// The channelMentionAgents helper joins the static @mention defaults
+// The channelMentionBots helper joins the static @mention defaults
 // with dynamic office members; it lives here because @mention rendering
 // happens in the same composer message-shape pipeline as broker posts.
 
@@ -757,10 +756,10 @@ func postToChannel(text string, replyTo string, channel string) tea.Cmd {
 	}
 }
 
-func channelMentionAgents(members []channelui.Member) []tui.AgentMention {
-	defaults := []tui.AgentMention{
-		{Slug: "all", Name: "All agents"},
-		{Slug: "ceo", Name: "CEO"},
+func channelMentionBots(members []channelui.Member) []tui.BotMention {
+	defaults := []tui.BotMention{
+		{Slug: "all", Name: "All bots"},
+		{Slug: "cos", Name: "Chief of Staff"},
 		{Slug: "pm", Name: "Product Manager"},
 		{Slug: "fe", Name: "Frontend Engineer"},
 		{Slug: "be", Name: "Backend Engineer"},
@@ -770,7 +769,7 @@ func channelMentionAgents(members []channelui.Member) []tui.AgentMention {
 		{Slug: "cro", Name: "CRO"},
 	}
 	seen := make(map[string]bool, len(defaults))
-	mentions := make([]tui.AgentMention, 0, len(defaults)+len(members))
+	mentions := make([]tui.BotMention, 0, len(defaults)+len(members))
 	for _, ag := range defaults {
 		seen[ag.Slug] = true
 		mentions = append(mentions, ag)
@@ -780,7 +779,7 @@ func channelMentionAgents(members []channelui.Member) []tui.AgentMention {
 			continue
 		}
 		seen[member.Slug] = true
-		mentions = append(mentions, tui.AgentMention{Slug: member.Slug, Name: channelui.DisplayName(member.Slug)})
+		mentions = append(mentions, tui.BotMention{Slug: member.Slug, Name: channelui.DisplayName(member.Slug)})
 	}
 	return mentions
 }
@@ -824,10 +823,10 @@ func invokeSkill(name string) tea.Cmd {
 	}
 }
 
-func resetDMSession(agent string, channel string) tea.Cmd {
+func resetDMSession(bot string, channel string) tea.Cmd {
 	return func() tea.Msg {
 		body, _ := json.Marshal(map[string]any{
-			"agent":   agent,
+			"agent":   bot,
 			"channel": channel,
 		})
 		req, err := newBrokerRequest(context.Background(), http.MethodPost, "http://127.0.0.1:7890/reset-dm", bytes.NewReader(body))
@@ -863,22 +862,22 @@ func resetTeamSession(oneOnOne bool) tea.Cmd {
 			return channelResetDoneMsg{err: err}
 		}
 		mode := team.SessionModeOffice
-		agent := ""
+		bot := ""
 		if oneOnOne {
 			mode = team.SessionModeOneOnOne
 		}
 		if oneOnOne {
-			return channelResetDoneMsg{notice: "Direct session reset. Agent pane reloaded in place.", sessionMode: mode, oneOnOneAgent: agent}
+			return channelResetDoneMsg{notice: "Direct session reset. Bot pane reloaded in place. Nobody else is looking.", sessionMode: mode, oneOnOneBot: bot}
 		}
-		return channelResetDoneMsg{notice: "Office reset. Team panes reloaded in place.", sessionMode: mode, oneOnOneAgent: agent}
+		return channelResetDoneMsg{notice: "Office reset. Team panes reloaded in place.", sessionMode: mode, oneOnOneBot: bot}
 	}
 }
 
-func switchSessionMode(mode, agent string) tea.Cmd {
+func switchSessionMode(mode, bot string) tea.Cmd {
 	return func() tea.Msg {
 		body, _ := json.Marshal(map[string]any{
 			"mode":  mode,
-			"agent": agent,
+			"agent": bot,
 		})
 		req, err := newBrokerRequest(context.Background(), http.MethodPost, "http://127.0.0.1:7890/session-mode", bytes.NewReader(body))
 		if err != nil {
@@ -895,12 +894,12 @@ func switchSessionMode(mode, agent string) tea.Cmd {
 			return channelResetDoneMsg{err: fmt.Errorf("%s", strings.TrimSpace(string(raw)))}
 		}
 		var result struct {
-			SessionMode   string `json:"session_mode"`
-			OneOnOneAgent string `json:"one_on_one_agent"`
+			SessionMode string `json:"session_mode"`
+			OneOnOneBot string `json:"one_on_one_agent"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 			result.SessionMode = mode
-			result.OneOnOneAgent = agent
+			result.OneOnOneBot = bot
 		}
 
 		l, err := team.NewLauncher("")
@@ -916,15 +915,15 @@ func switchSessionMode(mode, agent string) tea.Cmd {
 		switch team.NormalizeSessionMode(result.SessionMode) {
 		case team.SessionModeOneOnOne:
 			return channelResetDoneMsg{
-				notice:        "Direct 1:1 with " + channelui.DisplayName(team.NormalizeOneOnOneAgent(result.OneOnOneAgent)) + " is ready.",
-				sessionMode:   result.SessionMode,
-				oneOnOneAgent: result.OneOnOneAgent,
+				notice:      "Direct 1:1 with " + channelui.DisplayName(team.NormalizeOneOnOneBot(result.OneOnOneBot)) + " is ready.",
+				sessionMode: result.SessionMode,
+				oneOnOneBot: result.OneOnOneBot,
 			}
 		default:
 			return channelResetDoneMsg{
-				notice:        "Office mode is ready.",
-				sessionMode:   result.SessionMode,
-				oneOnOneAgent: result.OneOnOneAgent,
+				notice:      "Office mode is ready.",
+				sessionMode: result.SessionMode,
+				oneOnOneBot: result.OneOnOneBot,
 			}
 		}
 	}
@@ -951,19 +950,16 @@ func switchFocusMode(enabled bool) tea.Cmd {
 
 func applyTeamSetup() tea.Cmd {
 	return func() tea.Msg {
-		notice, err := setup.InstallLatestCLI(context.Background())
-		if err != nil {
-			return channelInitDoneMsg{err: err}
-		}
+		notice := "Setup saved."
 		cfg, _ := config.Load()
 		if current := strings.TrimSpace(os.Getenv("WUPHF_HEADLESS_PROVIDER")); current != "" {
-			return channelInitDoneMsg{notice: notice + " Setup saved. Restart WUPHF to reload the " + current + " office runtime with the new configuration."}
+			return channelInitDoneMsg{notice: notice + " Setup saved. Restart gawkbot to reload the " + current + " office runtime with the new configuration."}
 		}
 		if config.ResolveLLMProvider("") == "codex" || strings.TrimSpace(cfg.LLMProvider) == "codex" {
-			return channelInitDoneMsg{notice: notice + " Codex was saved as the LLM provider. Restart WUPHF to launch the headless Codex office runtime."}
+			return channelInitDoneMsg{notice: notice + " Codex was saved as the LLM provider. Restart gawkbot to launch the headless Codex office runtime."}
 		}
 		if config.ResolveLLMProvider("") == "opencode" || strings.TrimSpace(cfg.LLMProvider) == "opencode" {
-			return channelInitDoneMsg{notice: notice + " Opencode was saved as the LLM provider. Restart WUPHF to launch the headless Opencode office runtime."}
+			return channelInitDoneMsg{notice: notice + " Opencode was saved as the LLM provider. Restart gawkbot to launch the headless Opencode office runtime."}
 		}
 		l, err := team.NewLauncher("")
 		if err != nil {
@@ -994,7 +990,7 @@ func applyProviderSelection(providerName string) tea.Cmd {
 		}
 
 		if current := strings.TrimSpace(os.Getenv("WUPHF_HEADLESS_PROVIDER")); current != "" {
-			return channelInitDoneMsg{notice: "Provider switched to " + providerName + ". Restart WUPHF to reload the office runtime with the new configuration."}
+			return channelInitDoneMsg{notice: "Provider switched to " + providerName + ". Restart gawkbot to reload the team runtime with the new configuration."}
 		}
 		if providerName == "codex" {
 			l, err := team.NewLauncher("")
@@ -1004,7 +1000,7 @@ func applyProviderSelection(providerName string) tea.Cmd {
 			if err := l.ReconfigureSession(); err != nil {
 				return channelInitDoneMsg{err: err}
 			}
-			return channelInitDoneMsg{notice: "Provider switched to codex. Claude teammate panes were stopped. Restart WUPHF to launch the headless Codex office runtime."}
+			return channelInitDoneMsg{notice: "Provider switched to codex. Claude teammate panes were stopped. Restart gawkbot to launch the headless Codex office runtime."}
 		}
 		if providerName == "opencode" {
 			l, err := team.NewLauncher("")
@@ -1014,10 +1010,10 @@ func applyProviderSelection(providerName string) tea.Cmd {
 			if err := l.ReconfigureSession(); err != nil {
 				return channelInitDoneMsg{err: err}
 			}
-			return channelInitDoneMsg{notice: "Provider switched to opencode. Claude teammate panes were stopped. Restart WUPHF to launch the headless Opencode office runtime."}
+			return channelInitDoneMsg{notice: "Provider switched to opencode. Claude teammate panes were stopped. Restart gawkbot to launch the headless Opencode office runtime."}
 		}
 		if currentProvider == "codex" || currentProvider == "opencode" {
-			return channelInitDoneMsg{notice: "Provider switched to " + providerName + ". Restart WUPHF to reload the office runtime with the new configuration."}
+			return channelInitDoneMsg{notice: "Provider switched to " + providerName + ". Restart gawkbot to reload the team runtime with the new configuration."}
 		}
 
 		l, err := team.NewLauncher("")

@@ -3,6 +3,7 @@ package team
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 	"time"
@@ -15,7 +16,7 @@ import (
 var issueMentionRegex = regexp.MustCompile(`(?i)(?:^|[\s,.;:!?(\[])@([a-z][a-z0-9-]{1,40})\b`)
 
 // parseAtMentions extracts unique @slug mentions from a comment body
-// in left-to-right order. Used to wake the right agents when a human
+// in left-to-right order. Used to wake the right bots when a human
 // comments on an Issue. Returns lowercased slugs.
 func parseAtMentions(body string) []string {
 	matches := issueMentionRegex.FindAllStringSubmatch(body, -1)
@@ -44,9 +45,42 @@ func parseAtMentions(body string) []string {
 // postTaskReassignNotificationsLocked posts the channel announcement plus DMs
 // to the new owner and previous owner whenever a task ownership change happens.
 // The CEO is tagged in the channel message rather than DM'd (CEO is the human
-// user; human↔ceo self-DM is not a valid DM target).
+// user; human↔cos self-DM is not a valid DM target).
 //
 // Must be called while b.mu is held for write.
+// taskCardHasNoHome reports whether a card ABOUT this task has nowhere to go,
+// and logs it when so.
+//
+// A task with no channel has no conversation. A card about it is an OPTIONAL
+// write, so it is SKIPPED rather than redirected: posting it into the acting
+// bot's DM would drop a card about task X into a conversation that may have
+// nothing to do with task X, and defaulting it to a shared room is the exact
+// laundering the channel retirement exists to stop. Skipping writes nothing,
+// which is the strictest available answer.
+//
+// It is logged rather than silent for one reason: a homeless task is an
+// ANOMALY, not a normal state. If these fire in volume, something upstream is
+// minting tasks with no conversation home, and this skip is the only place that
+// would ever know. Silent, it turns an upstream bug into "I reassigned that and
+// nothing happened" weeks later with no thread to pull.
+//
+// The log names WHICH card was dropped, not just that one was: reassign,
+// cancel, and rejection cards are the ones a human is most likely to come
+// asking about. Informational, not a warning — a homeless task genuinely has
+// nowhere to post, so this is expected behaviour, just expected behaviour
+// somebody may need to see.
+func taskCardHasNoHome(card string, task *teamTask) bool {
+	if task == nil {
+		return true
+	}
+	if strings.TrimSpace(task.Channel) != "" {
+		return false
+	}
+	log.Printf("task card skipped: no conversation home for task %s (card=%s)",
+		strings.TrimSpace(task.ID), card)
+	return true
+}
+
 func (b *Broker) postTaskReassignNotificationsLocked(actor string, task *teamTask, prevOwner string) {
 	if task == nil {
 		return
@@ -60,10 +94,10 @@ func (b *Broker) postTaskReassignNotificationsLocked(actor string, task *teamTas
 	if newOwner == prevOwner {
 		return
 	}
-	taskChannel := normalizeChannelSlug(task.Channel)
-	if taskChannel == "" {
-		taskChannel = "general"
+	if taskCardHasNoHome("reassign", task) {
+		return
 	}
+	taskChannel := normalizeChannelSlug(task.Channel)
 	title := strings.TrimSpace(task.Title)
 	if title == "" {
 		title = task.ID
@@ -86,8 +120,8 @@ func (b *Broker) postTaskReassignNotificationsLocked(actor string, task *teamTas
 		Channel:   taskChannel,
 		Kind:      "task_reassigned",
 		Title:     title,
-		Content:   fmt.Sprintf("Task %q reassigned: %s → %s. (by @%s, cc @ceo)", title, prevLabel, newLabel, actor),
-		Tagged:    dedupeReassignTags([]string{"ceo", newOwner, prevOwner}),
+		Content:   fmt.Sprintf("Task %q reassigned: %s → %s. (by @%s, cc @cos)", title, prevLabel, newLabel, actor),
+		Tagged:    dedupeReassignTags([]string{"cos", newOwner, prevOwner}),
 		Timestamp: now,
 	})
 
@@ -113,10 +147,10 @@ func (b *Broker) postTaskCancelNotificationsLocked(actor string, task *teamTask,
 		actor = "system"
 	}
 	prevOwner = strings.TrimSpace(prevOwner)
-	taskChannel := normalizeChannelSlug(task.Channel)
-	if taskChannel == "" {
-		taskChannel = "general"
+	if taskCardHasNoHome("cancel", task) {
+		return
 	}
+	taskChannel := normalizeChannelSlug(task.Channel)
 	title := strings.TrimSpace(task.Title)
 	if title == "" {
 		title = task.ID
@@ -135,8 +169,8 @@ func (b *Broker) postTaskCancelNotificationsLocked(actor string, task *teamTask,
 		Channel:   taskChannel,
 		Kind:      "task_canceled",
 		Title:     title,
-		Content:   fmt.Sprintf("Task %q closed as won't do. Owner was %s. (by @%s, cc @ceo)", title, ownerLabel, actor),
-		Tagged:    dedupeReassignTags([]string{"ceo", prevOwner}),
+		Content:   fmt.Sprintf("Task %q closed as won't do. Owner was %s. (by @%s, cc @cos)", title, ownerLabel, actor),
+		Tagged:    dedupeReassignTags([]string{"cos", prevOwner}),
 		Timestamp: now,
 	})
 
@@ -183,8 +217,8 @@ func (b *Broker) postTaskDMLocked(from, targetSlug, kind, title, content string)
 	})
 }
 
-// isDMTargetSlug reports whether slug is a valid recipient for a human-to-agent DM.
-// The human user ("human"/"you") and the CEO seat ("ceo", which is the human)
+// isDMTargetSlug reports whether slug is a valid recipient for a human-to-bot DM.
+// The human user ("human"/"you") and the CEO seat ("cos", which is the human)
 // are excluded because they would create self-DMs.
 func isDMTargetSlug(slug string) bool {
 	slug = strings.ToLower(strings.TrimSpace(slug))
@@ -192,7 +226,7 @@ func isDMTargetSlug(slug string) bool {
 		return false
 	}
 	switch slug {
-	case "human", "you", "ceo":
+	case "human", "you", "cos":
 		return false
 	}
 	return true
@@ -212,10 +246,10 @@ func (b *Broker) postTaskRequestChangesNotificationsLocked(actor string, task *t
 		actor = "system"
 	}
 	owner := strings.TrimSpace(task.Owner)
-	taskChannel := normalizeChannelSlug(task.Channel)
-	if taskChannel == "" {
-		taskChannel = "general"
+	if taskCardHasNoHome("request_changes", task) {
+		return
 	}
+	taskChannel := normalizeChannelSlug(task.Channel)
 	title := strings.TrimSpace(task.Title)
 	if title == "" {
 		title = task.ID
@@ -243,7 +277,7 @@ func (b *Broker) postTaskRequestChangesNotificationsLocked(actor string, task *t
 		Kind:      "task_changes_requested",
 		Title:     title,
 		Content:   body,
-		Tagged:    dedupeReassignTags([]string{owner, "ceo"}),
+		Tagged:    dedupeReassignTags([]string{owner, "cos"}),
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	})
 	if isDMTargetSlug(owner) {
@@ -269,10 +303,10 @@ func (b *Broker) postTaskRejectedNotificationsLocked(actor string, task *teamTas
 		actor = "system"
 	}
 	owner := strings.TrimSpace(task.Owner)
-	taskChannel := normalizeChannelSlug(task.Channel)
-	if taskChannel == "" {
-		taskChannel = "general"
+	if taskCardHasNoHome("rejected", task) {
+		return
 	}
+	taskChannel := normalizeChannelSlug(task.Channel)
 	title := strings.TrimSpace(task.Title)
 	if title == "" {
 		title = task.ID
@@ -300,7 +334,7 @@ func (b *Broker) postTaskRejectedNotificationsLocked(actor string, task *teamTas
 		Kind:      "task_rejected",
 		Title:     title,
 		Content:   body,
-		Tagged:    dedupeReassignTags([]string{owner, "ceo"}),
+		Tagged:    dedupeReassignTags([]string{owner, "cos"}),
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	})
 	if isDMTargetSlug(owner) {
@@ -316,9 +350,9 @@ func (b *Broker) postTaskRejectedNotificationsLocked(actor string, task *teamTas
 // postIssueCreatedCardLocked emits a system-authored chat message that
 // renders as an issue card in the channel where the Issue was filed.
 // The card is the audit-trail anchor for "any work getting done should
-// have an issue in place" — the human (and other agents in the channel)
+// have an issue in place" — the human (and other bots in the channel)
 // see the new Issue as soon as it lands, with a one-click link into the
-// Issue detail view. The agent that called team_task can still post its
+// Issue detail view. The bot that called team_task can still post its
 // own chat reply; this card is independent.
 //
 // Only called when task_type=issue (other types are internal and do not
@@ -330,10 +364,11 @@ func (b *Broker) postIssueCreatedCardLocked(actor string, task *teamTask) string
 	if task == nil {
 		return ""
 	}
-	taskChannel := normalizeChannelSlug(task.Channel)
-	if taskChannel == "" {
-		taskChannel = "general"
+	if taskCardHasNoHome("issue_created", task) {
+		// No card, so no thread root for the caller to anchor on.
+		return ""
 	}
+	taskChannel := normalizeChannelSlug(task.Channel)
 	title := strings.TrimSpace(task.Title)
 	if title == "" {
 		title = task.ID
@@ -363,13 +398,13 @@ func (b *Broker) postIssueCreatedCardLocked(actor string, task *teamTask) string
 		Kind:      "issue_created",
 		Title:     title,
 		Content:   fmt.Sprintf("Issue created: %s — %s", task.ID, title),
-		Tagged:    dedupeReassignTags([]string{"ceo", strings.TrimSpace(task.Owner), actor}),
+		Tagged:    dedupeReassignTags([]string{"cos", strings.TrimSpace(task.Owner), actor}),
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		// ReplyTo folds the card into the originating chat thread so
 		// subsequent messages in that thread appear after the card
 		// rather than the card visually floating "above" newer chat
 		// activity in its own top-level slot. task.ThreadID is set at
-		// create time from the agent's MCP call.
+		// create time from the bot's MCP call.
 		ReplyTo:      strings.TrimSpace(task.ThreadID),
 		SourceTaskID: task.ID,
 		Payload:      raw,
@@ -420,7 +455,7 @@ func classifyIssueLifecycleTransition(from, to LifecycleState) IssueLifecycleTra
 // an Issue's lifecycle state transitions in a way the human should see —
 // most importantly Drafting → Running ("Approved & started — @owner on
 // it") so the human knows the owner woke up. The card also doubles as
-// the wake signal: tagging the owner in `tagged` causes the agent loop
+// the wake signal: tagging the owner in `tagged` causes the bot loop
 // to pick this up as a notification on its next tick.
 //
 // Only emitted for task_type=issue. Caller holds b.mu for write.
@@ -436,10 +471,10 @@ func (b *Broker) postIssueLifecycleCardLocked(task *teamTask, from, to Lifecycle
 		return
 	}
 	transition := classifyIssueLifecycleTransition(from, to)
-	taskChannel := normalizeChannelSlug(task.Channel)
-	if taskChannel == "" {
-		taskChannel = "general"
+	if taskCardHasNoHome("issue_lifecycle", task) {
+		return
 	}
+	taskChannel := normalizeChannelSlug(task.Channel)
 	title := strings.TrimSpace(task.Title)
 	if title == "" {
 		title = task.ID
@@ -469,7 +504,7 @@ func (b *Broker) postIssueLifecycleCardLocked(task *teamTask, from, to Lifecycle
 	// the actor IS the owner (self-transitions on submit_for_review /
 	// complete still want a chat trace). CEO is included so the
 	// coordination view stays in sync.
-	tagged := []string{"ceo"}
+	tagged := []string{"cos"}
 	if owner != "" {
 		tagged = append(tagged, owner)
 	}

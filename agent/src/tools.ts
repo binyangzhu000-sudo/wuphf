@@ -14,6 +14,8 @@
 import { complete, type Context, type Model, type StreamOptions } from "@mariozechner/pi-ai";
 import { apiKeyFor, resolveModel } from "./model.js";
 import { asError, deadlineSignal, textOf } from "./modelCall.js";
+import { buildCapabilities } from "./capabilities.js";
+import { runTool } from "./toolRuntime.js";
 import { extractJson, type Tool, type ToolBuildResult, type ToolInput } from "./wire.js";
 
 interface Shape {
@@ -28,49 +30,59 @@ interface Shape {
 // Keyword -> tool shape (first match wins). Kept in sync with the FE
 // web/src/operator/tools/mockTools.ts SHAPES so a taught workflow yields the same
 // recognizable tool everywhere.
+// Domain-neutral fallback shapes: keyed on generic workflow verbs (score,
+// summarize, draft) and built on data.* + nex.ai.* so a taught workflow in ANY
+// domain — deals, tickets, candidates, inventory — yields a plausible tool.
+// The prior shapes were sales-only (scoreAndRouteLead/weeklyPipelineSummary/
+// draftFollowup on crm.*), so the no-model fallback minted a CRM tool for every
+// operator (2026-08-17 tools audit). Kept in sync with the FE mirror
+// web/src/operator/tools/mockTools.ts.
 const SHAPES: readonly Shape[] = [
 	{
-		test: /\b(score|fit|route|lead|assign)\b/i,
-		name: "scoreAndRouteLead",
-		title: "Score & route a lead",
-		purpose: "Score a lead's fit and route hot ones to the right AE.",
-		inputs: ["lead"],
+		test: /\b(score|scor|rank|prioriti[sz]e|risk|rate|triage)\b/i,
+		name: "scoreAndFlag",
+		title: "Score & flag records",
+		purpose: "Score each record against a rubric and flag the ones that need attention.",
+		inputs: ["rubric"],
 		code: [
-			"async function scoreAndRouteLead(lead) {",
-			"  const fit = await nex.ai.score(lead, { rubric: 'ICP fit' });",
-			"  if (fit >= 75) {",
-			"    const ae = await crm.ownerFor(lead);",
-			"    await crm.assign(lead, ae);",
-			"    return `Fit ${fit} -> routed to ${ae.name}`;",
+			"async function scoreAndFlag(rubric) {",
+			"  const records = await data.list('records');",
+			"  const scored = [];",
+			"  for (const r of records) {",
+			"    const score = await nex.ai.score(r, { rubric: rubric || 'priority' });",
+			"    scored.push({ record: r, score, flagged: score >= 75 });",
 			"  }",
-			"  return `Fit ${fit} -> left in the queue`;",
+			"  return { count: scored.length, flagged: scored.filter((s) => s.flagged) };",
 			"}",
 		].join("\n"),
 	},
 	{
-		test: /\b(summary|summar|pipeline|digest|weekly|report|recap)\b/i,
-		name: "weeklyPipelineSummary",
-		title: "Weekly pipeline summary",
-		purpose: "Summarize last week's pipeline movement into a glanceable recap.",
+		test: /\b(summar\w*|digest|weekly|report|recap|roll.?up|overview)\b/i,
+		name: "weeklySummary",
+		title: "Weekly summary",
+		purpose: "Summarize this period's records into a glanceable recap.",
 		inputs: [],
 		code: [
-			"async function weeklyPipelineSummary() {",
-			"  const deals = await crm.deals({ since: '7d' });",
-			"  const moved = deals.filter((d) => d.stageChanged);",
-			"  return nex.ai.summarize(moved, { style: 'exec recap' });",
+			"async function weeklySummary() {",
+			"  const records = await data.list('records');",
+			"  if (records.length === 0) return { count: 0, summary: 'No records to summarize.' };",
+			"  const summary = await nex.ai.summarize(records, { style: 'concise recap' });",
+			"  return { count: records.length, summary };",
 			"}",
 		].join("\n"),
 	},
 	{
-		test: /\b(draft|follow.?up|email|reply|outreach|nudge|stall)\b/i,
-		name: "draftFollowup",
-		title: "Draft a follow-up email",
-		purpose: "Draft a follow-up email for a stalled deal in the rep's voice.",
-		inputs: ["deal"],
+		test: /\b(draft|write|compose|follow.?up|email|reply|outreach|nudge|message|reminder)\b/i,
+		name: "draftMessage",
+		title: "Draft a message",
+		purpose: "Draft a message about a record for your review before it goes out.",
+		inputs: ["recordId"],
 		code: [
-			"async function draftFollowup(deal) {",
-			"  const ctx = await crm.dealContext(deal);",
-			"  return nex.ai.write('follow-up email', { context: ctx, tone: 'warm, brief' });",
+			"async function draftMessage(recordId) {",
+			"  const record = await data.get('records', recordId);",
+			"  if (!record) return { error: `No record found for ${recordId}.` };",
+			"  const draft = await nex.ai.write('message', { context: record, tone: 'warm, brief' });",
+			"  return { recordId, draft, status: 'draft — review before sending' };",
 			"}",
 		].join("\n"),
 	},
@@ -189,21 +201,38 @@ export const TOOL_SCHEMA_PROMPT = `You are the create_tool author for an operato
 
 {"name": str, "title": str, "purpose": str, "inputs": [str], "code": str}
 
-- name: a camelCase callable id, e.g. "scoreAndRouteLead".
-- title: plain language for a non-technical operator, e.g. "Score & route a lead".
+- name: a camelCase callable id, e.g. "scoreAndFlag".
+- title: plain language for a non-technical operator, e.g. "Score & flag records".
 - purpose: one line — what running it does.
 - inputs: the argument names the tool takes (may be empty).
 - code: a complete async JavaScript function named exactly like "name", taking the inputs as parameters, that performs the workflow.
 
-The code runs against these capabilities (use them; do not invent others). All are async — await every call:
+The code runs against these capabilities (use them; do NOT invent others — a call to a capability not listed here will be rejected). All are async — await every call:
+- data.list(collection, { filter, since }) -> array of the app's OWN records (whatever the app persists: deals, tickets, candidates, products). Returns [] when nothing is stored yet.
+- data.get(collection, id) -> one record by id, or null if absent
+- data.upsert(collection, record) -> saves a record to the app's store (confirmation string)
+- nex.now() -> the current time as an ISO string (the ONE reliable clock — use this for "now", SLA windows, "hours since", never Date.now())
 - nex.ai.score(subject, { rubric }) -> number 0-100
 - nex.ai.summarize(items, { style }) -> string
 - nex.ai.write(kind, { context, tone }) -> string
-- nex.run(input) -> generic fallback execution
 - integrations.call(platform, action, params) -> call a connected integration (e.g. integrations.call("gmail", "GMAIL_FETCH_EMAILS", { max_results: 10 })); reads return data, writes are held for human approval
 - nex.browser(goal) -> drive the operator's browser to accomplish a goal when no integration exists (needs the operator's approval)
 - nex.send(target, content) -> external send (needs the operator's approval)
-- crm.deals({ since }) -> deal list; crm.ownerFor(lead) -> owner; crm.assign(lead, owner) -> void; crm.dealContext(deal) -> context
+- nex.run(input) -> opaque fallback for ONE genuinely un-decomposable step inside a larger flow
+
+The tool operates on the app's OWN records via data.*: read what the app persists, compute over it, and either return the result or (with approval) send it. There is no built-in CRM — a "deal", "ticket", or "candidate" is just a record in data.list, keyed by whatever the app stores.
+
+Runtime facts your code must respect:
+- Every input parameter arrives as a STRING (the chat binds arguments as text). Parse numbers with Number(...) and guard NaN; JSON.parse only when the operator is told to paste JSON.
+- Date.now() inside the tool body is unreliable — get the current time from await nex.now() (an ISO string) and compute "hours/days since" from the record's own timestamp fields against that.
+- nex.ai.* return plain strings/numbers; do not JSON.parse them.
+- data.list returns records whose fields are whatever the app stored; read fields defensively (a field may be absent) and never assume a fixed schema.
+
+Quality bar (the operator will read and rely on this code):
+- NEVER write a tool whose body is just nex.run(input) — that is not a tool, it is a shrug. Decompose the workflow into real steps with the specific capabilities above; if the workflow genuinely cannot be decomposed, still express the parts you can (validation, shaping, summary) around the one opaque step.
+- Sends are drafts first: build the content, return it in the result, and call nex.send only when the described workflow explicitly says to send. Subject lines are part of the send target/metadata, not pasted into the body.
+- Return structured objects ({count, summary, items}) rather than bare strings when the workflow produces more than one fact; format money and dates for humans.
+- Handle missing/empty inputs explicitly (guard and say what is missing in the return) instead of letting undefined flow through the math.
 
 Output the JSON object and nothing else.`;
 
@@ -220,6 +249,19 @@ export interface ToolAuthorOptions {
 	timeoutMs?: number;
 	/** Override the pi-ai completion call in tests so they never hit a live model. */
 	complete?: typeof complete;
+	/** A compact description of the app's EXISTING data tables (name + columns),
+	 * injected into the prompt so an authored tool reads/writes the SAME tables
+	 * the app already uses via data.* instead of inventing its own names (which
+	 * left the tool operating on a phantom, empty store — 2026-08-18 loop audit). */
+	appSchema?: string;
+}
+
+/** Build the "your app's tables" block for the prompt from a fetched schema
+ * string, or "" when there is none (a fresh app with no tables yet). */
+function appSchemaBlock(schema: string | undefined): string {
+	const s = (schema ?? "").trim();
+	if (!s) return "";
+	return `\n\nTHIS APP ALREADY HAS THESE TABLES — use these EXACT table and column names in every data.* call; do NOT invent new table names:\n${s}\nA tool that queries a table this app does not have will read an empty store and produce nothing useful.`;
 }
 
 /** Coerce model-emitted inputs — strings or {name} objects — into ToolInputs;
@@ -257,7 +299,7 @@ export async function authorToolWithModel(message: string, opts: ToolAuthorOptio
 	const completeFn = opts.complete ?? complete;
 	const timeoutMs = opts.timeoutMs ?? DEFAULT_AUTHOR_TIMEOUT_MS;
 	const ctx: Context = {
-		systemPrompt: TOOL_SCHEMA_PROMPT,
+		systemPrompt: TOOL_SCHEMA_PROMPT + appSchemaBlock(opts.appSchema),
 		messages: [{ role: "user", content: message.trim(), timestamp: Date.now() }],
 	};
 
@@ -281,6 +323,88 @@ export async function authorToolWithModel(message: string, opts: ToolAuthorOptio
 }
 
 // ---------------------------------------------------------------------------
+
+/** Flatten the capability tree to the set of valid dotted leaf paths
+ * ("nex.ai.score", "data.list", ...). A capability the catalog does not expose
+ * is a hallucination the single smoke run may never reach (a branch behind a
+ * condition), so we reject it statically too. */
+function catalogPaths(): Set<string> {
+	const paths = new Set<string>();
+	const walk = (node: unknown, prefix: string) => {
+		if (typeof node === "function") {
+			paths.add(prefix);
+			return;
+		}
+		if (node && typeof node === "object") {
+			for (const [k, v] of Object.entries(node)) {
+				walk(v, prefix ? `${prefix}.${k}` : k);
+			}
+		}
+	};
+	walk(buildCapabilities(), "");
+	return paths;
+}
+
+const CATALOG_ROOTS = new Set(["nex", "data", "integrations"]);
+
+/** Scan tool code for `root.a.b(...)` capability calls and return the first that
+ * is not in the catalog, or "" if all referenced capabilities exist. Only chains
+ * rooted at a known capability namespace are checked, so ordinary JS
+ * (`records.filter`, `Math.max`, `JSON.parse`) is never flagged. */
+function unknownCapabilityRef(code: string, valid: Set<string>): string {
+	// root.seg.seg( — a called member chain rooted at a capability namespace.
+	const re = /\b(nex|data|integrations)((?:\.[a-zA-Z_$][\w$]*)+)\s*\(/g;
+	for (let m = re.exec(code); m !== null; m = re.exec(code)) {
+		const path = m[1] + m[2];
+		if (CATALOG_ROOTS.has(m[1]) && !valid.has(path)) return path;
+	}
+	return "";
+}
+
+/** A realistic placeholder for an input, derived from its name, so branches that
+ * inspect the value actually run during the smoke test (a bare "42" made every
+ * email/date branch dead code). */
+function placeholderArg(name: string): string {
+	const n = name.toLowerCase();
+	if (/email|recipient|to\b/.test(n)) return "sample@example.com";
+	if (/date|day|when|since|deadline|due/.test(n)) return "2026-01-15";
+	if (/count|amount|total|qty|quantity|number|score|threshold|price|cost|stock/.test(n)) return "10";
+	if (/id$|_id|^id/.test(n)) return "rec-1";
+	if (/name|title|subject/.test(n)) return "Sample Record";
+	if (/rubric|style|tone|kind/.test(n)) return "priority";
+	return "sample";
+}
+
+/** Execute the freshly-authored tool once in the SIMULATED sandbox with
+ * type-aware placeholder args, AND statically reject references to capabilities
+ * the catalog does not expose. Returns the failure detail for hard failures
+ * (unknown capability, undefined-property crashes, syntax issues), or "" when
+ * the run completed or failed only in expected gated/simulated ways. */
+async function smokeRunTool(tool: Tool): Promise<string> {
+	// Static pass first: a hallucinated capability ("crm.deals" now that the
+	// catalog is data.*) is caught even when it sits behind an unreached branch.
+	const missing = unknownCapabilityRef(tool.code, catalogPaths());
+	if (missing) {
+		return `references a capability that does not exist here: ${missing}`;
+	}
+	try {
+		const args: Record<string, string> = {};
+		for (const input of tool.inputs) args[input.name] = placeholderArg(input.name);
+		const res = await runTool(tool, args, { timeoutMs: 8_000 });
+		if (res.status === "error" && res.detail) {
+			const d = res.detail;
+			// Gated sends / capability denials are EXPECTED in the sandbox;
+			// only genuine code crashes count.
+			if (/is not a function|is not defined|undefined is not|Cannot read|SyntaxError|ReferenceError|TypeError/.test(d)) {
+				return d.slice(0, 240);
+			}
+		}
+		return "";
+	} catch (err) {
+		return String(err instanceof Error ? err.message : err).slice(0, 240);
+	}
+}
+
 // buildTool: the tool agent's turn (model first when enabled, stub as fallback)
 // ---------------------------------------------------------------------------
 
@@ -307,7 +431,26 @@ export interface ToolBuildOptions extends ToolAuthorOptions {
 export async function buildTool(message: string, opts: ToolBuildOptions = {}): Promise<ToolBuildOutcome> {
 	if (opts.tryModel === true) {
 		try {
-			const tool = await authorToolWithModel(message, opts);
+			let tool = await authorToolWithModel(message, opts);
+			// Smoke-run before the tool is trusted: execute once in the
+			// simulated sandbox with placeholder args. A tool that crashes on
+			// first contact ("lastTouchAt" on a shape that has "lastTouch",
+			// Date.parse of a human string) demo-fails in the operator's face
+			// — one repair attempt with the crash appended, then give up to
+			// the stub (2026-08-17 quality audit: tool-quality graded 3/10
+			// on exactly this class).
+			const crash = await smokeRunTool(tool);
+			if (crash) {
+				tool = await authorToolWithModel(
+					`${message}
+
+Your previous attempt crashed on a smoke run with: ${crash}
+Fix the code (respect the documented capability shapes) and output the corrected tool.`,
+					opts,
+				);
+				const crash2 = await smokeRunTool(tool);
+				if (crash2) throw new Error(`authored tool crashes on smoke run: ${crash2}`);
+			}
 			return { tool, narration: `Built ${tool.title}.`, authored_by: "model" };
 		} catch {
 			// Fall through to the stub: /tools/build stays real end to end, key-free.

@@ -45,16 +45,16 @@ func TestOfficeStats_MatchesListEndpoints(t *testing.T) {
 
 	b := newTestBroker(t)
 
-	// Roster: two agents + the human seat. ceo has a live "active"
+	// Roster: two bots + the human seat. cos has a live "active"
 	// snapshot; ada is idle.
 	b.mu.Lock()
 	b.members = []officeMember{
-		{Slug: "ceo", Name: "CEO"},
+		{Slug: "cos", Name: "CEO"},
 		{Slug: "ada", Name: "Ada"},
 		{Slug: "human", Name: "You"},
 	}
-	b.activity = map[string]agentActivitySnapshot{
-		"ceo": {Slug: "ceo", Status: "active", Activity: "tool_use"},
+	b.activity = map[string]botActivitySnapshot{
+		"cos": {Slug: "cos", Status: "active", Activity: "tool_use"},
 		"ada": {Slug: "ada", Status: "idle"},
 	}
 
@@ -64,7 +64,7 @@ func TestOfficeStats_MatchesListEndpoints(t *testing.T) {
 			ID:            id,
 			Title:         title,
 			TaskType:      taskType,
-			Channel:       "general",
+			Channel:       "team",
 			ParentIssueID: parent,
 			CreatedAt:     now.Format(time.RFC3339),
 		}
@@ -87,14 +87,14 @@ func TestOfficeStats_MatchesListEndpoints(t *testing.T) {
 	seedTask("task-sub", "Sub-task", "issue", LifecycleStateRunning, "task-running")
 	seedTask("task-followup", "Follow up", "follow_up", LifecycleStateRunning, "")
 	// Legacy task with bare status only (no lifecycle state).
-	legacy := teamTask{ID: "task-legacy", Title: "Legacy open", TaskType: "issue", Channel: "general", CreatedAt: now.Format(time.RFC3339)}
+	legacy := teamTask{ID: "task-legacy", Title: "Legacy open", TaskType: "issue", Channel: "team", CreatedAt: now.Format(time.RFC3339)}
 	legacy.status = "open"
 	b.tasks = append(b.tasks, legacy)
 
 	b.requests = []humanInterview{
-		{ID: "req-blocking", From: "ceo", Channel: "general", Question: "Approve spend?", Kind: "approval", Blocking: true},
-		{ID: "req-notice", From: "ada", Channel: "general", Question: "FYI", Kind: "notice"},
-		{ID: "req-answered", From: "ceo", Channel: "general", Question: "Old", Kind: "approval", Blocking: true, Status: "answered"},
+		{ID: "req-blocking", From: "cos", Channel: "team", Question: "Approve spend?", Kind: "approval", Blocking: true},
+		{ID: "req-notice", From: "ada", Channel: "team", Question: "FYI", Kind: "notice"},
+		{ID: "req-answered", From: "cos", Channel: "team", Question: "Old", Kind: "approval", Blocking: true, Status: "answered"},
 	}
 	b.mu.Unlock()
 
@@ -186,7 +186,7 @@ func TestOfficeStats_MatchesListEndpoints(t *testing.T) {
 		t.Fatal("inbox-derived attention count is 0; seed should have produced attention items")
 	}
 
-	// ── Agents: derive truth from /office-members live status.
+	// ── Bots: derive truth from /office-members live status.
 	var memberList struct {
 		Members []struct {
 			Slug   string `json:"slug"`
@@ -203,11 +203,11 @@ func TestOfficeStats_MatchesListEndpoints(t *testing.T) {
 			wantActive++
 		}
 	}
-	if stats.AgentsActive != wantActive {
-		t.Fatalf("stats.AgentsActive = %d, want members-derived %d", stats.AgentsActive, wantActive)
+	if stats.BotsActive != wantActive {
+		t.Fatalf("stats.BotsActive = %d, want members-derived %d", stats.BotsActive, wantActive)
 	}
-	if stats.AgentsActive != 1 {
-		t.Fatalf("stats.AgentsActive = %d, want seeded 1 (ceo active, ada idle)", stats.AgentsActive)
+	if stats.BotsActive != 1 {
+		t.Fatalf("stats.BotsActive = %d, want seeded 1 (cos active, ada idle)", stats.BotsActive)
 	}
 
 	// No wiki worker in this fixture: count must degrade to zero, not error.
@@ -261,7 +261,7 @@ func TestCountArticles_MatchesBuildCatalog(t *testing.T) {
 		{"team/inbox/raw/episode.md", "# Episode\n"},
 	}
 	for _, c := range commits {
-		if _, _, err := repo.Commit(ctx, "ceo", c.path, c.body, "create", "seed "+c.path); err != nil {
+		if _, _, err := repo.Commit(ctx, "cos", c.path, c.body, "create", "seed "+c.path); err != nil {
 			t.Fatalf("Commit %s: %v", c.path, err)
 		}
 	}

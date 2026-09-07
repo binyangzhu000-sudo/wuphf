@@ -27,9 +27,9 @@ func TestClassifyHumanWikiIntent_Matches(t *testing.T) {
 		},
 		{
 			name:      "save to wiki imperative",
-			body:      "save to wiki: our ICP is founders running 3+ AI agents",
+			body:      "save to wiki: our ICP is founders running 3+ AI bots",
 			wantKind:  HumanWikiIntentWriteKB,
-			wantTopic: "our icp is founders running 3+ ai agents",
+			wantTopic: "our icp is founders running 3+ ai bots",
 		},
 		{
 			name:      "save to KB",
@@ -129,7 +129,7 @@ func TestClassifyHumanWikiIntent_NoMatch(t *testing.T) {
 		{"empty body", ""},
 		{"whitespace", "   \n\t  "},
 		{"historical remember", "remember when we shipped the auth PR last quarter"},
-		{"agent technical output", "running go build... done."},
+		{"bot technical output", "running go build... done."},
 		{"remember inside code fence", "```\nremember this: foo\n```\nlook above"},
 		{"remember inside backticks", "the function is `remember this` from utils"},
 		{"plain mention of wiki", "should we wiki this later? maybe."},
@@ -172,14 +172,14 @@ func TestRenderHumanWikiEntry_Golden(t *testing.T) {
 		Content: "the retro deadline is every Friday",
 	}
 	ts := time.Date(2026, 5, 6, 14, 30, 0, 0, time.UTC)
-	body := renderHumanWikiEntry(match, "general", ts)
+	body := renderHumanWikiEntry(match, "team", ts)
 
 	wantLines := []string{
 		"# Retro deadline cadence",
 		"- timestamp: 2026-05-06T14:30:00Z",
 		"- source: human",
 		"- intent: remember",
-		"- channel: #general",
+		"- channel: #team",
 		"the retro deadline is every Friday",
 	}
 	for _, want := range wantLines {
@@ -335,7 +335,7 @@ func TestHumanWikiIntentWriter_HandleEnqueuesAndWrites(t *testing.T) {
 	w.Handle(channelMessage{
 		ID:        "msg-1",
 		From:      "human",
-		Channel:   "general",
+		Channel:   "team",
 		Content:   "remember this: bun is the JS runtime",
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	})
@@ -371,7 +371,7 @@ func TestHumanWikiIntentWriter_NoIntentSkips(t *testing.T) {
 
 	w.Handle(channelMessage{
 		From:    "human",
-		Channel: "general",
+		Channel: "team",
 		Content: "the dashboard is loading slowly",
 	})
 
@@ -396,7 +396,7 @@ func TestHumanWikiIntentWriter_QueueSaturationCounted(t *testing.T) {
 	for i := 0; i < humanWikiIntentQueueSize+4; i++ {
 		w.Handle(channelMessage{
 			From:    "human",
-			Channel: "general",
+			Channel: "team",
 			Content: "remember this: payload-" + strings.Repeat("x", i+1),
 		})
 	}
@@ -427,7 +427,7 @@ func TestHumanWikiIntentWriter_WriteFailureCounted(t *testing.T) {
 
 	w.Handle(channelMessage{
 		From:    "human",
-		Channel: "general",
+		Channel: "team",
 		Content: "remember this: write failure path",
 	})
 

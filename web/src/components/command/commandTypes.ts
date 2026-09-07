@@ -7,10 +7,10 @@
  */
 export type CommandGroup =
   | "Actions"
-  | "Agents"
+  | "Bots"
   | "Channels"
   | "Tasks"
-  | "Company Brain"
+  | "Wiki"
   | "Messages";
 
 /**

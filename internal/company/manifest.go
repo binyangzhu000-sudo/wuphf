@@ -10,9 +10,30 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nex-crm/wuphf/internal/channel"
 	"github.com/nex-crm/wuphf/internal/config"
 	"github.com/nex-crm/wuphf/internal/provider"
 )
+
+// The lead bot is the Chief of Staff. The SLUG stays "cos" on purpose.
+//
+// The slug is an identifier, not a label: it appears in DM slugs
+// ("cos__human"), task owners, channel membership, and saved rosters on
+// users' disks. Renaming it would orphan every one of those rows for anyone
+// with an existing workspace, in exchange for changing a string nobody sees.
+// The same reasoning applies to the other bot slugs.
+//
+// So the identifier is frozen and the display name is free to change. Anything
+// a person reads comes from Name/Role; anything the system keys on uses Slug.
+const (
+	chiefOfStaffName = "Chief of Staff"
+	chiefOfStaffRole = "Chief of Staff"
+)
+
+// generalChannelSlug aliases channel.GeneralSlug for use inside this file.
+// Several loops here bind a range variable named `channel`, which shadows the
+// package identifier; the alias keeps those bodies able to name the slug.
+const generalChannelSlug = channel.GeneralSlug
 
 // manifestUpdateMu serializes load → mutate → save sequences against the
 // manifest file. Two callers that both Load + append + Save can otherwise
@@ -183,7 +204,7 @@ func LoadManifest() (Manifest, error) {
 // so onboarding answers flow into the company manifest.
 func backfillFromConfig(manifest Manifest) Manifest {
 	cfg, _ := config.Load()
-	if strings.TrimSpace(manifest.Name) == "" || manifest.Name == "The WUPHF Office" {
+	if strings.TrimSpace(manifest.Name) == "" || manifest.Name == "Your gawkbot team" {
 		if name := strings.TrimSpace(cfg.CompanyName); name != "" {
 			manifest.Name = name
 		}
@@ -192,7 +213,7 @@ func backfillFromConfig(manifest Manifest) Manifest {
 		if desc := strings.TrimSpace(cfg.CompanyDescription); desc != "" {
 			manifest.Description = desc
 		} else {
-			manifest.Description = "Autonomous office runtime."
+			manifest.Description = "Autonomous bot team runtime."
 		}
 	}
 	if len(normalizeBlueprintRefs(manifest.BlueprintRefs)) == 0 {
@@ -222,28 +243,11 @@ func SaveManifest(manifest Manifest) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
-// AppBuilderSlug is the canonical slug of the built-in App Builder agent — the
+// AppBuilderSlug is the canonical slug of the built-in App Builder bot — the
 // special teammate that turns repeatable workflows into Apps (internal tools).
 // It is seeded into every office (see ensureAppBuilderMember) and is immutable
 // like the CEO.
 const AppBuilderSlug = "app-builder"
-
-func appBuilderMemberSpec() MemberSpec {
-	return MemberSpec{Slug: AppBuilderSlug, Name: "App Builder", Role: "App Builder", System: true}
-}
-
-// ensureAppBuilderMember guarantees the App Builder is present in the roster.
-// Runs inside normalizeManifest so it covers the default, from-scratch, AND
-// blueprint-materialized paths — and back-fills existing offices on next load
-// (legacy-safe migration, the same shape used to roll out the Librarian).
-func ensureAppBuilderMember(members []MemberSpec) []MemberSpec {
-	for _, m := range members {
-		if normalizeSlug(m.Slug) == AppBuilderSlug {
-			return members
-		}
-	}
-	return append(members, appBuilderMemberSpec())
-}
 
 func DefaultManifest() Manifest {
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -253,9 +257,9 @@ func DefaultManifest() Manifest {
 	}
 	blueprintID := normalizeSlug(cfg.ActiveBlueprint())
 	manifest := Manifest{
-		Name:        "The WUPHF Office",
-		Description: "Autonomous office runtime.",
-		Lead:        "ceo",
+		Name:        "Your gawkbot team",
+		Description: "Autonomous bot team runtime.",
+		Lead:        "cos",
 		UpdatedAt:   now,
 	}
 	if blueprintID != "" {
@@ -269,23 +273,31 @@ func DefaultManifest() Manifest {
 			return normalizeManifest(resolved)
 		}
 	}
+	// The default roster is the Chief of Staff alone. It used to be six: the
+	// lead plus an App Builder, a Librarian, and a planner/executor/reviewer
+	// trio. The founder retired all five as defaults — "that concept should
+	// now be gone with those bots as default. their defintions also shouldn't
+	// exist" — because a new user's first run should show the smallest system
+	// that produces a trustworthy output: one bot that introduces itself,
+	// asks the goal, and plans the first thing. Specialists are created on
+	// demand, not preinstalled. App building and wiki contribution are system
+	// skills every bot carries, not bots of their own.
 	manifest.Members = []MemberSpec{
-		{Slug: "ceo", Name: "CEO", Role: "CEO", System: true},
-		appBuilderMemberSpec(),
-		{Slug: "planner", Name: "Planner", Role: "Planner"},
-		{Slug: "executor", Name: "Executor", Role: "Executor"},
-		{Slug: "reviewer", Name: "Reviewer", Role: "Reviewer"},
+		{Slug: "cos", Name: chiefOfStaffName, Role: chiefOfStaffRole, System: true},
 	}
-	generalMembers := make([]string, 0, len(manifest.Members))
-	for _, member := range manifest.Members {
-		generalMembers = append(generalMembers, member.Slug)
+	// #general kill switch, gate 3b of 7. See internal/channel/general.go.
+	if channel.GeneralEnabled() {
+		generalMembers := make([]string, 0, len(manifest.Members))
+		for _, member := range manifest.Members {
+			generalMembers = append(generalMembers, member.Slug)
+		}
+		manifest.Channels = []ChannelSpec{{
+			Slug:        generalChannelSlug,
+			Name:        generalChannelSlug,
+			Description: "The default company-wide room for top-level coordination, announcements, and cross-functional discussion.",
+			Members:     generalMembers,
+		}}
 	}
-	manifest.Channels = []ChannelSpec{{
-		Slug:        "general",
-		Name:        "general",
-		Description: "The default company-wide room for top-level coordination, announcements, and cross-functional discussion.",
-		Members:     generalMembers,
-	}}
 	return normalizeManifest(manifest)
 }
 
@@ -299,38 +311,43 @@ func launchFromScratchRequested() bool {
 }
 
 func fromScratchDefaultManifest(now string) Manifest {
+	// Same principle as the default manifest above: the smallest office that
+	// works is the Chief of Staff alone. The old founder/operator/app-builder/
+	// builder/reviewer set was an invented team of default specialists, which
+	// the founder retired.
 	members := []MemberSpec{
-		{Slug: "founder", Name: "Founder", Role: "Founder", System: true},
-		{Slug: "operator", Name: "Operator", Role: "Operator", System: true},
-		appBuilderMemberSpec(),
-		{Slug: "builder", Name: "Builder", Role: "Builder"},
-		{Slug: "reviewer", Name: "Reviewer", Role: "Reviewer"},
+		{Slug: "cos", Name: chiefOfStaffName, Role: chiefOfStaffRole, System: true},
 	}
 	channelMembers := make([]string, 0, len(members))
 	for _, member := range members {
 		channelMembers = append(channelMembers, member.Slug)
+	}
+	// #general kill switch, gate 3a of 7. See internal/channel/general.go.
+	var channels []ChannelSpec
+	if channel.GeneralEnabled() {
+		channels = []ChannelSpec{{
+			Slug:        generalChannelSlug,
+			Name:        generalChannelSlug,
+			Description: "Primary room for inventing and operating the business from scratch.",
+			Members:     channelMembers,
+		}}
 	}
 	return Manifest{
 		Name:        "WUPHF Office",
 		Description: "Autonomous office runtime that starts from a directive instead of a saved blueprint.",
 		Lead:        "founder",
 		Members:     members,
-		Channels: []ChannelSpec{{
-			Slug:        "general",
-			Name:        "general",
-			Description: "Primary room for inventing and operating the business from scratch.",
-			Members:     channelMembers,
-		}},
-		UpdatedAt: now,
+		Channels:    channels,
+		UpdatedAt:   now,
 	}
 }
 
 func normalizeManifest(manifest Manifest) Manifest {
 	if strings.TrimSpace(manifest.Name) == "" {
-		manifest.Name = "The WUPHF Office"
+		manifest.Name = "Your gawkbot team"
 	}
 	if strings.TrimSpace(manifest.Lead) == "" {
-		manifest.Lead = "ceo"
+		manifest.Lead = "cos"
 	}
 	manifest.BlueprintRefs = normalizeBlueprintRefs(manifest.BlueprintRefs)
 
@@ -355,7 +372,7 @@ func normalizeManifest(manifest Manifest) Manifest {
 		}
 		member.Expertise = normalizeStrings(member.Expertise)
 		member.AllowedTools = normalizeStrings(member.AllowedTools)
-		member.System = member.Slug == manifest.Lead || member.Slug == "ceo" || member.System
+		member.System = member.Slug == manifest.Lead || member.Slug == "cos" || member.System
 		members = append(members, member)
 	}
 	if len(members) == 0 {
@@ -367,14 +384,20 @@ func normalizeManifest(manifest Manifest) Manifest {
 	// Guarantee the built-in App Builder exists in every office — including
 	// blueprint-materialized ones — and back-fill it for existing offices on
 	// load. Appended last so it never displaces the lead or a blueprint roster.
-	members = ensureAppBuilderMember(members)
 	manifest.Members = members
 
 	seenChannels := make(map[string]struct{}, len(manifest.Channels))
 	channels := make([]ChannelSpec, 0, len(manifest.Channels))
+	generalEnabled := channel.GeneralEnabled()
 	for _, channel := range manifest.Channels {
 		channel.Slug = normalizeSlug(channel.Slug)
 		if channel.Slug == "" {
+			continue
+		}
+		// #general kill switch, gate 3c of 7. A manifest.yaml on disk can
+		// declare general directly, reaching here without passing through
+		// DefaultManifest or fromScratchDefaultManifest.
+		if !generalEnabled && channel.Slug == generalChannelSlug {
 			continue
 		}
 		if _, ok := seenChannels[channel.Slug]; ok {
@@ -395,15 +418,18 @@ func normalizeManifest(manifest Manifest) Manifest {
 		channel.Disabled = removeSlug(channel.Disabled, manifest.Lead)
 		channels = append(channels, channel)
 	}
-	if !containsChannel(channels, "general") {
+	// #general kill switch, gate 3d of 7, and the load-bearing one in this
+	// file: normalizeManifest runs on EVERY manifest, so this re-prepend would
+	// undo gates 3a-3c on its own if it were left ungated.
+	if generalEnabled && !containsChannel(channels, generalChannelSlug) {
 		members := make([]string, 0, len(manifest.Members))
 		for _, member := range manifest.Members {
 			members = append(members, member.Slug)
 		}
 		channels = append([]ChannelSpec{{
-			Slug:        "general",
-			Name:        "general",
-			Description: defaultChannelDescription("general", "general"),
+			Slug:        generalChannelSlug,
+			Name:        generalChannelSlug,
+			Description: defaultChannelDescription(generalChannelSlug, generalChannelSlug),
 			Members:     ensureLeadMember(members, manifest.Lead),
 		}}, channels...)
 	}
@@ -473,7 +499,7 @@ func defaultChannelDescription(slug, name string) string {
 func ensureLeadMember(members []string, lead string) []string {
 	lead = normalizeSlug(lead)
 	if lead == "" {
-		lead = "ceo"
+		lead = "cos"
 	}
 	if containsSlug(members, lead) {
 		return normalizeSlugs(members)
@@ -553,3 +579,8 @@ func humanizeSlug(slug string) string {
 	}
 	return strings.Join(parts, " ")
 }
+
+// ChiefOfStaffName and ChiefOfStaffRole expose the lead's display strings to
+// other packages, so the name lives in exactly one place.
+func ChiefOfStaffName() string { return chiefOfStaffName }
+func ChiefOfStaffRole() string { return chiefOfStaffRole }

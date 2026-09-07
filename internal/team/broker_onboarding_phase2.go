@@ -13,7 +13,7 @@ package team
 //
 // Hard rules (from spec + task brief):
 //   - NO LLM tokens in Phase 2. All CEO messages are deterministic templates.
-//   - CEO transcript lives in b.messages (channel = ceo DM slug).
+//   - CEO transcript lives in b.messages (channel = cos DM slug).
 //   - Atomic seed via seedFromBlueprintLocked (blueprint path) or
 //     seedMinimalScratchLocked (scratch path) at the seed phase boundary.
 //   - Every CEO payload that becomes a ceo_* card MUST pass through
@@ -58,9 +58,9 @@ func (b *Broker) ceoOnboardingTransitionFn() onboarding.TransitionFunc {
 // internally (and for EnsureDirectChannel which has its own lock).
 func (b *Broker) advancePhase(s *onboarding.State, next string) error {
 	// Ensure the CEO DM channel exists before trying to post into it.
-	dmSlug, err := b.EnsureDirectChannel("ceo")
+	dmSlug, err := b.EnsureDirectChannel("cos")
 	if err != nil {
-		return fmt.Errorf("onboarding phase %s: ensure CEO DM: %w", next, err)
+		return fmt.Errorf("onboarding phase %s: ensure Chief of Staff DM: %w", next, err)
 	}
 
 	// At the seed phase, run the atomic office seed BEFORE posting the
@@ -96,12 +96,12 @@ func (b *Broker) advancePhase(s *onboarding.State, next string) error {
 		// confused-deputy injection surface (mirrors PR #684 audit closure).
 		sanitized, err := sanitizeCEOPayload(payload)
 		if err != nil {
-			return fmt.Errorf("onboarding: sanitize CEO payload for phase %q: %w", next, err)
+			return fmt.Errorf("onboarding: sanitize Chief of Staff payload for phase %q: %w", next, err)
 		}
 		b.counter++
 		b.appendMessageLocked(channelMessage{
 			ID:        fmt.Sprintf("msg-%d", b.counter),
-			From:      "ceo",
+			From:      "cos",
 			Channel:   dmSlug,
 			Kind:      payload.Kind,
 			Content:   payload.Content,
@@ -160,23 +160,35 @@ func (b *Broker) runSeedPhase(s *onboarding.State) error {
 		if err != nil {
 			return fmt.Errorf("load blueprint %q: %w", blueprintID, err)
 		}
-		var selectedAgents []string
-		if len(s.FormAnswers.PickedAgents) > 0 {
-			selectedAgents = s.FormAnswers.PickedAgents
+		var selectedBots []string
+		if len(s.FormAnswers.PickedBots) > 0 {
+			selectedBots = s.FormAnswers.PickedBots
 		}
 		// task is not known at seed time in Phase 2; skipTask=true posts a
 		// system welcome instead of a directive task.
 		const task = ""
 		const skipTask = true
 		b.mu.Lock()
-		seedErr := b.seedFromBlueprintLocked(loaded, selectedAgents, task, skipTask, false)
+		seedErr := b.seedFromBlueprintLocked(loaded, selectedBots, task, skipTask, false)
 		b.mu.Unlock()
 		if seedErr != nil {
 			return seedErr
 		}
-		b.backfillAgentFilesForRoster()
-		// The company brain starts empty — we do not seed content (no
-		// blueprint wiki skeletons, no getting-started pages).
+		b.backfillBotFilesForRoster()
+		b.materializeBlueprintWiki(loaded)
+		// Seed the team/getting-started/ pages so a brand-new office is never
+		// empty. Mirrors the team/about/ seed and is gated identically (only
+		// runs when a real wiki root is known). Best-effort: logged, not fatal.
+		b.materializeGettingStarted()
+		// materializeBlueprintWiki only regenerates the index when its
+		// transactional materializer wrote new bytes. The seed boundary
+		// must still guarantee a fresh index/all.md — for example when the
+		// blueprint wiki was already on disk from a prior run but the
+		// index was rebuilt empty by a clean-boot reconcile. Call here
+		// unconditionally so the post-seed snapshot is always correct.
+		regenCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		b.regenWikiIndexAfterSeed(regenCtx, "blueprint seed")
+		cancel()
 		return nil
 	}
 	// Scratch path: minimal seed (#general + about/ wiki stubs + CEO).
@@ -186,13 +198,17 @@ func (b *Broker) runSeedPhase(s *onboarding.State) error {
 	if seedErr != nil {
 		return seedErr
 	}
-	b.backfillAgentFilesForRoster()
+	b.backfillBotFilesForRoster()
 	// Materialize the about/ skeleton outside the broker lock. Mirrors the
 	// website-scan path's team/about/{README,company,owner}.md so the
 	// skip-website user lands in an office with a populated wiki section
 	// rather than an empty one. Best-effort: failures are logged inside the
 	// helper and do not fail the seed phase.
 	b.materializeScratchWikiStubs(s)
+	// Seed the team/getting-started/ pages on the scratch path too, gated
+	// identically to the about/ stubs, so an empty-office founder still lands
+	// in a wiki that explains how the office works. Best-effort.
+	b.materializeGettingStarted()
 	// Stubs land via atomicWrite (not the WikiWorker), so force an index
 	// regen here so /index/all.md reflects the new about/ files.
 	regenCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -221,12 +237,23 @@ func (b *Broker) ensureOnboardingFirstIssue(s *onboarding.State) error {
 	if taskID == "" || b.findTaskByIDLocked(taskID) == nil {
 		now := time.Now().UTC().Format(time.RFC3339)
 		b.counter++
+		// The human's FIRST issue, owned by the CEO. It was filed into
+		// "general", so after the retirement the one task the whole onboarding
+		// exists to produce landed in a room nobody can open. It belongs in the
+		// owner's DM. An unresolvable home leaves the task homeless rather than
+		// naming a dead room — a homeless task is legal and still listable,
+		// which is strictly better than one addressed to nothing.
+		firstIssueHome, homeErr := b.homeChannelForLocked("cos")
+		if homeErr != nil {
+			log.Printf("onboarding: first issue has no home channel: %v", homeErr)
+			firstIssueHome = ""
+		}
 		task := teamTask{
 			ID:            b.allocateIssueIDLocked(),
-			Channel:       "general",
+			Channel:       firstIssueHome,
 			Title:         onboardingFirstIssueTitle(prompt),
 			Details:       prompt,
-			Owner:         "ceo",
+			Owner:         "cos",
 			CreatedBy:     "human",
 			TaskType:      "issue",
 			PipelineID:    "issue",
@@ -278,7 +305,7 @@ func onboardingFirstIssueTitle(prompt string) string {
 }
 
 // seedMinimalScratchLocked seeds the absolute minimum for the scratch path:
-//   - CEO agent (BuiltIn, lead)
+//   - CEO bot (BuiltIn, lead)
 //   - #general channel (members: CEO)
 //   - 2 wiki stub files: README.md and team-charter.md (written to disk
 //     outside the lock via materializeScratchWikiStubs — called by the caller
@@ -296,31 +323,42 @@ func (b *Broker) seedMinimalScratchLocked(s *onboarding.State) error {
 	// Seed CEO as the sole member.
 	b.members = []officeMember{
 		{
-			Slug:      "ceo",
-			Name:      "CEO",
+			Slug:      "cos",
+			Name:      "Chief of Staff",
 			Role:      "lead",
 			BuiltIn:   true,
 			CreatedBy: "wuphf",
 			CreatedAt: now,
 		},
 	}
-	b.memberIndex = map[string]int{"ceo": 0}
+	b.memberIndex = map[string]int{"cos": 0}
 
 	// Seed #general.
-	companyName := strings.TrimSpace(s.FormAnswers.CompanyName)
-	if companyName == "" {
-		companyName = "your office"
+	//
+	// #general kill switch, gate 6 of 7. The scratch seed is a second,
+	// independent copy of the seedFromBlueprintLocked fallback (gate 5), so
+	// gating one without the other leaves the scratch path resurrecting it.
+	var seeded []teamChannel
+	if generalChannelEnabled() {
+		companyName := strings.TrimSpace(s.FormAnswers.CompanyName)
+		if companyName == "" {
+			companyName = "your team"
+		}
+		generalDesc := fmt.Sprintf("Primary coordination channel for %s.", companyName)
+		seeded = append(seeded, teamChannel{
+			Slug:        GeneralChannelSlug,
+			Name:        GeneralChannelSlug,
+			Description: generalDesc,
+			Members:     []string{"cos"},
+			CreatedBy:   "wuphf",
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		})
 	}
-	generalDesc := fmt.Sprintf("Primary coordination channel for %s.", companyName)
-	b.channels = []teamChannel{{
-		Slug:        "general",
-		Name:        "general",
-		Description: generalDesc,
-		Members:     []string{"ceo"},
-		CreatedBy:   "wuphf",
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	}}
+	// One assignment, exactly as before: this seed already replaced the channel
+	// list wholesale, so gating only changes what it seeds, never what it
+	// removes from an existing workspace.
+	b.channels = seeded
 
 	// Clear tasks and message history for a fresh start.
 	b.tasks = nil
@@ -330,6 +368,9 @@ func (b *Broker) seedMinimalScratchLocked(s *onboarding.State) error {
 	// Seed the "Backup & Migration" system task that owns #general so the
 	// ~141 fallback call sites that post to "general" keep working.
 	b.ensureBackupMigrationTaskLocked()
+	// The lead needs a DM, or this seed produces a workspace with one member
+	// and nowhere to talk to them once #general is retired.
+	b.ensureBotDMsLocked()
 
 	// Signal subscribers that the office roster was replaced.
 	b.publishOfficeChangeLocked(officeChangeEvent{Kind: "office_reseeded"})
@@ -342,7 +383,7 @@ func (b *Broker) seedMinimalScratchLocked(s *onboarding.State) error {
 // the files SeedCompanyContext writes on the with-website path so users
 // land in a populated wiki section regardless of which onboarding branch
 // they took. The README body is shared via operations.AboutReadmeContent;
-// company.md and owner.md are placeholder stubs an agent can enrich later.
+// company.md and owner.md are placeholder stubs a bot can enrich later.
 //
 // Caller must NOT hold b.mu. Best-effort: errors are logged, not returned,
 // so a file I/O failure does not fail the seed phase.
@@ -412,6 +453,59 @@ func (b *Broker) materializeScratchWikiStubs(s *onboarding.State) {
 		log.Printf("onboarding: scratch wiki commit: %v", err)
 	} else if sha != "" {
 		log.Printf("onboarding: scratch wiki stubs committed %s", sha)
+	}
+}
+
+// materializeGettingStarted seeds the team/getting-started/ wiki pages into a
+// brand-new office so it is never empty. It mirrors materializeScratchWikiStubs
+// exactly: it resolves the same wiki root, delegates the skip-if-exists
+// atomic writes to operations.SeedGettingStarted, and is best-effort (errors
+// are logged, never returned, so a file I/O failure does not fail the seed
+// phase). The caller regenerates the wiki index immediately afterward via
+// regenWikiIndexAfterSeed, so the pages land in index/all.md under the
+// "team/getting-started" section.
+//
+// Wired into BOTH the blueprint and scratch seed paths in runSeedPhase, gated
+// identically to the team/about/ seed (only runs when a real wiki root is
+// known). Caller must NOT hold b.mu.
+//
+// See docs/specs/office-onboarding-uplift.md section 5.
+func (b *Broker) materializeGettingStarted() {
+	home := config.RuntimeHomeDir()
+	if home == "" {
+		log.Printf("onboarding: materializeGettingStarted: WUPHF_RUNTIME_HOME unset")
+		return
+	}
+	wikiRoot := filepath.Join(home, ".wuphf", "wiki")
+
+	written, err := operations.SeedGettingStarted(wikiRoot)
+	if err != nil {
+		log.Printf("onboarding: seed getting-started: %v", err)
+		return
+	}
+	if len(written) == 0 {
+		// Already on disk from a prior seed; nothing new to commit.
+		return
+	}
+
+	worker := b.WikiWorker()
+	if worker == nil || worker.Repo() == nil {
+		// Non-markdown backend (e.g. memory in tests). Files stay on disk;
+		// RecoverDirtyTree on the next markdown-backend launch folds them in.
+		// Same fallback shape as materializeScratchWikiStubs.
+		return
+	}
+	repo := worker.Repo()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := repo.IndexRegen(ctx); err != nil {
+		log.Printf("onboarding: getting-started index regen: %v", err)
+	}
+	sha, err := repo.CommitBootstrap(ctx, "wuphf: materialize getting-started wiki pages")
+	if err != nil {
+		log.Printf("onboarding: getting-started commit: %v", err)
+	} else if sha != "" {
+		log.Printf("onboarding: getting-started pages committed %s", sha)
 	}
 }
 
@@ -489,7 +583,7 @@ type ceoMessagePayload struct {
 // on entering the given phase. Each entry maps to one channelMessage in the
 // CEO DM.
 //
-// All strings are verbatim from the spec "## CEO Voice — deterministic
+// All strings are verbatim from the spec "## Chief of Staff Voice — deterministic
 // templates" section. No LLM tokens are spent here.
 //
 // Returns nil for phases not handled in Phase 2 (draft/approve/kickoff).
@@ -586,9 +680,9 @@ func ceoDeterministicMessages(phase string, s *onboarding.State) []ceoMessagePay
 		return out
 
 	case onboarding.PhaseTeam:
-		// The team trim checklist is built from the blueprint's agent roster.
+		// The team trim checklist is built from the blueprint's bot roster.
 		// We emit a generic checklist here; the broker bootstrap populates
-		// the actual agents from the picked blueprint when it wires this.
+		// the actual bots from the picked blueprint when it wires this.
 		return []ceoMessagePayload{{
 			Kind:         "ceo_team_trim",
 			Content:      "This blueprint comes with a team — keep or trim:",
@@ -728,20 +822,23 @@ func teamTrimItems(s *onboarding.State) []map[string]interface{} {
 		log.Printf("onboarding: load blueprint %q for team trim: %v", blueprintID, err)
 		return nil
 	}
-	items := make([]map[string]interface{}, 0, len(bp.Starter.Agents))
-	for _, agent := range bp.Starter.Agents {
-		slug := normalizeChannelSlug(operationFirstNonEmpty(agent.Slug, agent.EmployeeBlueprint, operationSlug(agent.Name)))
-		if slug == "" {
+	items := make([]map[string]interface{}, 0, len(bp.Starter.Bots))
+	for _, bot := range bp.Starter.Bots {
+		// BOT slug: actor normaliser, raw skip. See the sibling in
+		// broker_onboarding.go.
+		raw := operationFirstNonEmpty(bot.Slug, bot.EmployeeBlueprint, operationSlug(bot.Name))
+		if strings.TrimSpace(raw) == "" {
 			continue
 		}
-		label := strings.TrimSpace(agent.Name)
+		slug := normalizeChannelSlug(raw)
+		label := strings.TrimSpace(bot.Name)
 		if label == "" {
 			label = humanizeSlug(slug)
 		}
 		items = append(items, map[string]interface{}{
 			"id":              slug,
 			"label":           label,
-			"default_checked": agent.Checked,
+			"default_checked": bot.Checked,
 		})
 	}
 	return items
@@ -800,7 +897,7 @@ func sanitizeJSONValue(v interface{}) interface{} {
 // imports this one; importing it back would create a cycle.
 //
 // Rule: collapse newlines, bullet chars, and multi-space runs so that a
-// forged "Action:" header embedded in agent input cannot land at line-start
+// forged "Action:" header embedded in bot input cannot land at line-start
 // where a card parser would interpret it as a structured field.
 func teamSanitizeContextValue(s string) string {
 	if s == "" {

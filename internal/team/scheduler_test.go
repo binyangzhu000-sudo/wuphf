@@ -43,10 +43,10 @@ func TestNextWorkflowRun_ValidCronAdvances(t *testing.T) {
 func TestSchedulerProcessOnce_TaskUnclaimedFiresAlert(t *testing.T) {
 	b := newSchedulerFixtureBroker(t)
 	b.tasks = []teamTask{{
-		ID: "t1", Channel: "general", Title: "do thing", Owner: "", status: "in_progress",
+		ID: "t1", Channel: "team", Title: "do thing", Owner: "", status: "in_progress",
 	}}
 	b.dueJobs = []schedulerJob{{
-		Slug: "j1", Channel: "general", TargetType: "task", TargetID: "t1",
+		Slug: "j1", Channel: "team", TargetType: "task", TargetID: "t1",
 	}}
 
 	delivered := 0
@@ -71,10 +71,10 @@ func TestSchedulerProcessOnce_TaskUnclaimedFiresAlert(t *testing.T) {
 func TestSchedulerProcessOnce_TaskOwnedFiresStalled(t *testing.T) {
 	b := newSchedulerFixtureBroker(t)
 	b.tasks = []teamTask{{
-		ID: "t1", Channel: "general", Title: "do thing", Owner: "eng", status: "in_progress",
+		ID: "t1", Channel: "team", Title: "do thing", Owner: "eng", status: "in_progress",
 	}}
 	b.dueJobs = []schedulerJob{{
-		Slug: "j1", Channel: "general", TargetType: "task", TargetID: "t1",
+		Slug: "j1", Channel: "team", TargetType: "task", TargetID: "t1",
 	}}
 
 	sched := &watchdogScheduler{
@@ -92,10 +92,10 @@ func TestSchedulerProcessOnce_TaskOwnedFiresStalled(t *testing.T) {
 func TestSchedulerProcessOnce_DoneTaskMarksJobDone(t *testing.T) {
 	b := newSchedulerFixtureBroker(t)
 	b.tasks = []teamTask{{
-		ID: "t1", Channel: "general", Title: "do thing", Owner: "eng", status: "done",
+		ID: "t1", Channel: "team", Title: "do thing", Owner: "eng", status: "done",
 	}}
 	b.dueJobs = []schedulerJob{{
-		Slug: "j1", Channel: "general", TargetType: "task", TargetID: "t1",
+		Slug: "j1", Channel: "team", TargetType: "task", TargetID: "t1",
 	}}
 
 	sched := &watchdogScheduler{broker: b, clock: newManualClock(time.Now()), deliverTask: func(officeActionLog, teamTask) {}}
@@ -112,10 +112,10 @@ func TestSchedulerProcessOnce_DoneTaskMarksJobDone(t *testing.T) {
 func TestSchedulerProcessOnce_BlockedTaskSkipsAlert(t *testing.T) {
 	b := newSchedulerFixtureBroker(t)
 	b.tasks = []teamTask{{
-		ID: "t1", Channel: "general", Title: "do thing", Owner: "eng", status: "in_progress", blocked: true,
+		ID: "t1", Channel: "team", Title: "do thing", Owner: "eng", status: "in_progress", blocked: true,
 	}}
 	b.dueJobs = []schedulerJob{{
-		Slug: "j1", Channel: "general", TargetType: "task", TargetID: "t1",
+		Slug: "j1", Channel: "team", TargetType: "task", TargetID: "t1",
 	}}
 	sched := &watchdogScheduler{broker: b, clock: newManualClock(time.Now()), deliverTask: func(officeActionLog, teamTask) {}}
 	sched.processOnce()
@@ -130,12 +130,12 @@ func TestSchedulerProcessOnce_BlockedTaskSkipsAlert(t *testing.T) {
 func TestSchedulerProcessOnce_RequestActiveFiresAlertAndPostsAutomation(t *testing.T) {
 	b := newSchedulerFixtureBroker(t)
 	b.requests = []humanInterview{{
-		ID: "r1", Channel: "general", Title: "approve", From: "ceo",
+		ID: "r1", Channel: "team", Title: "approve", From: "cos",
 		Question: "do this?", Blocking: true,
 		Status: "pending",
 	}}
 	b.dueJobs = []schedulerJob{{
-		Slug: "j1", Channel: "general", TargetType: "request", TargetID: "r1",
+		Slug: "j1", Channel: "team", TargetType: "request", TargetID: "r1",
 	}}
 	sched := &watchdogScheduler{broker: b, clock: newManualClock(time.Now()), deliverTask: func(officeActionLog, teamTask) {}}
 	sched.processOnce()
@@ -151,10 +151,10 @@ func TestSchedulerProcessOnce_RequestActiveFiresAlertAndPostsAutomation(t *testi
 func TestSchedulerProcessOnce_RequestInactiveMarksJobDone(t *testing.T) {
 	b := newSchedulerFixtureBroker(t)
 	b.requests = []humanInterview{{
-		ID: "r1", Channel: "general", Title: "approve", Status: "answered",
+		ID: "r1", Channel: "team", Title: "approve", Status: "answered",
 	}}
 	b.dueJobs = []schedulerJob{{
-		Slug: "j1", Channel: "general", TargetType: "request", TargetID: "r1",
+		Slug: "j1", Channel: "team", TargetType: "request", TargetID: "r1",
 	}}
 	sched := &watchdogScheduler{broker: b, clock: newManualClock(time.Now()), deliverTask: func(officeActionLog, teamTask) {}}
 	sched.processOnce()
@@ -166,7 +166,7 @@ func TestSchedulerProcessOnce_RequestInactiveMarksJobDone(t *testing.T) {
 func TestSchedulerProcessOnce_UnknownTargetTypeReschedules(t *testing.T) {
 	b := newSchedulerFixtureBroker(t)
 	b.dueJobs = []schedulerJob{{
-		Slug: "j1", Channel: "general", TargetType: "mystery", TargetID: "x",
+		Slug: "j1", Channel: "team", TargetType: "mystery", TargetID: "x",
 	}}
 	sched := &watchdogScheduler{broker: b, clock: newManualClock(time.Now()), deliverTask: func(officeActionLog, teamTask) {}}
 	sched.processOnce()
@@ -188,9 +188,9 @@ func TestSchedulerRecordLedger_EmptyOwnerEscalates(t *testing.T) {
 		},
 	}
 	w := &watchdogScheduler{broker: b, clock: newManualClock(time.Now())}
-	_, decisionID := w.recordLedger("general", "task_unclaimed", "t1", "  ", "summary", "src-1")
-	if got.kind != "escalate_to_ceo" || got.owner != "ceo" {
-		t.Errorf("expected escalate_to_ceo for ceo; got kind=%q owner=%q", got.kind, got.owner)
+	_, decisionID := w.recordLedger("team", "task_unclaimed", "t1", "  ", "summary", "src-1")
+	if got.kind != "escalate_to_ceo" || got.owner != "cos" {
+		t.Errorf("expected escalate_to_ceo for cos; got kind=%q owner=%q", got.kind, got.owner)
 	}
 	if decisionID == "" {
 		t.Errorf("expected non-empty decision ID")
@@ -207,9 +207,9 @@ func TestSchedulerRecordLedger_RequestWaitingAsksHuman(t *testing.T) {
 		},
 	}
 	w := &watchdogScheduler{broker: b, clock: newManualClock(time.Now())}
-	_, _ = w.recordLedger("general", "request_waiting", "r1", "ceo", "summary", "")
-	if got.kind != "ask_human" || got.owner != "ceo" {
-		t.Errorf("expected ask_human routed to ceo; got kind=%q owner=%q", got.kind, got.owner)
+	_, _ = w.recordLedger("team", "request_waiting", "r1", "cos", "summary", "")
+	if got.kind != "ask_human" || got.owner != "cos" {
+		t.Errorf("expected ask_human routed to cos; got kind=%q owner=%q", got.kind, got.owner)
 	}
 }
 
@@ -354,7 +354,7 @@ func TestSchedulerStartStop_DeterministicTickAndShutdown(t *testing.T) {
 	// drains the goroutine deterministically.
 	b := newSchedulerFixtureBroker(t)
 	b.dueJobs = []schedulerJob{{
-		Slug: "j1", Channel: "general", TargetType: "mystery", TargetID: "x",
+		Slug: "j1", Channel: "team", TargetType: "mystery", TargetID: "x",
 	}}
 	clk := newManualClock(time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC))
 	tickDone := make(chan struct{}, 4)
@@ -538,13 +538,18 @@ func (b *schedulerFixtureBroker) UpdateSchedulerJobState(slug string, _ time.Tim
 	return nil
 }
 
+// livePlaybookPrompt: the fixture has no wiki, so it always falls back to the
+// frozen payload (the pre-live-playbook behavior these scheduler tests assert).
+func (b *schedulerFixtureBroker) livePlaybookPrompt(_ string) string                             { return "" }
+func (b *schedulerFixtureBroker) recordOperatorRoutineExecution(string, PlaybookOutcome, string) {}
+
 func (b *schedulerFixtureBroker) CompleteSchedulerRun(slug string, _ time.Time, statusForJob string, _ schedulerRun) error {
 	b.jobStateUpdates = append(b.jobStateUpdates, jobStateCall{slug: slug, status: statusForJob})
 	return nil
 }
 
-func (b *schedulerFixtureBroker) EnsureDirectChannel(agentSlug string) (string, error) {
-	return agentSlug + "__human", nil
+func (b *schedulerFixtureBroker) EnsureDirectChannel(botSlug string) (string, error) {
+	return botSlug + "__human", nil
 }
 
 func (b *schedulerFixtureBroker) CreateWatchdogAlert(kind, channel, targetType, targetID, owner, summary string) (watchdogAlert, bool, error) {
@@ -598,12 +603,14 @@ func (b *recordingLedgerBroker) FindTask(string, string) (teamTask, bool) { retu
 func (b *recordingLedgerBroker) FindRequest(string, string) (humanInterview, bool) {
 	return humanInterview{}, false
 }
-func (b *recordingLedgerBroker) UpdateSchedulerJobState(string, time.Time, string) error { return nil }
+func (b *recordingLedgerBroker) UpdateSchedulerJobState(string, time.Time, string) error        { return nil }
+func (b *recordingLedgerBroker) livePlaybookPrompt(string) string                               { return "" }
+func (b *recordingLedgerBroker) recordOperatorRoutineExecution(string, PlaybookOutcome, string) {}
 func (b *recordingLedgerBroker) CompleteSchedulerRun(string, time.Time, string, schedulerRun) error {
 	return nil
 }
-func (b *recordingLedgerBroker) EnsureDirectChannel(agentSlug string) (string, error) {
-	return agentSlug + "__human", nil
+func (b *recordingLedgerBroker) EnsureDirectChannel(botSlug string) (string, error) {
+	return botSlug + "__human", nil
 }
 func (b *recordingLedgerBroker) CreateWatchdogAlert(string, string, string, string, string, string) (watchdogAlert, bool, error) {
 	return watchdogAlert{}, false, nil

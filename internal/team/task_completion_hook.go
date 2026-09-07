@@ -84,7 +84,15 @@ func taskDeliveredContentLine(task *teamTask) string {
 	if title == "" {
 		title = task.ID
 	}
-	line := fmt.Sprintf("%s delivered: %s", title, taskDeliveredSummaryLine(task))
+	// The summary falls back to the title when a task has no Definition, which
+	// is the common case. Printing both then reads "Fix the header delivered:
+	// Fix the header" — the same sentence twice. Say it once unless the
+	// summary is genuinely different (a success criterion or a goal).
+	summary := taskDeliveredSummaryLine(task)
+	line := title + " delivered"
+	if summary != "" && !strings.EqualFold(summary, title) {
+		line += ": " + summary
+	}
 	if artifact := strings.TrimSpace(task.Artifact); artifact != "" {
 		line += " — artifact: " + artifact
 	}
@@ -136,41 +144,22 @@ func (b *Broker) postTaskDeliveredLocked(task *teamTask) {
 		Kind:         taskDeliveredMessageKind,
 		Title:        title,
 		Content:      content,
-		Tagged:       dedupeReassignTags([]string{"ceo", owner}),
+		Tagged:       dedupeReassignTags([]string{"cos", owner}),
 		Timestamp:    now,
 		ReplyTo:      strings.TrimSpace(task.ThreadID),
 		SourceTaskID: task.ID,
 	})
 
-	// Inbox notice: the smallest existing non-blocking inbox primitive is a
-	// humanInterview row; kind="notice" keeps it non-blocking/non-required
-	// (requestNeedsHumanDecision falls through to Required=false) and gives
-	// it a single Acknowledge option (requestOptionDefaults). No reminder
-	// scheduling — a delivery notice must never nag.
-	noticeFrom := owner
-	if noticeFrom == "" {
-		noticeFrom = "system"
-	}
-	b.counter++
-	notice := humanInterview{
-		ID:        fmt.Sprintf("request-%d", b.counter),
-		Kind:      "notice",
-		Status:    "pending",
-		From:      noticeFrom,
-		Channel:   taskChannel,
-		Title:     fmt.Sprintf("%s delivered", task.ID),
-		Question:  content,
-		Blocking:  false,
-		Required:  false,
-		ReplyTo:   strings.TrimSpace(task.ThreadID),
-		IssueID:   task.ID,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	notice.Options, notice.RecommendedID = normalizeRequestOptions(notice.Kind, "", nil)
-	b.requests = append(b.requests, notice)
-	b.pendingInterview = firstBlockingRequest(b.requests)
-	b.appendActionLocked("request_created", "office", taskChannel, noticeFrom, truncateSummary(notice.Title+" "+notice.Question, 140), notice.ID)
+	// No Inbox card. A delivery is news, not a decision: the chat post above
+	// already announced it in the channel the whole roster is in, and since
+	// the one-room change that channel is the one the human is reading. The
+	// card this used to raise carried the identical sentence and a single
+	// "Acknowledge" button, so the only thing a human could do with it was
+	// dismiss it — ceremony that made every finished task cost a click.
+	//
+	// Cards are reserved for requests that actually need a human decision
+	// (plan approval, a new teammate, a new channel). If a delivery ever
+	// needs a decision, that is a review request, not a notice.
 	task.DonePostedFor = doneKey
 }
 
@@ -201,7 +190,7 @@ type taskCompletionEntity struct {
 // deterministic only, no LLM:
 //
 //   - explicit @mentions in title/details/goal/deliverables → people
-//     (agents and humans referenced by slug), minus plumbing slugs;
+//     (bots and humans referenced by slug), minus plumbing slugs;
 //   - capitalized multi-word names in the Definition goal + deliverable
 //     names + task details → companies, slugified via the existing
 //     slugify normalizer and validated against slugPattern. Details are
@@ -211,6 +200,15 @@ type taskCompletionEntity struct {
 //
 // Bounded to maxTaskCompletionEntities, first-seen order.
 func taskCompletionEntities(task teamTask) []taskCompletionEntity {
+	// App Builder build/improve tasks talk exclusively about the workspace's
+	// OWN machinery — extracting "companies" from them minted garbage entity
+	// pages ("Deal Desk Bot is a company", "Db Approved is a company") that
+	// taught the operator not to trust the brain (2026-08-17 quality audit).
+	// Their @mentions carry no customer knowledge either; skip entirely.
+	if isAppBuilderSlug(task.Owner) ||
+		strings.HasPrefix(strings.TrimSpace(task.Title), "Build app:") {
+		return nil
+	}
 	goal := ""
 	deliverableText := ""
 	if def := task.Definition; def != nil {
@@ -284,7 +282,7 @@ func taskCompletionFactText(task teamTask, entities []taskCompletionEntity, self
 }
 
 // taskCompletionFactSourcePath maps the task artifact onto the fact log's
-// source_path contract (must start with agents/ or team/). Visual-artifact
+// source_path contract (must start with bots/ or team/). Visual-artifact
 // ids and other references fall back to empty.
 func taskCompletionFactSourcePath(task teamTask) string {
 	artifact := strings.TrimSpace(task.Artifact)

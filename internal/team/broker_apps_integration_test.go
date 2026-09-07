@@ -10,7 +10,7 @@ import (
 )
 
 // TestProposeAppApprovalSpawnsAppBuilderTask locks in the implicit-intent gate:
-// an agent's propose_app raises a NON-BLOCKING approval, and only on approve
+// a bot's propose_app raises a NON-BLOCKING approval, and only on approve
 // does the broker spawn a task owned by the App Builder. Drives the real HTTP
 // handlers end-to-end (POST /requests -> POST /requests/answer).
 func TestProposeAppApprovalSpawnsAppBuilderTask(t *testing.T) {
@@ -24,8 +24,8 @@ func TestProposeAppApprovalSpawnsAppBuilderTask(t *testing.T) {
 	// 1. propose_app -> POST /requests with an app_proposal payload.
 	body, _ := json.Marshal(map[string]any{
 		"kind":     "approval",
-		"from":     "ceo",
-		"channel":  "general",
+		"from":     "cos",
+		"channel":  "team",
 		"title":    "Build a new internal tool: Lead Scorer?",
 		"question": "Build a new internal tool: Lead Scorer?",
 		"blocking": false,
@@ -86,8 +86,8 @@ func TestProposeAppRejectionSpawnsNoTask(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]any{
 		"kind":     "approval",
-		"from":     "ceo",
-		"channel":  "general",
+		"from":     "cos",
+		"channel":  "team",
 		"question": "Build a new internal tool: Throwaway?",
 		"blocking": false,
 		"app_proposal": map[string]any{
@@ -111,11 +111,25 @@ func TestProposeAppRejectionSpawnsNoTask(t *testing.T) {
 	}
 }
 
-// TestRegisterAppRestrictedToAppBuilder locks the write gate: a random agent
-// holding the broker token must not register apps directly; only the App Builder
-// (or a human session) may. Drives POST /apps with the X-WUPHF-Agent header.
-func TestRegisterAppRestrictedToAppBuilder(t *testing.T) {
+// TestRegisterAppGatedByAppBuildingSkill locks the write gate: app building
+// is a system skill every roster bot carries, so any roster bot with it
+// enabled may register apps; a slug that is not on the roster, or one the
+// human disabled the skill for, is forbidden. The legacy App Builder stays
+// allowed. Drives POST /apps with the X-WUPHF-Bot header.
+func TestRegisterAppGatedByAppBuildingSkill(t *testing.T) {
+	t.Setenv("WUPHF_RUNTIME_HOME", t.TempDir())
 	b := newTestBroker(t)
+	b.mu.Lock()
+	b.members = append(b.members,
+		officeMember{Slug: "designer", Name: "Designer", Role: "Designer"},
+		officeMember{Slug: "analyst", Name: "Analyst", Role: "Analyst"},
+	)
+	for i := range b.skills {
+		if b.skills[i].System && b.skills[i].Name == systemSkillAppBuilding {
+			b.skills[i].DisabledBots = append(b.skills[i].DisabledBots, "analyst")
+		}
+	}
+	b.mu.Unlock()
 	if err := b.StartOnPort(0); err != nil {
 		t.Fatalf("start broker: %v", err)
 	}
@@ -127,11 +141,19 @@ func TestRegisterAppRestrictedToAppBuilder(t *testing.T) {
 		"html": validAppHTML,
 	})
 
-	// A non-app-builder agent is forbidden.
-	if code := postAppsStatus(t, base+"/apps", b.Token(), "ceo", body); code != http.StatusForbidden {
-		t.Fatalf("non-app-builder register: got %d, want 403", code)
+	// A slug that is not on the roster is forbidden.
+	if code := postAppsStatus(t, base+"/apps", b.Token(), "intruder", body); code != http.StatusForbidden {
+		t.Fatalf("off-roster register: got %d, want 403", code)
 	}
-	// The App Builder is allowed.
+	// A roster bot with app-building switched off is forbidden.
+	if code := postAppsStatus(t, base+"/apps", b.Token(), "analyst", body); code != http.StatusForbidden {
+		t.Fatalf("app-building-disabled register: got %d, want 403", code)
+	}
+	// A roster bot carrying the skill is allowed.
+	if code := postAppsStatus(t, base+"/apps", b.Token(), "designer", body); code != http.StatusOK {
+		t.Fatalf("designer register: got %d, want 200", code)
+	}
+	// The legacy App Builder is still allowed.
 	if code := postAppsStatus(t, base+"/apps", b.Token(), appBuilderSlug, body); code != http.StatusOK {
 		t.Fatalf("app-builder register: got %d, want 200", code)
 	}
@@ -158,14 +180,14 @@ func TestAppVersionEndpointsNonDestructive(t *testing.T) {
 
 	// Register v1, then update to v2 (both as the App Builder).
 	v1Body, _ := json.Marshal(map[string]any{"name": "Lead Scorer", "html": validAppHTML})
-	created := postAppsAsAgent(t, base+"/apps", b.Token(), appBuilderSlug, v1Body)
+	created := postAppsAsBot(t, base+"/apps", b.Token(), appBuilderSlug, v1Body)
 	app, _ := created["app"].(map[string]any)
 	id, _ := app["id"].(string)
 	if id == "" {
 		t.Fatalf("no app id in register response: %v", created)
 	}
 	v2Body, _ := json.Marshal(map[string]any{"id": id, "name": "Lead Scorer", "html": htmlB})
-	postAppsAsAgent(t, base+"/apps", b.Token(), appBuilderSlug, v2Body)
+	postAppsAsBot(t, base+"/apps", b.Token(), appBuilderSlug, v2Body)
 
 	// List → two structured versions, newest first, v2 current.
 	status, list := getAppsJSON(t, base+"/apps/"+id+"/versions", b.Token())
@@ -236,12 +258,12 @@ func getAppsJSON(t *testing.T, url, token string) (int, map[string]any) {
 	return resp.StatusCode, out
 }
 
-func postAppsAsAgent(t *testing.T, url, token, agentSlug string, body []byte) map[string]any {
+func postAppsAsBot(t *testing.T, url, token, botSlug string, body []byte) map[string]any {
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-WUPHF-Agent", agentSlug)
+	req.Header.Set("X-WUPHF-Agent", botSlug)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("POST %s: %v", url, err)
@@ -258,13 +280,13 @@ func postAppsAsAgent(t *testing.T, url, token, agentSlug string, body []byte) ma
 	return out
 }
 
-func postAppsStatus(t *testing.T, url, token, agentSlug string, body []byte) int {
+func postAppsStatus(t *testing.T, url, token, botSlug string, body []byte) int {
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	if agentSlug != "" {
-		req.Header.Set("X-WUPHF-Agent", agentSlug)
+	if botSlug != "" {
+		req.Header.Set("X-WUPHF-Agent", botSlug)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -298,7 +320,7 @@ func postAppsJSON(t *testing.T, url, token string, body []byte) map[string]any {
 
 // TestAppDBEndpointBrokerTokenRoundTrip locks the DB write gate at the HTTP
 // layer: the sandboxed app reaches the broker through the web proxy carrying the
-// BROKER token (broker-kind, NOT a human session and NOT the app-builder agent),
+// BROKER token (broker-kind, NOT a human session and NOT the app-builder bot),
 // so a define → upsert → GET round-trip MUST succeed under a plain broker token.
 // This is the exact caller a human/app-builder-only gate would wrongly reject —
 // which would break the app writing its own data model in the browser.
@@ -313,14 +335,14 @@ func TestAppDBEndpointBrokerTokenRoundTrip(t *testing.T) {
 
 	// Register an app (as the App Builder) so it has a manifest to attach a DB to.
 	regBody, _ := json.Marshal(map[string]any{"name": "Data App", "html": validAppHTML})
-	created := postAppsAsAgent(t, base+"/apps", b.Token(), appBuilderSlug, regBody)
+	created := postAppsAsBot(t, base+"/apps", b.Token(), appBuilderSlug, regBody)
 	app, _ := created["app"].(map[string]any)
 	id, _ := app["id"].(string)
 	if id == "" {
 		t.Fatalf("no app id in register response: %v", created)
 	}
 
-	// Fresh app: GET returns empty tables (broker token, no agent header).
+	// Fresh app: GET returns empty tables (broker token, no bot header).
 	status, empty := getAppsJSON(t, base+"/apps/"+id+"/db", b.Token())
 	if status != http.StatusOK {
 		t.Fatalf("GET db: %d", status)
@@ -329,7 +351,7 @@ func TestAppDBEndpointBrokerTokenRoundTrip(t *testing.T) {
 		t.Fatalf("fresh app tables = %v, want empty", empty["tables"])
 	}
 
-	// define + upsert with a PLAIN broker token (postAppsJSON sends no agent
+	// define + upsert with a PLAIN broker token (postAppsJSON sends no bot
 	// header → broker-kind). Must succeed — this is the regression guard.
 	defBody, _ := json.Marshal(map[string]any{
 		"op":    "define",
@@ -394,7 +416,7 @@ func TestAppDBWriteThrottle(t *testing.T) {
 	base := fmt.Sprintf("http://%s", b.Addr())
 
 	regBody, _ := json.Marshal(map[string]any{"name": "Loop App", "html": validAppHTML})
-	created := postAppsAsAgent(t, base+"/apps", b.Token(), appBuilderSlug, regBody)
+	created := postAppsAsBot(t, base+"/apps", b.Token(), appBuilderSlug, regBody)
 	app, _ := created["app"].(map[string]any)
 	id, _ := app["id"].(string)
 	if id == "" {

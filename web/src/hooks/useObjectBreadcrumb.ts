@@ -22,12 +22,19 @@ export interface BreadcrumbItem {
 /**
  * Derive up to two breadcrumb segments from the current route:
  *   [section, object]
- * e.g. ["Company Brain", "people/nazz"] or ["Agents", "Agent: gaia"].
+ * e.g. ["Wiki", "Wiki: people/nazz"] or ["Bots", "Bot: gaia"].
  *
  * Returns an empty array for conversation routes (channels) and unknown.
  * Pure function so tests can call it without a React context.
  */
-export function deriveBreadcrumbs(route: CurrentRoute): BreadcrumbItem[] {
+export function deriveBreadcrumbs(
+  route: CurrentRoute,
+  /** Resolved display name for a custom app, when the caller has the apps
+   *  list. Without it the generic-app branch falls back to title-casing the
+   *  record id, which surfaced as "App_ad2f6211ad746d37" in the header.
+   *  Optional so this stays callable from tests with no React context. */
+  customAppName?: string,
+): BreadcrumbItem[] {
   switch (route.kind) {
     case "task-board": {
       return [{ label: "Tasks", href: "#/tasks" }];
@@ -40,7 +47,7 @@ export function deriveBreadcrumbs(route: CurrentRoute): BreadcrumbItem[] {
       ];
     }
     case "wiki": {
-      return [{ label: "Company Brain", href: "#/wiki" }];
+      return [{ label: "Wiki", href: "#/wiki" }];
     }
     case "wiki-article": {
       const res = resolveObjectRoute({
@@ -48,12 +55,12 @@ export function deriveBreadcrumbs(route: CurrentRoute): BreadcrumbItem[] {
         path: route.articlePath,
       });
       return [
-        { label: "Company Brain", href: "#/wiki" },
+        { label: "Wiki", href: "#/wiki" },
         breadcrumbItem(res, route.articlePath),
       ];
     }
     case "wiki-lookup": {
-      return [{ label: "Company Brain", href: "#/wiki" }];
+      return [{ label: "Wiki", href: "#/wiki" }];
     }
     case "article": {
       return [{ label: "Article", href: `#/articles/${route.articleId}` }];
@@ -77,10 +84,11 @@ export function deriveBreadcrumbs(route: CurrentRoute): BreadcrumbItem[] {
           },
         ];
       }
-      // Generic app — one segment with the app title.
+      // Generic app — one segment with the app title. Prefer the real name
+      // when the caller resolved it; appLabel only title-cases the id.
       return [
         {
-          label: appLabel(route.appId),
+          label: customAppName?.trim() || appLabel(route.appId),
           href: `#/apps/${encodeURIComponent(route.appId)}`,
         },
       ];
@@ -106,11 +114,11 @@ export function deriveBreadcrumbs(route: CurrentRoute): BreadcrumbItem[] {
         { label: "New task", href: "#/tasks/new" },
       ];
     case "agents":
-      return [{ label: "Agents", href: "#/agents" }];
-    case "agent-detail": {
+      return [{ label: "Bots", href: "#/agents" }];
+    case "bot-detail": {
       const res = resolveObjectRoute({ kind: "agent", slug: route.agentSlug });
       return [
-        { label: "Agents", href: "#/agents" },
+        { label: "Bots", href: "#/agents" },
         breadcrumbItem(res, `@${route.agentSlug}`),
       ];
     }

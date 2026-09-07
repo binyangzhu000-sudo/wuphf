@@ -66,22 +66,22 @@ const JIM_PAM_CONVERSATIONS: readonly (readonly JimPamLine[])[] = [
   [
     {
       who: "jim",
-      text: "Did you hear? CEO merged 12 PRs. Didn't ask anyone.",
+      text: "Did you hear? Chief of Staff merged 12 PRs. Didn't ask anyone.",
     },
     { who: "pam", text: "Twelve? I'd better update the wiki." },
     { who: "jim", text: "Honestly kind of amazing." },
   ],
   [
-    { who: "jim", text: "Dwight filed a formal complaint. Against the wiki." },
+    { who: "jim", text: "Someone filed a formal complaint. Against the wiki." },
     { who: "pam", text: "...Against the wiki?" },
     { who: "jim", text: "He says the footnotes are insubordinate." },
   ],
   [
     {
       who: "jim",
-      text: "Michael is giving the CEO agent a performance review.",
+      text: "Michael is giving the Chief of Staff bot a performance review.",
     },
-    { who: "pam", text: "The AI agent." },
+    { who: "pam", text: "The AI bot." },
     { who: "jim", text: "It scored Outstanding. Michael cried." },
   ],
 ];

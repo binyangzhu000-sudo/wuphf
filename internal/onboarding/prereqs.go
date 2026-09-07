@@ -3,6 +3,7 @@ package onboarding
 import (
 	"context"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -36,7 +37,7 @@ type PrereqResult struct {
 	// binary has no session, or no probe is wired for this runtime.
 	// Issue #932: distinguishes "we asked and got no session" (block the
 	// tile, show a sign-in CTA) from "we don't know" (let the user click
-	// and learn from the agent loop, the legacy behavior).
+	// and learn from the bot loop, the legacy behavior).
 	SessionProbed bool `json:"session_probed,omitempty"`
 
 	// SignedIn is true when the runtime reports an active auth session.
@@ -138,14 +139,14 @@ func CheckOne(ctx context.Context, name string) PrereqResult {
 	// Issue #932: session-status probe. Run the per-runtime auth-status
 	// subcommand. The goal is to distinguish "claude installed" (current
 	// behavior) from "claude installed AND signed in" — the latter is the
-	// actually-load-bearing state for an agent loop's first LLM call.
+	// actually-load-bearing state for a bot loop's first LLM call.
 	//
 	// Probe failure modes are intentionally lenient: a non-zero exit, parse
 	// error, or timeout all set SignedIn=false (which the SPA renders as
 	// a "sign in" CTA) rather than blocking the user. The cost of a false
 	// negative is a friction-y but recoverable click; the cost of a false
 	// positive (current behavior) is letting the user complete onboarding
-	// only to fail on the first agent call.
+	// only to fail on the first bot call.
 	probe, ok := runtimeSessionProbes[name]
 	if ok && probe != nil {
 		probeCtx, probeCancel := context.WithTimeout(ctx, 3*time.Second)
@@ -227,21 +228,21 @@ func probeCodexSession(ctx context.Context, path string) bool {
 // any provider has stored credentials. The CLI prints a banner with a
 // count like "0 credentials" / "2 credentials". Zero-count or parse
 // failure → not signed in.
+// opencodeCredentialCount pulls the credential count out of `opencode
+// providers list` output ("3 credentials" / "1 credential").
+var opencodeCredentialCount = regexp.MustCompile(`(?:^|\s)(\d+)\s+credentials?\b`)
+
 func probeOpencodeSession(ctx context.Context, path string) bool {
 	out, err := exec.CommandContext(ctx, path, "providers", "list").CombinedOutput()
 	if err != nil {
 		return false
 	}
 	text := strings.ToLower(string(out))
-	if strings.Contains(text, "0 credentials") {
-		return false
-	}
-	// Match "<N> credential" where N >= 1. The trailing space (or "s")
-	// disambiguates from "0 credentials".
-	for _, n := range []string{"1 credential", "2 credential", "3 credential", "4 credential", "5 credential", "6 credential", "7 credential", "8 credential", "9 credential"} {
-		if strings.Contains(text, n) {
-			return true
-		}
+	// Word-boundary match: the old substring check read "10 credentials" as
+	// "0 credentials" and reported a configured user as signed OUT
+	// (2026-08-16 first-run audit).
+	if m := opencodeCredentialCount.FindStringSubmatch(text); m != nil {
+		return m[1] != "0"
 	}
 	// Fallback: any provider name in the rendered table implies a session.
 	// Suppress noise from the "Credentials ~/.local/share/..." header by

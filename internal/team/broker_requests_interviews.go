@@ -1,10 +1,8 @@
 package team
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -20,9 +18,9 @@ func requestIsActive(req humanInterview) bool {
 
 // recentApprovalReuseWindow controls how long an already-approved
 // request can short-circuit a new same-dedupe-key call. Within this
-// window, any retry of the same external action by the same agent
+// window, any retry of the same external action by the same bot
 // reuses the existing approval and proceeds straight to execute —
-// no new request, no human re-prompt. Outside the window, the agent
+// no new request, no human re-prompt. Outside the window, the bot
 // gets a fresh prompt because the human's earlier intent may have
 // gone stale. 5 minutes balances "obvious retry" with "explicit
 // re-confirm" for slow tool loops.
@@ -92,7 +90,7 @@ func requestOptionDefaults(kind string) ([]interviewOption, string) {
 	case "interview":
 		return []interviewOption{
 			{ID: "answer_directly", Label: "Answer directly", Description: "Respond in your own words below.", RequiresText: true, TextHint: "Type your answer for the team."},
-			{ID: "need_more_context", Label: "Need more context", Description: "Ask the office to bring back more context before you decide.", RequiresText: true, TextHint: "Type what context is missing or what should be clarified next."},
+			{ID: "need_more_context", Label: "Need more context", Description: "Ask the team to bring back more context before you decide.", RequiresText: true, TextHint: "Type what context is missing or what should be clarified next."},
 		}, "answer_directly"
 	case "notice":
 		// Non-blocking FYI raised by the deterministic completion hook
@@ -161,7 +159,7 @@ func enrichRequestOptions(kind string, options []interviewOption) []interviewOpt
 
 // ownChoiceOptionID is the trailing free-text "write your own" option appended
 // to open-ended asks so the human always has the Claude-Code-style escape hatch
-// as the LAST option, even when the agent only proposed concrete suggestions.
+// as the LAST option, even when the bot only proposed concrete suggestions.
 const ownChoiceOptionID = "something_else"
 
 // ensureOwnChoiceOption appends a trailing free-text "Something else" option to
@@ -223,6 +221,29 @@ func findRequestOption(req humanInterview, choiceID string) *interviewOption {
 		}
 	}
 	return nil
+}
+
+// answerIsSilentDismissal reports whether an answer is a human clearing a
+// non-blocking FYI rather than saying something to the team.
+//
+// A "notice" request is an informational card (task delivered, build finished)
+// whose only option is Acknowledge. Posting "Acknowledged @app-builder's
+// notice." into the channel for that click was wrong twice over: it put words
+// in the human's mouth for what was a dismiss button, and it woke the tagged
+// bot, which replied with its own acknowledgement — a two-message exchange
+// carrying no information, repeated for every notice. Dismissing an FYI is not
+// speech; the card just clears.
+//
+// Answers that carry intent still post: a note typed into the box, or any
+// choice other than a bare acknowledge.
+func answerIsSilentDismissal(req humanInterview, answer interviewAnswer) bool {
+	if strings.TrimSpace(strings.ToLower(req.Kind)) != "notice" {
+		return false
+	}
+	if strings.TrimSpace(answer.CustomText) != "" {
+		return false
+	}
+	return strings.TrimSpace(strings.ToLower(answer.ChoiceID)) == "acknowledge"
 }
 
 func formatRequestAnswerMessage(req humanInterview, answer interviewAnswer) string {
@@ -313,22 +334,20 @@ func firstBlockingRequest(requests []humanInterview) *humanInterview {
 // firstBlockingRequestInChannel scopes the chat gate to one channel: a
 // blocking request parks NEW chat in ITS channel until answered, but must
 // not gag the human everywhere else (ICP-eval v3 fix family #2: one buried
-// card must never wedge the office). Requests with an empty channel are
-// treated as #general.
+// card must never wedge the office).
+//
+// Channel-less requests bucket under "" — their own bucket, not #general's.
+// Both sides used to be laundered to "general", which was self-consistent but
+// meant a request with no channel gated chat in the retired room, and a query
+// naming that room matched requests that had nothing to do with it. "" as its
+// own key keeps the grouping honest and mentions no room at all.
 func firstBlockingRequestInChannel(requests []humanInterview, channel string) *humanInterview {
-	channel = normalizeChannelSlug(channel)
-	if channel == "" {
-		channel = "general"
-	}
+	channel = bucketChannelKey(channel)
 	for i := range requests {
 		if !requestBlocksMessages(requests[i]) {
 			continue
 		}
-		reqChannel := normalizeChannelSlug(requests[i].Channel)
-		if reqChannel == "" {
-			reqChannel = "general"
-		}
-		if reqChannel == channel {
+		if reqChannel := bucketChannelKey(requests[i].Channel); reqChannel == channel {
 			req := requests[i]
 			return &req
 		}
@@ -336,13 +355,13 @@ func firstBlockingRequestInChannel(requests []humanInterview, channel string) *h
 	return nil
 }
 
-// AgentAwaitingInterviewAnswer reports whether slug has an active
+// BotAwaitingInterviewAnswer reports whether slug has an active
 // human_interview pending — its current turn is parked in the
 // /interview/answer poll loop. The notifier delivery path uses this to
-// suppress NEW turns for the asking agent only, instead of the old
+// suppress NEW turns for the asking bot only, instead of the old
 // office-wide drop (v3 [19:23:59]: one unanswered interview silenced every
-// agent, including a librarian directly @-mentioned in another channel).
-func (b *Broker) AgentAwaitingInterviewAnswer(slug string) bool {
+// bot, including a librarian directly @-mentioned in another channel).
+func (b *Broker) BotAwaitingInterviewAnswer(slug string) bool {
 	slug = strings.ToLower(strings.TrimSpace(slug))
 	if b == nil || slug == "" {
 		return false
@@ -401,7 +420,14 @@ func (b *Broker) cancelRequestLocked(req *humanInterview, actor, reason string) 
 
 func (b *Broker) cancelActiveHumanInterviewsLocked(actor, reason, channel, replyTo string) int {
 	count := 0
-	targetChannel := normalizeChannelSlug(channel)
+	// An empty channel means NO FILTER — cancel across every channel.
+	// Normalising first would make it "general" (normalizeChannelSlug's lobby
+	// fallback), so `targetChannel != ""` could never be false and a
+	// cancel-everywhere call silently cancelled only #general's interviews.
+	targetChannel := ""
+	if raw := strings.TrimSpace(channel); raw != "" {
+		targetChannel = normalizeChannelSlug(raw)
+	}
 	targetReplyTo := strings.TrimSpace(replyTo)
 	for i := range b.requests {
 		if !requestIsHumanInterview(b.requests[i]) || !requestIsActive(b.requests[i]) {
@@ -422,7 +448,7 @@ func (b *Broker) cancelActiveHumanInterviewsLocked(actor, reason, channel, reply
 }
 
 // raiseDefinitionGapInterviewLocked is the deterministic E5 intake gate
-// (ten-out-of-ten Wave E): when an agent lands a Definition that still
+// (ten-out-of-ten Wave E): when a bot lands a Definition that still
 // carries placeholder markers ("[CONTACT NAME]", "NEEDS CONFIRMATION",
 // "TBD") or names access the team does not have, the broker raises ONE
 // batched human interview for the task — by contract, not prompt-hope
@@ -464,13 +490,18 @@ func (b *Broker) raiseDefinitionGapInterviewLocked(task *teamTask, actor string)
 		}
 	}
 
-	channel := normalizeChannelSlug(task.Channel)
-	if channel == "" {
-		channel = "general"
-	}
 	from := strings.TrimSpace(actor)
 	if from == "" {
 		from = "office"
+	}
+	// The task's own channel, else the task OWNER's DM, else the asker's.
+	// This card is Blocking+Required: filed into the retired "general" it is
+	// invisible, and the bot waits on an answer the human was never shown.
+	channel := normalizeChannelSlug(task.Channel)
+	if strings.TrimSpace(task.Channel) == "" {
+		if home, err := b.homeChannelForWriterLocked(from, task.Owner, from); err == nil {
+			channel = home
+		}
 	}
 	var qb strings.Builder
 	fmt.Fprintf(&qb, "Before the team starts %q, a few details are missing:\n", strings.TrimSpace(task.Title))
@@ -490,7 +521,7 @@ func (b *Broker) raiseDefinitionGapInterviewLocked(task *teamTask, actor string)
 		Kind:          "interview",
 		Status:        "pending",
 		From:          from,
-		Channel:       channel,
+		Channel:       b.requestChannelForLocked(from, channel),
 		Title:         "Missing details for " + task.ID,
 		Question:      qb.String(),
 		Options:       options,
@@ -545,9 +576,6 @@ func (b *Broker) handleGetRequests(w http.ResponseWriter, r *http.Request) {
 	// web UI's overlay/interview bar need the same cross-channel view to render
 	// what's actually blocking the human.
 	allChannels := scope == "all" || scope == "global"
-	if !allChannels && channel == "" {
-		channel = "general"
-	}
 	viewerSlug := strings.TrimSpace(r.URL.Query().Get("viewer_slug"))
 	includeResolved := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("include_resolved")), "true")
 	// id narrows the listing to one request. A by-id poll exists to observe a
@@ -559,19 +587,39 @@ func (b *Broker) handleGetRequests(w http.ResponseWriter, r *http.Request) {
 	if requestID != "" {
 		includeResolved = true
 	}
+	// A channel-scoped LISTING has to name a channel. This used to default to
+	// "general", so a caller that forgot the parameter got a confident, empty
+	// answer from a room that no longer exists — the Inbox rendering as "no
+	// requests" when there were plenty. Say what is missing instead.
+	//
+	// A by-ID read is exempt: `?id=` addresses one request directly, so the
+	// channel is not a filter it needs and demanding one would break the App
+	// approval poll, whose whole job is to follow a request_id it was handed.
+	// Latent until normalizeChannelSlug stops laundering "" into "general" —
+	// today `channel` is never empty here — but wrong either way.
+	if !allChannels && requestID == "" && channel == "" {
+		http.Error(w, `channel is required: there is no default room to fall back to. Name a channel, pass an id, or pass scope=all to read across every channel you can see.`, http.StatusBadRequest)
+		return
+	}
 	b.mu.Lock()
 	if !allChannels && !b.canAccessChannelLocked(viewerSlug, channel) {
 		b.mu.Unlock()
 		http.Error(w, "channel access denied", http.StatusForbidden)
 		return
 	}
+	// A by-ID read is not channel-scoped, so it authorizes per-request like the
+	// cross-channel path instead of matching one channel. Without this a
+	// caller polling a request_id it was handed (the App approval poll) had to
+	// already know the request's channel to see it — and once
+	// normalizeChannelSlug stops laundering "", passing no channel matched
+	// nothing at all. Visibility is still enforced: every candidate goes
+	// through canAccessChannelLocked below, and the id filter further down can
+	// only narrow what this viewer may already see.
+	byID := requestID != "" && !allChannels && channel == ""
 	requests := make([]humanInterview, 0, len(b.requests))
 	for _, req := range b.requests {
-		reqChannel := normalizeChannelSlug(req.Channel)
-		if reqChannel == "" {
-			reqChannel = "general"
-		}
-		if allChannels {
+		reqChannel := bucketChannelKey(req.Channel)
+		if allChannels || byID {
 			if !b.canAccessChannelLocked(viewerSlug, reqChannel) {
 				continue
 			}
@@ -649,9 +697,25 @@ func (b *Broker) handlePostRequest(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "from and question required", http.StatusBadRequest)
 			return
 		}
-		channel := normalizeChannelSlug(body.Channel)
+		// Raw emptiness first: normalizeChannelSlug("") is "general", so a missing
+		// channel used to be silently laundered into the shared room. Resolve a real
+		// home instead — while #general is enabled this still answers "general", so
+		// today is unchanged; once it is off this is the bot's DM, or a refusal.
+		//
+		// homeChannelForLocked is the correct variant HERE specifically: b.mu is
+		// held at this point. The other variant would
+		// take the lock again and deadlock.
+		channel := ""
+		if raw := strings.TrimSpace(body.Channel); raw != "" {
+			channel = normalizeChannelSlug(raw)
+		}
 		if channel == "" {
-			channel = "general"
+			home, err := b.homeChannelForLocked(body.From)
+			if err != nil {
+				http.Error(w, `channel is required: there is no default room to fall back to. Name a channel, or set a member slug so the message can go to that agent's DM.`, http.StatusBadRequest)
+				return
+			}
+			channel = home
 		}
 		if b.findChannelLocked(channel) == nil {
 			http.Error(w, "channel not found", http.StatusNotFound)
@@ -663,8 +727,8 @@ func (b *Broker) handlePostRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		// Dedupe: if a dedupe_key is set and an active request with the
 		// same key already exists in this channel, return that existing
-		// request instead of stacking a duplicate. Without this, agent
-		// retries of the same external action (or multiple agents
+		// request instead of stacking a duplicate. Without this, bot
+		// retries of the same external action (or multiple bots
 		// hitting the same gate) pile up dozens of identical pending
 		// approvals — observed as 100+ stacked "Approve gmail action"
 		// requests after a single connect-and-retry sequence.
@@ -673,7 +737,7 @@ func (b *Broker) handlePostRequest(w http.ResponseWriter, r *http.Request) {
 		//   (a) Active request with same key → return it.
 		//   (b) RECENTLY-ANSWERED request (within recentApprovalReuseWindow)
 		//       with same key AND the answer was approve → return the
-		//       answered request directly. The agent's poll loop sees
+		//       answered request directly. The bot's poll loop sees
 		//       the existing approval immediately and proceeds to
 		//       execute without re-prompting the human. This is what
 		//       fixes the "I approved it but it asked again" loop:
@@ -736,7 +800,7 @@ func (b *Broker) handlePostRequest(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		// Cross-agent semantic dedupe for HUMAN-directed interviews ONLY
+		// Cross-bot semantic dedupe for HUMAN-directed interviews ONLY
 		// (see interview_dedup.go). Approval-style gates are excluded by
 		// the kind check — their distinct payloads must never collapse;
 		// the exact DedupeKey above already absorbs their retries.
@@ -788,7 +852,7 @@ func (b *Broker) handlePostRequest(w http.ResponseWriter, r *http.Request) {
 			Kind:                 normalizeRequestKind(body.Kind),
 			Status:               "pending",
 			From:                 strings.TrimSpace(body.From),
-			Channel:              channel,
+			Channel:              b.requestChannelForLocked(strings.TrimSpace(body.From), channel),
 			Title:                strings.TrimSpace(body.Title),
 			Question:             strings.TrimSpace(body.Question),
 			Context:              strings.TrimSpace(body.Context),
@@ -818,7 +882,7 @@ func (b *Broker) handlePostRequest(w http.ResponseWriter, r *http.Request) {
 		// App Builder proposals keep the approval option set (approve /
 		// approve_with_note / reject) but are non-blocking by design: the human
 		// decides at leisure while the team keeps working. Never freeze a
-		// channel just because an agent suggested building a tool.
+		// channel just because a bot suggested building a tool.
 		if req.AppProposal != nil {
 			req.Blocking = false
 			req.Required = false
@@ -923,6 +987,11 @@ func (b *Broker) handlePostRequestAnswer(w http.ResponseWriter, r *http.Request)
 	// AFTER answerRequestFromActor releases b.mu because MutateTask locks
 	// internally (mirrors how the integration gate proceeds post-answer).
 	b.maybeSpawnAppBuilderTaskFromProposal(body.ID)
+	// Knowledge promotion hook: an approved promotion writes the SNAPSHOT the
+	// human was shown into the shared wiki. Same placement and reasoning as the
+	// App Builder hook above — after b.mu is released, because the write path
+	// takes its own locks.
+	b.maybePromoteKnowledgeFromApproval(body.ID, answerActor)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }
@@ -987,7 +1056,7 @@ func (b *Broker) answerRequestFromActor(answerActor, id, choiceIDRaw, choiceText
 
 		b.counter++
 		// Tag the original asker AND every also_asking subscriber: the
-		// answer fans out to all agents merged onto this interview.
+		// answer fans out to all bots merged onto this interview.
 		tagged := append([]string{b.requests[i].From}, b.requests[i].AlsoAsking...)
 		msg := channelMessage{
 			ID:        fmt.Sprintf("msg-%d", b.counter),
@@ -997,8 +1066,14 @@ func (b *Broker) answerRequestFromActor(answerActor, id, choiceIDRaw, choiceText
 			ReplyTo:   strings.TrimSpace(b.requests[i].ReplyTo),
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 		}
-		msg.Content = formatRequestAnswerMessage(b.requests[i], *answer)
-		msg = b.appendMessageLocked(msg)
+		if !answerIsSilentDismissal(b.requests[i], *answer) {
+			msg.Content = formatRequestAnswerMessage(b.requests[i], *answer)
+			msg = b.appendMessageLocked(msg)
+		} else {
+			// Dismissing an FYI clears the card and nothing else: no channel
+			// message, so no bot wakes to acknowledge the acknowledgement.
+			b.counter--
+		}
 		if err := b.saveLocked(); err != nil {
 			b.mu.Unlock()
 			return http.StatusInternalServerError, "failed to persist broker state"
@@ -1077,13 +1152,13 @@ func (b *Broker) threadRootLocked(channel, msgID string) string {
 // answerInterviewFromHumanThreadReplyLocked routes a human THREAD reply to
 // an active interview as the interview's answer. ICP-eval v3 [19:24:53]:
 // the Inbox interview card's only affordance was a "Reply to thread…" box,
-// and the submitted reply reached no agent — the requesting agent kept
+// and the submitted reply reached no bot — the requesting bot kept
 // polling /interview/answer while the human's answer sat as an ordinary
 // chat message. Matching is thread-anchored: the reply's thread root must
 // equal the interview's anchor (req.ReplyTo, which request creation now
-// guarantees via the raised-chat announcement below). The polling agent's
+// guarantees via the raised-chat announcement below). The polling bot's
 // human_interview tool returns the reply text in its current turn — the
-// answer reaches the agent without any extra wake. Returns the answered
+// answer reaches the bot without any extra wake. Returns the answered
 // request's unblock cascade (nil when nothing matched). Caller holds b.mu
 // and is responsible for saveLocked + flushing the cascade.
 func (b *Broker) answerInterviewFromHumanThreadReplyLocked(msg channelMessage) (answered bool, cascade []pendingTaskTransition) {
@@ -1123,13 +1198,37 @@ func (b *Broker) answerInterviewFromHumanThreadReplyLocked(msg channelMessage) (
 	return false, nil
 }
 
+// humanRequestRaisedPayload is the structured card payload on a
+// "human_request_raised" chat message. The web client renders this as an
+// interactive approval card in the thread — the ask itself, with the
+// request's options as buttons — instead of a sentence telling the human to
+// go answer it somewhere else.
+//
+// It carries identity and framing only, never the options: those live on the
+// request and change as it is answered, so the client joins against the live
+// request by RequestID rather than trusting a snapshot frozen at raise time.
+type humanRequestRaisedPayload struct {
+	RequestID string `json:"request_id"`
+	// From is the slug of the bot that asked. The message itself is sent by
+	// "system" so it cannot wake other bots; this is who the card is
+	// attributed to on screen.
+	From     string `json:"from"`
+	Question string `json:"question"`
+	Title    string `json:"title,omitempty"`
+	// Label is "interview" or "request" — the card uses it for its heading.
+	Label string `json:"label,omitempty"`
+	// Blocking is true when the office is stalled until this is answered
+	// (req.Blocking OR req.Required).
+	Blocking bool `json:"blocking,omitempty"`
+}
+
 // postRequestRaisedChatMessageLocked announces a newly raised
 // human-decision request in its channel as a system chat message, so the
 // ask is visible where the human actually works — not only as an Inbox row
 // (ICP-eval v3 [19:23:59]: a blocking interview sat buried in the Inbox for
 // 44 minutes with no push while the office stalled behind it). From
-// "system" so the announcement can never wake other agents
-// (notifyAgentsLoop skips system senders). For requests with no thread
+// "system" so the announcement can never wake other bots
+// (notifyBotsLoop skips system senders). For requests with no thread
 // anchor, the announcement message BECOMES the anchor (req.ReplyTo) so a
 // human "Reply to thread…" on it routes back as the interview answer.
 // Caller must hold b.mu; the caller's saveLocked persists the message.
@@ -1140,9 +1239,14 @@ func (b *Broker) postRequestRaisedChatMessageLocked(req *humanInterview) {
 	if !requestIsHumanInterview(*req) && !requestNeedsHumanDecision(*req) {
 		return
 	}
+	// The asking bot's DM. This message is also the THREAD ANCHOR the
+	// human's reply routes back through (req.ReplyTo below), so a dead room
+	// here breaks the answer path as well as the announcement.
 	channel := normalizeChannelSlug(req.Channel)
-	if channel == "" {
-		channel = "general"
+	if strings.TrimSpace(req.Channel) == "" {
+		if home, err := b.homeChannelForLocked(req.From); err == nil {
+			channel = home
+		}
 	}
 	label := "request"
 	if requestIsHumanInterview(*req) {
@@ -1153,7 +1257,37 @@ func (b *Broker) postRequestRaisedChatMessageLocked(req *humanInterview) {
 		urgency = " (blocking)"
 	}
 	question := strings.TrimSpace(req.Question)
-	content := fmt.Sprintf("❓ @%s asks you%s (%s %s): %s\nAnswer it in the Inbox, or reply in this thread.", req.From, urgency, label, req.ID, question)
+	// Prose body. This is the FALLBACK surface, not the primary one: the web
+	// client renders Payload below as an interactive card with the request's
+	// own options as buttons. This text is what bots read in channel
+	// history, and what a client too old to know the payload still shows.
+	//
+	// It deliberately no longer says "Answer it in the Inbox". The standalone
+	// Inbox was consolidated into Tasks, so that sentence pointed the human at
+	// a destination the nav no longer has.
+	content := fmt.Sprintf("❓ @%s asks you%s (%s %s): %s\nAnswer it here, or reply in this thread.", req.From, urgency, label, req.ID, question)
+	// Structured card payload. Carries the request identity so the client can
+	// join against the live request (for its options and current status)
+	// rather than parsing it back out of the prose above, and carries the
+	// ASKER so the card is attributed to the bot that actually asked.
+	//
+	// From stays "system" on the wire: notifyBotsLoop skips system senders,
+	// and attributing this to req.From would make the announcement wake other
+	// bots. The card reads `from` out of this payload for its byline, so the
+	// human sees "@cos asks you" and never a phantom "Office" speaker.
+	payload, err := json.Marshal(humanRequestRaisedPayload{
+		RequestID: strings.TrimSpace(req.ID),
+		From:      strings.TrimSpace(req.From),
+		Question:  question,
+		Title:     strings.TrimSpace(req.Title),
+		Label:     label,
+		Blocking:  req.Blocking || req.Required,
+	})
+	if err != nil {
+		// A card we cannot describe still has a prose body that says the same
+		// thing, so degrade to that rather than dropping the announcement.
+		payload = nil
+	}
 	b.counter++
 	msg := channelMessage{
 		ID:        fmt.Sprintf("msg-%d", b.counter),
@@ -1162,6 +1296,7 @@ func (b *Broker) postRequestRaisedChatMessageLocked(req *humanInterview) {
 		Kind:      "human_request_raised",
 		Title:     strings.TrimSpace(req.Title),
 		Content:   content,
+		Payload:   payload,
 		ReplyTo:   strings.TrimSpace(req.ReplyTo),
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}
@@ -1169,6 +1304,7 @@ func (b *Broker) postRequestRaisedChatMessageLocked(req *humanInterview) {
 	if strings.TrimSpace(req.ReplyTo) == "" {
 		req.ReplyTo = msg.ID
 	}
+	b.postRequestPointerToDelegatorLocked(req, channel)
 }
 
 func (b *Broker) unblockTasksForAnsweredRequestLocked(req humanInterview) []pendingTaskTransition {
@@ -1281,81 +1417,4 @@ func reqAnswerSummary(answer *interviewAnswer) string {
 		return text
 	}
 	return strings.TrimSpace(answer.ChoiceID)
-}
-
-func (b *Broker) handleInterview(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		b.handleGetInterview(w, r)
-	case http.MethodPost:
-		b.handlePostInterview(w, r)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-func (b *Broker) handlePostInterview(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		From          string            `json:"from"`
-		Channel       string            `json:"channel"`
-		Question      string            `json:"question"`
-		Context       string            `json:"context"`
-		Options       []interviewOption `json:"options"`
-		RecommendedID string            `json:"recommended_id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid json", http.StatusBadRequest)
-		return
-	}
-	if strings.TrimSpace(body.From) == "" || strings.TrimSpace(body.Question) == "" {
-		http.Error(w, "from and question required", http.StatusBadRequest)
-		return
-	}
-	reqBody, _ := json.Marshal(map[string]any{
-		"action":         "create",
-		"kind":           "interview",
-		"title":          "Human interview",
-		"from":           body.From,
-		"channel":        body.Channel,
-		"question":       body.Question,
-		"context":        body.Context,
-		"options":        body.Options,
-		"recommended_id": body.RecommendedID,
-		"blocking":       false,
-		"required":       false,
-	})
-	r2 := r.Clone(r.Context())
-	r2.Body = io.NopCloser(bytes.NewReader(reqBody))
-	b.handlePostRequest(w, r2)
-}
-
-func (b *Broker) handleGetInterview(w http.ResponseWriter, r *http.Request) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	w.Header().Set("Content-Type", "application/json")
-	pending := firstActiveHumanInterview(b.requests)
-	if pending == nil {
-		_ = json.NewEncoder(w).Encode(map[string]any{"pending": nil})
-		return
-	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"pending": pending})
-}
-
-func (b *Broker) handleInterviewAnswer(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		b.handleGetInterviewAnswer(w, r)
-	case http.MethodPost:
-		b.handlePostInterviewAnswer(w, r)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-func (b *Broker) handleGetInterviewAnswer(w http.ResponseWriter, r *http.Request) {
-	b.handleGetRequestAnswer(w, r)
-}
-
-func (b *Broker) handlePostInterviewAnswer(w http.ResponseWriter, r *http.Request) {
-	b.handlePostRequestAnswer(w, r)
 }

@@ -70,9 +70,9 @@ type channelUsageMsg struct {
 }
 
 type channelHealthMsg struct {
-	Connected     bool
-	SessionMode   string
-	OneOnOneAgent string
+	Connected   bool
+	SessionMode string
+	OneOnOneBot string
 }
 
 type channelTickMsg time.Time
@@ -89,29 +89,24 @@ type channelCancelDoneMsg struct {
 }
 type channelInterruptDoneMsg struct{ err error }
 type channelResetDoneMsg struct {
-	err           error
-	notice        string
-	sessionMode   string
-	oneOnOneAgent string
+	err         error
+	notice      string
+	sessionMode string
+	oneOnOneBot string
 }
 type channelResetDMDoneMsg struct {
 	err     error
 	removed int
 }
 type channelDMCreatedMsg struct {
-	err       error
-	slug      string // deterministic DM slug e.g. "engineering__human"
-	agentSlug string // agent side of the DM
-	name      string // display name
+	err     error
+	slug    string // deterministic DM slug e.g. "engineering__human"
+	botSlug string // bot side of the DM
+	name    string // display name
 }
 type channelInitDoneMsg struct {
 	err    error
 	notice string
-}
-type channelIntegrationDoneMsg struct {
-	label string
-	url   string
-	err   error
 }
 type telegramDiscoverMsg struct {
 	botName string
@@ -167,62 +162,62 @@ type channelMemberDraft struct {
 var brokerTokenPath = brokeraddr.DefaultTokenFile
 
 var channelSlashCommands = []tui.SlashCommand{
-	{Name: "init", Description: "Run setup (Ryan Howard skipped this step — don't be Ryan)", Category: "setup"},
+	{Name: "init", Description: "Run setup. Nothing is watching you yet", Category: "setup"},
 	{Name: "provider", Description: "Switch LLM provider (choose wisely, Michael)", Category: "setup"},
 	{Name: "doctor", Description: "Check readiness and runtime health (Meredith not involved)", Category: "setup"},
-	{Name: "integrate", Description: "Connect an integration (beat the Dunder Mifflin fax)", Category: "setup"},
-	{Name: "connect", Description: "Bring Telegram, OpenClaw, or other integrations into the office", Category: "setup"},
-	{Name: "1o1", Description: "Direct 1:1 with an agent — Toby not invited", Category: "session"},
+	{Name: "integrate", Description: "Connect an integration. More to look at", Category: "setup"},
+	{Name: "connect", Description: "Bring Telegram, OpenClaw, or other integrations onto the team", Category: "setup"},
+	{Name: "1o1", Description: "Direct 1:1 with a bot. The others pretend not to listen", Category: "session"},
 	{Name: "messages", Description: "Show the main office feed — where it all happens", Category: "navigate"},
-	{Name: "inbox", Description: "Show the selected agent inbox lane in 1:1 mode", Category: "navigate"},
-	{Name: "outbox", Description: "Show the selected agent outbox lane in 1:1 mode", Category: "navigate"},
-	{Name: "recover", Description: "Session recovery — Creed would call this 'continuity'", Category: "navigate"},
+	{Name: "inbox", Description: "Show the selected bot inbox lane in 1:1 mode", Category: "navigate"},
+	{Name: "outbox", Description: "Show the selected bot outbox lane in 1:1 mode", Category: "navigate"},
+	{Name: "recover", Description: "Session recovery. Someone was watching, so nothing is lost", Category: "navigate"},
 	{Name: "resume", Description: "Alias for /recover", Category: "navigate"},
-	{Name: "rewind", Description: "Catch up from here — not a full Threat Level Midnight", Category: "navigate"},
-	{Name: "search", Description: "Search channels, tasks, requests (Creed files too)", Category: "navigate"},
+	{Name: "rewind", Description: "Catch up from here. They already saw it", Category: "navigate"},
+	{Name: "search", Description: "Search channels, tasks, requests. Somebody took notes", Category: "navigate"},
 	{Name: "insert", Description: "Insert a channel, task, request, or message reference", Category: "navigate"},
-	{Name: "switcher", Description: "Switch office/direct — faster than Dwight's fire drill", Category: "navigate"},
-	{Name: "tasks", Description: "Show active work — Dwight tracks these on paper too", Category: "navigate"},
+	{Name: "switcher", Description: "Switch rooms and DMs. The staring follows you", Category: "navigate"},
+	{Name: "tasks", Description: "Show active work. Everyone is watching it too", Category: "navigate"},
 	{Name: "switch", Description: "Switch to another channel", Category: "navigate"},
 	{Name: "channels", Description: "Browse and manage channels", Category: "navigate"},
 	{Name: "channel", Description: "Create or remove a channel", Category: "channels"},
-	{Name: "agents", Description: "Manage your team (no downsizing announcements)", Category: "people"},
-	{Name: "agent", Description: "Add, remove, enable, or disable a teammate", Category: "people"},
-	{Name: "agent prompt", Description: "New teammate from a prompt — Ryan calls this 'disruption'", Category: "people"},
+	{Name: "bots", Description: "Manage your team (no downsizing announcements)", Category: "people"},
+	{Name: "bot", Description: "Add, remove, enable, or disable a teammate", Category: "people"},
+	{Name: "bot prompt", Description: "New teammate from a prompt — Ryan calls this 'disruption'", Category: "people"},
 	{Name: "task", Description: "Claim, release, or complete a task — ownership matters here", Category: "work"},
 	{Name: "policies", Description: "Signals, watchdogs, decisions — no beet farm required", Category: "navigate"},
 	{Name: "calendar", Description: "Office schedule — more reliable than Michael's personal calendar", Category: "navigate"},
 	{Name: "queue", Description: "Alias for /calendar", Category: "navigate"},
-	{Name: "artifacts", Description: "Task logs, approvals, and workflow artifacts — the paper trail Dwight demands", Category: "navigate"},
-	{Name: "skills", Description: "Show available skills — everyone has a specialty, even Kevin", Category: "navigate"},
-	{Name: "skill", Description: "Create, invoke, or manage a skill — the office gets smarter over time", Category: "work"},
+	{Name: "artifacts", Description: "Task logs, approvals, and artifacts. The receipts", Category: "navigate"},
+	{Name: "skills", Description: "Show available skills. Each bot watches one thing well", Category: "navigate"},
+	{Name: "skill", Description: "Create, invoke, or manage a skill — the team gets smarter over time", Category: "work"},
 	{Name: "reply", Description: "Reply in thread — threads keep context, unlike forwarded email chains", Category: "conversation"},
 	{Name: "threads", Description: "Browse threads — the antidote to 'per my last email'", Category: "conversation"},
 	{Name: "expand", Description: "Expand a collapsed thread — Michael never collapses anything", Category: "conversation"},
-	{Name: "collapse", Description: "Collapse a thread — keep the office tidy, Dwight approves", Category: "conversation"},
+	{Name: "collapse", Description: "Collapse a thread. Out of sight, briefly", Category: "conversation"},
 	{Name: "cancel", Description: "Exit current mode — that's what she said (probably)", Category: "conversation"},
-	{Name: "collab", Description: "Open-floor mode — everyone hears everything, Michael Scott style", Category: "session"},
-	{Name: "focus", Description: "Delegation mode — CEO routes, specialists execute (that's how it was always meant to work)", Category: "session"},
-	{Name: "reset", Description: "Reset channel and agents", Category: "session"},
-	{Name: "reset-dm", Description: "Clear direct messages with an agent", Category: "session"},
-	{Name: "quit", Description: "Exit WUPHF — Michael would make a speech first", Category: "session"},
+	{Name: "collab", Description: "Open-floor mode: everyone hears everything", Category: "session"},
+	{Name: "focus", Description: "Delegation mode — Chief of Staff routes, specialists execute (that's how it was always meant to work)", Category: "session"},
+	{Name: "reset", Description: "Reset channel and bots", Category: "session"},
+	{Name: "reset-dm", Description: "Clear direct messages with a bot", Category: "session"},
+	{Name: "quit", Description: "Exit gawkbot — Michael would make a speech first", Category: "session"},
 }
 
 // oneOnOneBlacklist lists command names blocked in 1:1 mode.
 var oneOnOneBlacklist = map[string]bool{
-	"tasks":        true,
-	"task":         true,
-	"channels":     true,
-	"channel":      true,
-	"agents":       true,
-	"agent":        true,
-	"agent prompt": true,
-	"reply":        true,
-	"threads":      true,
-	"expand":       true,
-	"collapse":     true,
-	"collab":       true,
-	"focus":        true,
+	"tasks":      true,
+	"task":       true,
+	"channels":   true,
+	"channel":    true,
+	"bots":       true,
+	"bot":        true,
+	"bot prompt": true,
+	"reply":      true,
+	"threads":    true,
+	"expand":     true,
+	"collapse":   true,
+	"collab":     true,
+	"focus":      true,
 }
 
 func buildOneOnOneSlashCommands() []tui.SlashCommand {
@@ -244,7 +239,6 @@ const (
 	channelPickerInitBlueprint   channelPickerMode = "init_blueprint"
 	channelPickerInitPack        channelPickerMode = "init_pack" // legacy alias
 	channelPickerProvider        channelPickerMode = "provider"
-	channelPickerIntegrations    channelPickerMode = "integrations"
 	channelPickerRequests        channelPickerMode = "requests"
 	channelPickerTasks           channelPickerMode = "tasks"
 	channelPickerTaskAction      channelPickerMode = "task_action"
@@ -256,10 +250,10 @@ const (
 	channelPickerInsert          channelPickerMode = "insert"
 	channelPickerSearch          channelPickerMode = "search"
 	channelPickerRewind          channelPickerMode = "rewind"
-	channelPickerAgents          channelPickerMode = "agents"
-	channelPickerCalendarAgent   channelPickerMode = "calendar_agent"
+	channelPickerBots            channelPickerMode = "agents"
+	channelPickerCalendarBot     channelPickerMode = "calendar_agent"
 	channelPickerOneOnOneMode    channelPickerMode = "one_on_one_mode"
-	channelPickerOneOnOneAgent   channelPickerMode = "one_on_one_agent"
+	channelPickerOneOnOneBot     channelPickerMode = "one_on_one_agent"
 	channelPickerTelegramGroup   channelPickerMode = "telegram_group"
 	channelPickerConnect         channelPickerMode = "connect"
 	channelPickerTelegramToken   channelPickerMode = "telegram_token"
@@ -276,25 +270,6 @@ const (
 	quickJumpChannels quickJumpTarget = "channels"
 	quickJumpApps     quickJumpTarget = "apps"
 )
-
-type channelIntegrationSpec struct {
-	Label       string
-	Value       string
-	Type        string
-	Provider    string
-	Description string
-}
-
-var channelIntegrationSpecs = []channelIntegrationSpec{
-	{Label: "Gmail", Value: "gmail", Type: "email", Provider: "google", Description: "Connect Google email"},
-	{Label: "Google Calendar", Value: "google-calendar", Type: "calendar", Provider: "google", Description: "Connect Google Calendar and the WUPHF Meeting Bot"},
-	{Label: "Outlook", Value: "outlook", Type: "email", Provider: "microsoft", Description: "Connect Microsoft email"},
-	{Label: "Outlook Calendar", Value: "outlook-calendar", Type: "calendar", Provider: "microsoft", Description: "Connect Outlook Calendar and the WUPHF Meeting Bot"},
-	{Label: "Slack", Value: "slack", Type: "messaging", Provider: "slack", Description: "Connect Slack workspace messaging"},
-	{Label: "Salesforce", Value: "salesforce", Type: "crm", Provider: "salesforce", Description: "Connect Salesforce CRM"},
-	{Label: "HubSpot", Value: "hubspot", Type: "crm", Provider: "hubspot", Description: "Connect HubSpot CRM"},
-	{Label: "Attio", Value: "attio", Type: "crm", Provider: "attio", Description: "Connect Attio CRM"},
-}
 
 // focusArea identifies which panel currently owns keyboard input.
 type focusArea int
@@ -363,7 +338,7 @@ type channelModel struct {
 	usage               channelui.UsageState
 	brokerConnected     bool
 	sessionMode         string
-	oneOnOneAgent       string
+	oneOnOneBot         string
 	lastCtrlCAt         time.Time
 	quickJumpTarget     quickJumpTarget
 	calendarRange       channelui.CalendarRange
@@ -378,8 +353,8 @@ type channelModel struct {
 	openclawToken    string
 	openclawSessions []openclawSessionOption
 
-	// lastAgentContent tracks the latest streaming text per agent for sidebar display.
-	lastAgentContent map[string]string
+	// lastBotContent tracks the latest streaming text per bot for sidebar display.
+	lastBotContent map[string]string
 
 	// onboardingChecklist holds the "Getting started" checklist rendered in the sidebar.
 	onboardingChecklist onboardingChecklist
@@ -394,12 +369,12 @@ func newChannelModelWithApp(threadsCollapsed bool, initialApp channelui.OfficeAp
 	officeMembers := channelui.OfficeMembersFromManifest(manifest)
 	channels := channelui.ChannelInfosFromManifest(manifest)
 	sessionMode := team.SessionModeOffice
-	oneOnOneAgent := ""
+	oneOnOneBot := ""
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("WUPHF_ONE_ON_ONE")), "1") || strings.EqualFold(strings.TrimSpace(os.Getenv("WUPHF_ONE_ON_ONE")), "true") {
 		sessionMode = team.SessionModeOneOnOne
-		oneOnOneAgent = strings.TrimSpace(os.Getenv("WUPHF_ONE_ON_ONE_AGENT"))
-		if oneOnOneAgent == "" {
-			oneOnOneAgent = team.DefaultOneOnOneAgent
+		oneOnOneBot = strings.TrimSpace(os.Getenv("WUPHF_ONE_ON_ONE_AGENT"))
+		if oneOnOneBot == "" {
+			oneOnOneBot = team.DefaultOneOnOneBot
 		}
 		initialApp = channelui.OfficeAppMessages
 	}
@@ -408,7 +383,7 @@ func newChannelModelWithApp(threadsCollapsed bool, initialApp channelui.OfficeAp
 		expandedThreads:      make(map[string]bool),
 		threadsDefaultExpand: !threadsCollapsed,
 		autocomplete:         tui.NewAutocomplete(channelSlashCommands),
-		mention:              tui.NewMention(channelMentionAgents(nil)),
+		mention:              tui.NewMention(channelMentionBots(nil)),
 		inputHistory:         channelui.NewHistory(),
 		initFlow:             tui.NewInitFlow(),
 		activeChannel:        "general",
@@ -417,26 +392,19 @@ func newChannelModelWithApp(threadsCollapsed bool, initialApp channelui.OfficeAp
 		officeMembers:        officeMembers,
 		channels:             channels,
 		sessionMode:          sessionMode,
-		oneOnOneAgent:        oneOnOneAgent,
+		oneOnOneBot:          oneOnOneBot,
 		threadInputHistory:   channelui.NewHistory(),
-		lastAgentContent:     make(map[string]string),
+		lastBotContent:       make(map[string]string),
 	}
 	if m.isOneOnOne() {
 		m.sidebarCollapsed = true
 		m.threadsDefaultExpand = true
 		m.autocomplete = tui.NewAutocomplete(buildOneOnOneSlashCommands())
-		m.notice = "Conference room reserved. Direct session reset. Agent pane reloaded in place. No Toby."
+		m.notice = "Direct session reset. Bot pane reloaded in place. Nobody else is looking."
 	}
 	memoryStatus := team.ResolveMemoryBackendStatus()
 	if memoryStatus.SelectedKind == config.MemoryBackendNone {
-		if config.ResolveNoNex() {
-			m.notice = "Running in office-only mode. Nex tools are disabled for this session."
-		} else {
-			m.notice = "Running without an external memory backend for this session."
-		}
-	} else if memoryStatus.SelectedKind == config.MemoryBackendNex && memoryStatus.ActiveKind == config.MemoryBackendNone && strings.TrimSpace(config.ResolveAPIKey("")) == "" {
-		m.notice = "No WUPHF API key configured. Starting setup..."
-		m.initFlow, _ = m.initFlow.Start()
+		m.notice = "Running without an external memory backend for this session."
 	} else if memoryStatus.SelectedKind == config.MemoryBackendGBrain && strings.TrimSpace(config.ResolveOpenAIAPIKey()) == "" && strings.TrimSpace(config.ResolveAnthropicAPIKey()) == "" {
 		m.notice = "No OpenAI or Anthropic API key configured for GBrain. Starting setup..."
 		m.initFlow, _ = m.initFlow.Start()
@@ -457,12 +425,12 @@ func (m channelModel) isOneOnOne() bool {
 	return team.NormalizeSessionMode(m.sessionMode) == team.SessionModeOneOnOne
 }
 
-func (m channelModel) oneOnOneAgentSlug() string {
-	return team.NormalizeOneOnOneAgent(m.oneOnOneAgent)
+func (m channelModel) oneOnOneBotSlug() string {
+	return team.NormalizeOneOnOneBot(m.oneOnOneBot)
 }
 
-func (m channelModel) oneOnOneAgentName() string {
-	slug := m.oneOnOneAgentSlug()
+func (m channelModel) oneOnOneBotName() string {
+	slug := m.oneOnOneBotSlug()
 	for _, member := range channelui.MergeOfficeMembers(m.officeMembers, m.members, nil) {
 		if member.Slug == slug && strings.TrimSpace(member.Name) != "" {
 			return member.Name
@@ -576,9 +544,6 @@ func (m channelModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case channelInitDoneMsg:
 		return m.handleChannelInitDoneMsg(msg)
-
-	case channelIntegrationDoneMsg:
-		return m.handleChannelIntegrationDoneMsg(msg)
 
 	case channelDoctorDoneMsg:
 		return m.handleChannelDoctorDoneMsg(msg)
@@ -755,7 +720,7 @@ func (m channelModel) buildSwitchChannelPickerOptions() []tui.PickerOption {
 		{Label: "Tasks", Value: "app:tasks", Description: "Review active work for this channel"},
 		{Label: "Requests", Value: "app:requests", Description: "Open pending approvals and interviews"},
 		{Label: "Policies", Value: "app:policies", Description: "Show signals, decisions, and watchdogs"},
-		{Label: "Calendar", Value: "app:calendar", Description: "View the office schedule and teammate calendars"},
+		{Label: "Calendar", Value: "app:calendar", Description: "View the team schedule and teammate calendars"},
 	}
 	if m.isOneOnOne() {
 		options = append(options, tui.PickerOption{
@@ -784,7 +749,7 @@ func (m channelModel) buildSwitchChannelPickerOptions() []tui.PickerOption {
 	return options
 }
 
-func (m channelModel) buildAgentPickerOptions() []tui.PickerOption {
+func (m channelModel) buildBotPickerOptions() []tui.PickerOption {
 	ch := m.currentChannelInfo()
 	if ch == nil {
 		return nil
@@ -803,20 +768,20 @@ func (m channelModel) buildAgentPickerOptions() []tui.PickerOption {
 		if meta, ok := officeMap[slug]; ok && meta.Name != "" {
 			name = meta.Name
 		}
-		if slug != "ceo" && disabled[slug] {
+		if slug != "cos" && disabled[slug] {
 			options = append(options, tui.PickerOption{
 				Label:       "Enable " + name,
 				Value:       "enable:" + slug,
 				Description: "Allow this teammate to participate in #" + m.activeChannel,
 			})
-		} else if slug != "ceo" {
+		} else if slug != "cos" {
 			options = append(options, tui.PickerOption{
 				Label:       "Disable " + name,
 				Value:       "disable:" + slug,
 				Description: "Keep them in the channel but stop notifications there",
 			})
 		}
-		if slug != "ceo" {
+		if slug != "cos" {
 			options = append(options, tui.PickerOption{
 				Label:       "Remove " + name,
 				Value:       "remove:" + slug,
@@ -851,17 +816,17 @@ func (m channelModel) buildAgentPickerOptions() []tui.PickerOption {
 	options = append(options, tui.PickerOption{
 		Label:       "Create new office member…",
 		Value:       "create:new",
-		Description: "Use /agent create <slug> <Display Name> to add a brand-new teammate",
+		Description: "Use /bot create <slug> <Display Name> to add a brand-new teammate",
 	})
 	return options
 }
 
 func (m channelModel) buildOneOnOneModePickerOptions() []tui.PickerOption {
-	enableDescription := "Restart WUPHF in direct mode with one selected agent and kill the rest of the Claude sessions"
+	enableDescription := "Restart gawkbot in direct mode with one selected bot and kill the rest of the Claude sessions"
 	if m.isOneOnOne() {
-		enableDescription = "Pick a different single agent for this direct session"
+		enableDescription = "Pick a different single bot for this direct session"
 	}
-	disableDescription := "Restart WUPHF with the full office team"
+	disableDescription := "Restart gawkbot with the full office team"
 	if !m.isOneOnOne() {
 		disableDescription = "Already using the full office team"
 	}
@@ -879,7 +844,7 @@ func (m channelModel) buildOneOnOneModePickerOptions() []tui.PickerOption {
 	}
 }
 
-func (m channelModel) buildOneOnOneAgentPickerOptions() []tui.PickerOption {
+func (m channelModel) buildOneOnOneBotPickerOptions() []tui.PickerOption {
 	options := make([]tui.PickerOption, 0, len(m.officeMembers))
 	for _, member := range m.officeMembers {
 		name := member.Name
@@ -899,11 +864,11 @@ func (m channelModel) buildOneOnOneAgentPickerOptions() []tui.PickerOption {
 	return options
 }
 
-func (m channelModel) buildCalendarAgentPickerOptions() []tui.PickerOption {
+func (m channelModel) buildCalendarBotPickerOptions() []tui.PickerOption {
 	options := []tui.PickerOption{{
 		Label:       "All teammates",
 		Value:       "all",
-		Description: "Show every participant across the office calendar",
+		Description: "Show every participant across the team calendar",
 	}}
 	for _, member := range m.members {
 		name := member.Name

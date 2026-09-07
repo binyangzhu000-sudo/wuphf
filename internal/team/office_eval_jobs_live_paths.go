@@ -46,7 +46,7 @@ package team
 //     500/409s bubble from the atomic wiki commit (git wedge, duplicate
 //     target) — also swallowed. The queue looked frozen ([17:43], [18:14]).
 //
-// (5) Agents executed and "completed" tasks still in `drafting`: the
+// (5) Bots executed and "completed" tasks still in `drafting`: the
 //     dispatch gate (isExecutableTeamTaskStatus in sendTaskUpdate) refuses
 //     execution turns, but a CEO chat-turn can still call team_task
 //     action=complete — MutateTask had no pre-start gate, so J3's
@@ -75,7 +75,7 @@ package team
 //  (d) wiki review request-changes + approve via the FE payloads succeed;
 //      the empty-rationale contract errors loudly
 //  (e) a PARKED task (composer Backlog/park — the one deliberate way into
-//      drafting): agent complete is refused, no turn dispatches, and the
+//      drafting): bot complete is refused, no turn dispatches, and the
 //      human's start affordance un-parks it into running
 //  (f) dependent stays blocked until upstream completion-with-artifact
 //  (g) board list and task detail report the same state for the same task
@@ -187,7 +187,7 @@ func evalJobLivePaths(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	createTask := func(title string, deps ...string) (string, error) {
 		body := map[string]any{
 			"action": "create", "channel": "general", "title": title,
-			"details": "Live-path probe work.", "owner": "eng", "created_by": "ceo",
+			"details": "Live-path probe work.", "owner": "eng", "created_by": "cos",
 		}
 		if len(deps) > 0 {
 			body["depends_on"] = deps
@@ -242,7 +242,7 @@ func evalJobLivePaths(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	aSnapshot := fx.broker.TaskByID(aID)
 	fx.launcher.sendTaskUpdate(
 		notificationTarget{Slug: "eng"},
-		officeActionLog{Kind: "task_created", Actor: "ceo", Channel: aSnapshot.Channel, RelatedID: aID},
+		officeActionLog{Kind: "task_created", Actor: "cos", Channel: aSnapshot.Channel, RelatedID: aID},
 		*aSnapshot,
 		"Work packet for a freshly created task — must dispatch.",
 	)
@@ -266,7 +266,7 @@ func evalJobLivePaths(fx *officeEvalFixture, r *OfficeEvalReport) error {
 		return err
 	}
 	if _, err := fx.broker.MutateTask(TaskPostRequest{
-		Action: "define", ID: bID, Channel: "general", CreatedBy: "ceo",
+		Action: "define", ID: bID, Channel: "general", CreatedBy: "cos",
 		Definition: &TaskDefinition{
 			Goal:            "Ship the QBR one-pager",
 			Deliverables:    []TaskDeliverable{{Name: "one-pager", Format: "markdown in the wiki"}},
@@ -276,7 +276,7 @@ func evalJobLivePaths(fx *officeEvalFixture, r *OfficeEvalReport) error {
 		return err
 	}
 	if _, _, err := client.postJSON("/tasks", map[string]any{
-		"action": "assign", "id": bID, "channel": "general", "owner": "eng", "created_by": "ceo",
+		"action": "assign", "id": bID, "channel": "general", "owner": "eng", "created_by": "cos",
 	}); err != nil {
 		return err
 	}
@@ -345,7 +345,7 @@ func evalJobLivePaths(fx *officeEvalFixture, r *OfficeEvalReport) error {
 			reopened.LifecycleState == LifecycleStateRunning && reopened.CompletedAt == "" && !staleApproved,
 		fmt.Sprintf("status=%d body=%s state=%s staleApproved=%v", reopenStatus, truncate(reopenBody, 120), reopened.LifecycleState, staleApproved), "")
 
-	// ── (e) agent turn / completion for a PARKED task is refused ──────────
+	// ── (e) bot turn / completion for a PARKED task is refused ──────────
 	// Drafting is now reachable only through the deliberate park path (the
 	// composer's Backlog action → POST /task-plan park=true). Everything
 	// the old pre-start ceremony enforced binds ONLY here.
@@ -376,13 +376,13 @@ func evalJobLivePaths(fx *officeEvalFixture, r *OfficeEvalReport) error {
 		eParked != nil && eParked.LifecycleState == LifecycleStateDrafting,
 		fmt.Sprintf("state=%s", eParked.LifecycleState), "")
 	eStatus, eBody, err := client.postJSON("/tasks", map[string]any{
-		"action": "complete", "id": eID, "channel": "general", "created_by": "ceo",
+		"action": "complete", "id": eID, "channel": "general", "created_by": "cos",
 	})
 	if err != nil {
 		return err
 	}
 	eTask := fx.broker.TaskByID(eID)
-	r.add(job, "agent complete on a parked task is refused with a structured error",
+	r.add(job, "bot complete on a parked task is refused with a structured error",
 		eStatus == http.StatusConflict && strings.Contains(eBody, "parked") &&
 			eTask != nil && eTask.LifecycleState == LifecycleStateDrafting,
 		fmt.Sprintf("status=%d body=%s state=%s", eStatus, truncate(eBody, 160), eTask.LifecycleState), "")
@@ -402,7 +402,7 @@ func evalJobLivePaths(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	eTaskSnapshot := fx.broker.TaskByID(eID)
 	fx.launcher.sendTaskUpdate(
 		notificationTarget{Slug: "eng"},
-		officeActionLog{Kind: "task_updated", Actor: "ceo", Channel: eTaskSnapshot.Channel, RelatedID: eID},
+		officeActionLog{Kind: "task_updated", Actor: "cos", Channel: eTaskSnapshot.Channel, RelatedID: eID},
 		*eTaskSnapshot,
 		"Work packet for a parked task — must not dispatch.",
 	)
@@ -435,7 +435,7 @@ func evalJobLivePaths(fx *officeEvalFixture, r *OfficeEvalReport) error {
 		return err
 	}
 	if _, err := fx.broker.MutateTask(TaskPostRequest{
-		Action: "define", ID: upID, Channel: "general", CreatedBy: "ceo",
+		Action: "define", ID: upID, Channel: "general", CreatedBy: "cos",
 		Definition: &TaskDefinition{
 			Goal:            "Publish the competitor pricing research",
 			Deliverables:    []TaskDeliverable{{Name: "research brief", Format: "markdown in the wiki"}},

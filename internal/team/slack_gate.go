@@ -65,7 +65,7 @@ func parseSlackGateValue(value string) (interviewID, optionID string, ok bool) {
 // summary when the request carries a structured external action, a warning when
 // the connection is unverified, and one button per option. The recommended option
 // is styled primary. Every dynamic field is escaped with slackEscape so hostile
-// agent-authored text cannot smuggle Slack control sequences into the rendered
+// bot-authored text cannot smuggle Slack control sequences into the rendered
 // card.
 func formatSlackInterviewBlocks(req humanInterview) []slack.Block {
 	var blocks []slack.Block
@@ -100,7 +100,7 @@ func formatSlackInterviewBlocks(req humanInterview) []slack.Block {
 	if req.ConnectionUnverified {
 		blocks = append(blocks, slack.NewContextBlock("",
 			slack.NewTextBlockObject(slack.MarkdownType,
-				"⚠️ Connection unverified — the office could not confirm this integration is connected.", false, false)))
+				"⚠️ Connection unverified — the team could not confirm this integration is connected.", false, false)))
 	}
 
 	if buttons := slackInterviewButtons(req); len(buttons) > 0 {

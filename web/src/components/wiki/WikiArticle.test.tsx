@@ -54,7 +54,7 @@ const CATALOG: api.WikiCatalogEntry[] = [
   {
     path: "people/sarah-chen",
     title: "Sarah Chen",
-    author_slug: "ceo",
+    author_slug: "cos",
     last_edited_ts: new Date().toISOString(),
     group: "people",
   },
@@ -64,10 +64,10 @@ const STUB_ARTICLE: api.WikiArticle = {
   path: "people/customer-x",
   title: "Customer X",
   content: "**Customer X** is a pilot.",
-  last_edited_by: "ceo",
+  last_edited_by: "cos",
   last_edited_ts: new Date().toISOString(),
   revisions: 3,
-  contributors: ["ceo", "pm"],
+  contributors: ["cos", "pm"],
   backlinks: [],
   word_count: 100,
   categories: [],
@@ -97,10 +97,10 @@ describe("<WikiArticle content>", () => {
       title: "Customer X",
       content:
         "**Customer X** is a mid-market logistics company. See [[people/sarah-chen|Sarah Chen]] and [[missing|Missing page]].",
-      last_edited_by: "ceo",
+      last_edited_by: "cos",
       last_edited_ts: new Date().toISOString(),
       revisions: 47,
-      contributors: ["ceo", "pm"],
+      contributors: ["cos", "pm"],
       backlinks: [],
       word_count: 100,
       categories: ["Active pilot"],
@@ -220,7 +220,7 @@ describe("<WikiArticle content>", () => {
 
 describe("<WikiArticle inline visual-artifact markers>", () => {
   it("strips an inline visual-artifact marker and embeds the referenced artifact", async () => {
-    // Repro of the live bug: the agent hand-wrote a standalone
+    // Repro of the live bug: the bot hand-wrote a standalone
     // `visual-artifact:<id>` marker into the article body via team_wiki_write
     // instead of promoting. The marker must never render as raw text; the
     // referenced artifact must be embedded inline.
@@ -229,10 +229,10 @@ describe("<WikiArticle inline visual-artifact markers>", () => {
       path: "team/drafts/ceo-coffee-extraction-control-chart.md",
       title: "Coffee Extraction Control Chart",
       content: `# Coffee Extraction\n\nBody copy.\n\nvisual-artifact:${inlineId}\n\nMore copy.`,
-      last_edited_by: "ceo",
+      last_edited_by: "cos",
       last_edited_ts: new Date().toISOString(),
       revisions: 1,
-      contributors: ["ceo"],
+      contributors: ["cos"],
       backlinks: [],
       word_count: 5,
       categories: [],
@@ -250,7 +250,7 @@ describe("<WikiArticle inline visual-artifact markers>", () => {
           trustLevel: "draft",
           representation: "html",
           htmlPath: `wiki/visual-artifacts/${inlineId}.html`,
-          createdBy: "ceo",
+          createdBy: "cos",
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           contentHash: "hash",
@@ -296,7 +296,7 @@ describe("<WikiArticle inline visual-artifact markers>", () => {
         representation: "html",
         htmlPath: `wiki/visual-artifacts/${sharedId}.html`,
         promotedWikiPath: "team/reference/coffee.md",
-        createdBy: "ceo",
+        createdBy: "cos",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         contentHash: "hash",
@@ -308,10 +308,10 @@ describe("<WikiArticle inline visual-artifact markers>", () => {
       path: "team/reference/coffee.md",
       title: "Coffee",
       content: `# Coffee\n\nBody copy.\n\nvisual-artifact:${sharedId}\n`,
-      last_edited_by: "ceo",
+      last_edited_by: "cos",
       last_edited_ts: new Date().toISOString(),
       revisions: 1,
-      contributors: ["ceo"],
+      contributors: ["cos"],
       backlinks: [],
       word_count: 5,
       categories: [],
@@ -349,10 +349,10 @@ describe("<WikiArticle inline visual-artifact markers>", () => {
       path: "team/reference/coffee.md",
       title: "Coffee",
       content: `# Coffee\n\nBefore.\n\nvisual-artifact:${missingId}\n\nAfter.`,
-      last_edited_by: "ceo",
+      last_edited_by: "cos",
       last_edited_ts: new Date().toISOString(),
       revisions: 1,
-      contributors: ["ceo"],
+      contributors: ["cos"],
       backlinks: [],
       word_count: 5,
       categories: [],
@@ -546,7 +546,7 @@ describe("<WikiArticle history and refresh>", () => {
       commits: [
         {
           sha: "aaaaaaa1111",
-          author_slug: "ceo",
+          author_slug: "cos",
           msg: "Initial brief",
           date: "2026-01-16T00:00:00Z",
         },
@@ -584,7 +584,7 @@ describe("<WikiArticle history and refresh>", () => {
     expect(sourcesSection.textContent).toContain("Add pilot scope");
     expect(sourcesSection.textContent).toContain("Pricing note");
     // Author slugs surface as upper-cased names inside the Sources list.
-    expect(sourcesSection.textContent).toContain("CEO");
+    expect(sourcesSection.textContent).toContain("COS");
     expect(sourcesSection.textContent).toContain("PM");
     expect(sourcesSection.textContent).toContain("CRO");
     // Short SHA rendering (first 7 chars).
@@ -728,7 +728,7 @@ describe("<WikiArticle staleness badges>", () => {
         screen.getByRole("heading", { name: "Customer X" }),
       ).toBeInTheDocument(),
     );
-    expect(screen.getByText("agents only")).toBeInTheDocument();
+    expect(screen.getByText("bots only")).toBeInTheDocument();
   });
 
   it("shows 'unread 30d+' badge when days_unread > 30", async () => {
@@ -886,7 +886,7 @@ describe("<WikiArticle staleness badges>", () => {
         screen.getByRole("heading", { name: "Customer X" }),
       ).toBeInTheDocument(),
     );
-    expect(screen.queryByText("agents only")).not.toBeInTheDocument();
+    expect(screen.queryByText("bots only")).not.toBeInTheDocument();
     expect(screen.queryByText("unread 30d+")).not.toBeInTheDocument();
     expect(screen.queryByText("unread 7d+")).not.toBeInTheDocument();
   });

@@ -8,7 +8,7 @@
 // The package depends only on internal/scanner and the standard library. The
 // brain, the delivery transport, the snapshot validator, and the audit sink are
 // all interfaces (the cloud-portability seams), so the same core runs in the OSS
-// self-hosted broker and in the Nex cloud multi-tenant host without a fork.
+// self-hosted broker and in a multi-tenant host without a fork.
 package packer
 
 // --- Trust, identity, data handling ---
@@ -22,7 +22,7 @@ type BotTrust int
 const (
 	BotUntrusted  BotTrust = iota // default for anything externally originated
 	BotFirstParty                 // in-house, company-owned workspace, known data handling
-	BotHosted                     // WUPHF-hosted agent (also gets push-side injection)
+	BotHosted                     // WUPHF-hosted bot (also gets push-side injection)
 )
 
 // ReadScope is how much of the conversation a bot reads. Upgraded to ReadThread

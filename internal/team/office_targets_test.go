@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nex-crm/wuphf/internal/agent"
+	"github.com/nex-crm/wuphf/internal/bot"
 	"github.com/nex-crm/wuphf/internal/provider"
 )
 
@@ -44,7 +44,7 @@ func fixtureTargeter(t *testing.T, members []officeMember, opts ...func(*officeT
 	paneBacked := true
 	tg := &officeTargeter{
 		sessionName:    "test-sess",
-		pack:           &agent.PackDefinition{LeadSlug: "ceo"},
+		pack:           &bot.PackDefinition{LeadSlug: "cos"},
 		provider:       provider.KindClaudeCode,
 		paneBackedFlag: &paneBacked,
 		isOneOnOne:     func() bool { return false },
@@ -55,7 +55,7 @@ func fixtureTargeter(t *testing.T, members []officeMember, opts ...func(*officeT
 			// production. Tests that need pure no-DM semantics override
 			// this hook explicitly.
 			if IsDMSlug(channelSlug) {
-				return true, DMTargetAgent(channelSlug)
+				return true, DMTargetBot(channelSlug)
 			}
 			return false, ""
 		},
@@ -81,11 +81,11 @@ func fixtureTargeter(t *testing.T, members []officeMember, opts ...func(*officeT
 
 func TestTargeter_LeadSlug_PrefersPackLead(t *testing.T) {
 	tg := fixtureTargeter(t, []officeMember{
-		{Slug: "ceo", BuiltIn: true},
+		{Slug: "cos", BuiltIn: true},
 		{Slug: "fe"},
 	})
-	if got := tg.LeadSlug(); got != "ceo" {
-		t.Errorf("LeadSlug() = %q, want %q", got, "ceo")
+	if got := tg.LeadSlug(); got != "cos" {
+		t.Errorf("LeadSlug() = %q, want %q", got, "cos")
 	}
 }
 
@@ -93,7 +93,7 @@ func TestTargeter_LeadSlug_FallsBackToBuiltIn(t *testing.T) {
 	tg := fixtureTargeter(t, []officeMember{
 		{Slug: "alpha", BuiltIn: true},
 		{Slug: "beta"},
-	}, func(o *officeTargeter) { o.pack = &agent.PackDefinition{} })
+	}, func(o *officeTargeter) { o.pack = &bot.PackDefinition{} })
 	if got := tg.LeadSlug(); got != "alpha" {
 		t.Errorf("LeadSlug() = %q, want %q", got, "alpha")
 	}
@@ -103,14 +103,14 @@ func TestTargeter_LeadSlug_FallsBackToFirstMember(t *testing.T) {
 	tg := fixtureTargeter(t, []officeMember{
 		{Slug: "alpha"},
 		{Slug: "beta"},
-	}, func(o *officeTargeter) { o.pack = &agent.PackDefinition{} })
+	}, func(o *officeTargeter) { o.pack = &bot.PackDefinition{} })
 	if got := tg.LeadSlug(); got != "alpha" {
 		t.Errorf("LeadSlug() = %q, want %q", got, "alpha")
 	}
 }
 
 func TestTargeter_LeadSlug_EmptyWhenNoMembers(t *testing.T) {
-	tg := fixtureTargeter(t, nil, func(o *officeTargeter) { o.pack = &agent.PackDefinition{} })
+	tg := fixtureTargeter(t, nil, func(o *officeTargeter) { o.pack = &bot.PackDefinition{} })
 	if got := tg.LeadSlug(); got != "" {
 		t.Errorf("LeadSlug() = %q, want empty", got)
 	}
@@ -119,17 +119,17 @@ func TestTargeter_LeadSlug_EmptyWhenNoMembers(t *testing.T) {
 func TestTargeter_AgentOrder_LeadFirst(t *testing.T) {
 	tg := fixtureTargeter(t, []officeMember{
 		{Slug: "fe"},
-		{Slug: "ceo", BuiltIn: true},
+		{Slug: "cos", BuiltIn: true},
 		{Slug: "be"},
 	})
-	got := tg.AgentOrder()
-	if len(got) == 0 || got[0].Slug != "ceo" {
-		t.Fatalf("AgentOrder()[0] = %v, want ceo first; full: %v", got, got)
+	got := tg.BotOrder()
+	if len(got) == 0 || got[0].Slug != "cos" {
+		t.Fatalf("BotOrder()[0] = %v, want cos first; full: %v", got, got)
 	}
 }
 
 // Regression: officeLeadSlugFrom must be order-independent. Pre-fix,
-// for installs without pack.LeadSlug, without a "ceo" member, and with
+// for installs without pack.LeadSlug, without a "cos" member, and with
 // no BuiltIn member, the function returned `members[0].Slug` — which
 // shifted between callers depending on whether they passed sorted-by-slug
 // order or pack/snapshot order. Now the function sorts internally.
@@ -148,19 +148,19 @@ func TestOfficeLeadSlugFrom_DeterministicAcrossInputOrders(t *testing.T) {
 	}
 }
 
-// Regression: when l.failedPaneSlugs is reset to nil (reconfigureVisibleAgents
+// Regression: when l.failedPaneSlugs is reset to nil (reconfigureVisibleBots
 // does this) and then rebuilt by recordPaneSpawnFailure, the targeter
 // reads the *new* map, not a stale snapshot. Pre-fix, the targeter
 // captured the old map pointer at construction time and missed all later
 // spawn failures after a reconfigure.
 func TestTargeter_FailedPaneSlugs_FollowsLauncherReconfigure(t *testing.T) {
 	l := &Launcher{
-		sessionName:      "test",
-		paneBackedAgents: true,
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		sessionName:    "test",
+		paneBackedBots: true,
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "fe", Name: "Frontend"},
 			},
 		},
@@ -178,33 +178,33 @@ func TestTargeter_FailedPaneSlugs_FollowsLauncherReconfigure(t *testing.T) {
 	}
 }
 
-// Regression: AgentOrder and PaneSlugs must follow pack.Agents order, not
+// Regression: BotOrder and PaneSlugs must follow pack.Bots order, not
 // the broker snapshot order. Pack indexing is the contract pane spawn
 // relies on, so a shuffled snapshot must not perturb the resulting order.
 func TestTargeter_AgentOrderAndPaneSlugs_FollowPackNotSnapshot(t *testing.T) {
-	// Snapshot order is intentionally non-pack: be, fe, ceo.
+	// Snapshot order is intentionally non-pack: be, fe, cos.
 	members := []officeMember{
 		{Slug: "be"},
 		{Slug: "fe"},
-		{Slug: "ceo", BuiltIn: true},
+		{Slug: "cos", BuiltIn: true},
 	}
 	tg := fixtureTargeter(t, members, func(o *officeTargeter) {
-		// Pack order: ceo, fe, be — different from snapshot order.
-		o.pack = &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo"}, {Slug: "fe"}, {Slug: "be"},
+		// Pack order: cos, fe, be — different from snapshot order.
+		o.pack = &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos"}, {Slug: "fe"}, {Slug: "be"},
 			},
 		}
 	})
-	gotOrder := tg.AgentOrder()
-	wantSlugs := []string{"ceo", "fe", "be"}
+	gotOrder := tg.BotOrder()
+	wantSlugs := []string{"cos", "fe", "be"}
 	if len(gotOrder) != len(wantSlugs) {
-		t.Fatalf("AgentOrder length = %d, want %d (got %+v)", len(gotOrder), len(wantSlugs), gotOrder)
+		t.Fatalf("BotOrder length = %d, want %d (got %+v)", len(gotOrder), len(wantSlugs), gotOrder)
 	}
 	for i, want := range wantSlugs {
 		if gotOrder[i].Slug != want {
-			t.Errorf("AgentOrder[%d] = %q, want %q (full: %+v)", i, gotOrder[i].Slug, want, gotOrder)
+			t.Errorf("BotOrder[%d] = %q, want %q (full: %+v)", i, gotOrder[i].Slug, want, gotOrder)
 		}
 	}
 	gotPane := tg.PaneSlugs()
@@ -220,7 +220,7 @@ func TestTargeter_AgentOrderAndPaneSlugs_FollowPackNotSnapshot(t *testing.T) {
 
 func TestTargeter_PaneEligibleMembers_ExcludesHeadlessOneShot(t *testing.T) {
 	tg := fixtureTargeter(t, []officeMember{
-		{Slug: "ceo", BuiltIn: true},
+		{Slug: "cos", BuiltIn: true},
 		{Slug: "codexer"},
 	}, func(o *officeTargeter) {
 		o.memberProviderKind = func(slug string) string {
@@ -240,7 +240,7 @@ func TestTargeter_PaneEligibleMembers_ExcludesHeadlessOneShot(t *testing.T) {
 
 func TestTargeter_VisibleAndOverflow_RespectsCap(t *testing.T) {
 	members := []officeMember{
-		{Slug: "ceo", BuiltIn: true},
+		{Slug: "cos", BuiltIn: true},
 	}
 	for _, s := range []string{"a", "b", "c", "d", "e", "f"} {
 		members = append(members, officeMember{Slug: s})
@@ -248,26 +248,26 @@ func TestTargeter_VisibleAndOverflow_RespectsCap(t *testing.T) {
 	tg := fixtureTargeter(t, members)
 	visible := tg.VisibleMembers()
 	overflow := tg.OverflowMembers()
-	if len(visible) != maxVisibleOfficeAgents {
-		t.Fatalf("VisibleMembers length = %d, want %d", len(visible), maxVisibleOfficeAgents)
+	if len(visible) != maxVisibleOfficeBots {
+		t.Fatalf("VisibleMembers length = %d, want %d", len(visible), maxVisibleOfficeBots)
 	}
 	if len(visible)+len(overflow) != len(members) {
 		t.Fatalf("visible+overflow = %d, want %d", len(visible)+len(overflow), len(members))
 	}
-	if visible[0].Slug != "ceo" {
-		t.Errorf("VisibleMembers[0] = %q, want ceo first", visible[0].Slug)
+	if visible[0].Slug != "cos" {
+		t.Errorf("VisibleMembers[0] = %q, want cos first", visible[0].Slug)
 	}
 }
 
 func TestTargeter_OverflowWindowName(t *testing.T) {
 	if got := overflowWindowName("designer"); got != "agent-designer" {
-		t.Errorf("overflowWindowName(designer) = %q, want agent-designer", got)
+		t.Errorf("overflowWindowName(designer) = %q, want bot-designer", got)
 	}
 }
 
 func TestTargeter_PaneTargets_OneOnOne(t *testing.T) {
 	tg := fixtureTargeter(t, []officeMember{
-		{Slug: "ceo", BuiltIn: true},
+		{Slug: "cos", BuiltIn: true},
 		{Slug: "fe"},
 	}, func(o *officeTargeter) {
 		o.isOneOnOne = func() bool { return true }
@@ -287,7 +287,7 @@ func TestTargeter_PaneTargets_OneOnOne(t *testing.T) {
 }
 
 func TestTargeter_PaneTargets_VisibleAndOverflowAddresses(t *testing.T) {
-	members := []officeMember{{Slug: "ceo", BuiltIn: true}}
+	members := []officeMember{{Slug: "cos", BuiltIn: true}}
 	for _, s := range []string{"a", "b", "c", "d", "e", "f"} {
 		members = append(members, officeMember{Slug: s})
 	}
@@ -302,7 +302,7 @@ func TestTargeter_PaneTargets_VisibleAndOverflowAddresses(t *testing.T) {
 			t.Errorf("PaneTarget[%s] = %q, want %q", m.Slug, got, want)
 		}
 	}
-	// Overflow: each in its own window addressed test-sess:agent-{slug}.0
+	// Overflow: each in its own window addressed test-sess:bot-{slug}.0
 	overflow := tg.OverflowMembers()
 	for _, m := range overflow {
 		want := "test-sess:agent-" + m.Slug + ".0"
@@ -313,7 +313,7 @@ func TestTargeter_PaneTargets_VisibleAndOverflowAddresses(t *testing.T) {
 }
 
 func TestTargeter_PaneTargets_EmptyWhenNotPaneBacked(t *testing.T) {
-	tg := fixtureTargeter(t, []officeMember{{Slug: "ceo", BuiltIn: true}}, func(o *officeTargeter) {
+	tg := fixtureTargeter(t, []officeMember{{Slug: "cos", BuiltIn: true}}, func(o *officeTargeter) {
 		f := false
 		o.paneBackedFlag = &f
 	})
@@ -324,7 +324,7 @@ func TestTargeter_PaneTargets_EmptyWhenNotPaneBacked(t *testing.T) {
 
 func TestTargeter_PaneTargets_SkipsFailedSlugs(t *testing.T) {
 	tg := fixtureTargeter(t, []officeMember{
-		{Slug: "ceo", BuiltIn: true},
+		{Slug: "cos", BuiltIn: true},
 		{Slug: "fe"},
 	}, func(o *officeTargeter) {
 		markTargeterFailedSlug(o, "fe", "boom")
@@ -333,14 +333,14 @@ func TestTargeter_PaneTargets_SkipsFailedSlugs(t *testing.T) {
 	if _, ok := targets["fe"]; ok {
 		t.Fatalf("expected fe to be skipped from PaneTargets when in failedPaneSlugs; got %v", targets)
 	}
-	if _, ok := targets["ceo"]; !ok {
-		t.Fatalf("expected ceo to remain in PaneTargets")
+	if _, ok := targets["cos"]; !ok {
+		t.Fatalf("expected cos to remain in PaneTargets")
 	}
 }
 
 func TestTargeter_NotificationTargets_AddsHeadlessFallbackForFailedPaneSlug(t *testing.T) {
 	tg := fixtureTargeter(t, []officeMember{
-		{Slug: "ceo", BuiltIn: true},
+		{Slug: "cos", BuiltIn: true},
 		{Slug: "fe"},
 	}, func(o *officeTargeter) {
 		markTargeterFailedSlug(o, "fe", "spawn failed")
@@ -357,7 +357,7 @@ func TestTargeter_NotificationTargets_AddsHeadlessFallbackForFailedPaneSlug(t *t
 
 func TestTargeter_NotificationTargets_OneOnOneCollapsesToSingleAgent(t *testing.T) {
 	tg := fixtureTargeter(t, []officeMember{
-		{Slug: "ceo", BuiltIn: true},
+		{Slug: "cos", BuiltIn: true},
 		{Slug: "fe"},
 	}, func(o *officeTargeter) {
 		o.isOneOnOne = func() bool { return true }
@@ -367,8 +367,8 @@ func TestTargeter_NotificationTargets_OneOnOneCollapsesToSingleAgent(t *testing.
 	if _, ok := targets["fe"]; !ok {
 		t.Fatalf("expected fe in NotificationTargets, got %v", targets)
 	}
-	if _, ok := targets["ceo"]; ok {
-		t.Fatalf("ceo should be excluded in 1:1 mode, got %v", targets)
+	if _, ok := targets["cos"]; ok {
+		t.Fatalf("cos should be excluded in 1:1 mode, got %v", targets)
 	}
 }
 
@@ -385,12 +385,12 @@ func TestTargeter_ShouldUseHeadlessForSlug_TruthTable(t *testing.T) {
 			setup: func(o *officeTargeter) {
 				o.provider = provider.KindCodex
 			},
-			slug: "ceo", want: true, reason: "codex provider is non-pane",
+			slug: "cos", want: true, reason: "codex provider is non-pane",
 		},
 		{
 			name:  "pane runtime + pane backed + clean slug ⇒ pane",
 			setup: func(*officeTargeter) {},
-			slug:  "ceo", want: false, reason: "default Claude path",
+			slug:  "cos", want: false, reason: "default Claude path",
 		},
 		{
 			name: "pane runtime + not pane backed ⇒ headless",
@@ -398,26 +398,26 @@ func TestTargeter_ShouldUseHeadlessForSlug_TruthTable(t *testing.T) {
 				f := false
 				o.paneBackedFlag = &f
 			},
-			slug: "ceo", want: true, reason: "no live panes",
+			slug: "cos", want: true, reason: "no live panes",
 		},
 		{
 			name: "pane runtime + failed pane slug ⇒ headless",
 			setup: func(o *officeTargeter) {
-				markTargeterFailedSlug(o, "ceo", "spawn failed")
+				markTargeterFailedSlug(o, "cos", "spawn failed")
 			},
-			slug: "ceo", want: true, reason: "fallback path",
+			slug: "cos", want: true, reason: "fallback path",
 		},
 		{
 			name: "pane runtime + member bound to codex ⇒ headless",
 			setup: func(o *officeTargeter) {
 				o.memberProviderKind = func(slug string) string {
-					if slug == "ceo" {
+					if slug == "cos" {
 						return provider.KindCodex
 					}
 					return ""
 				}
 			},
-			slug: "ceo", want: true, reason: "per-member provider override",
+			slug: "cos", want: true, reason: "per-member provider override",
 		},
 		{
 			name:  "empty slug ⇒ false (defensive)",
@@ -427,7 +427,7 @@ func TestTargeter_ShouldUseHeadlessForSlug_TruthTable(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			tg := fixtureTargeter(t, []officeMember{{Slug: "ceo", BuiltIn: true}}, tc.setup)
+			tg := fixtureTargeter(t, []officeMember{{Slug: "cos", BuiltIn: true}}, tc.setup)
 			if got := tg.ShouldUseHeadlessForSlug(tc.slug); got != tc.want {
 				t.Errorf("ShouldUseHeadlessForSlug(%q) = %v, want %v (%s)", tc.slug, got, tc.want, tc.reason)
 			}
@@ -436,15 +436,15 @@ func TestTargeter_ShouldUseHeadlessForSlug_TruthTable(t *testing.T) {
 }
 
 func TestTargeter_ShouldUseHeadlessForTarget_EmptyPaneTargetIsHeadless(t *testing.T) {
-	tg := fixtureTargeter(t, []officeMember{{Slug: "ceo", BuiltIn: true}})
-	if !tg.ShouldUseHeadlessForTarget(notificationTarget{Slug: "ceo", PaneTarget: ""}) {
+	tg := fixtureTargeter(t, []officeMember{{Slug: "cos", BuiltIn: true}})
+	if !tg.ShouldUseHeadlessForTarget(notificationTarget{Slug: "cos", PaneTarget: ""}) {
 		t.Errorf("empty PaneTarget should mean headless dispatch")
 	}
 }
 
 func TestTargeter_SkipPane_FailedAndHeadlessOneShot(t *testing.T) {
 	tg := fixtureTargeter(t, []officeMember{
-		{Slug: "ceo", BuiltIn: true},
+		{Slug: "cos", BuiltIn: true},
 		{Slug: "fe"},
 		{Slug: "codexer"},
 	}, func(o *officeTargeter) {
@@ -465,18 +465,18 @@ func TestTargeter_SkipPane_FailedAndHeadlessOneShot(t *testing.T) {
 	if !tg.SkipPane("  ") {
 		t.Errorf("SkipPane(empty) should be true")
 	}
-	if tg.SkipPane("ceo") {
-		t.Errorf("SkipPane(ceo) = true, want false")
+	if tg.SkipPane("cos") {
+		t.Errorf("SkipPane(cos) = true, want false")
 	}
 }
 
 func TestTargeter_NameFor_FallsBackToSlug(t *testing.T) {
 	tg := fixtureTargeter(t, []officeMember{
-		{Slug: "ceo", Name: "Chief"},
+		{Slug: "cos", Name: "Chief"},
 		{Slug: "ghost"}, // no Name
 	})
-	if got := tg.NameFor("ceo"); got != "Chief" {
-		t.Errorf("NameFor(ceo) = %q, want Chief", got)
+	if got := tg.NameFor("cos"); got != "Chief" {
+		t.Errorf("NameFor(cos) = %q, want Chief", got)
 	}
 	if got := tg.NameFor("ghost"); got != "ghost" {
 		t.Errorf("NameFor(ghost) = %q, want ghost (slug fallback)", got)
@@ -484,10 +484,10 @@ func TestTargeter_NameFor_FallsBackToSlug(t *testing.T) {
 }
 
 func TestTargeter_ResolvePaneTarget_FoundAndMissing(t *testing.T) {
-	tg := fixtureTargeter(t, []officeMember{{Slug: "ceo", BuiltIn: true}})
-	addr, ok := tg.ResolvePaneTarget("ceo")
+	tg := fixtureTargeter(t, []officeMember{{Slug: "cos", BuiltIn: true}})
+	addr, ok := tg.ResolvePaneTarget("cos")
 	if !ok || addr == "" {
-		t.Errorf("ResolvePaneTarget(ceo) = (%q, %v), want (non-empty, true)", addr, ok)
+		t.Errorf("ResolvePaneTarget(cos) = (%q, %v), want (non-empty, true)", addr, ok)
 	}
 	if addr, ok := tg.ResolvePaneTarget("nope"); ok || addr != "" {
 		t.Errorf("ResolvePaneTarget(nope) = (%q, %v), want empty,false", addr, ok)
@@ -514,10 +514,10 @@ func TestTargeter_ProviderCapabilityHelpers(t *testing.T) {
 func TestOfficeLeadSlugFrom_PrefersCEO(t *testing.T) {
 	got := officeLeadSlugFrom([]officeMember{
 		{Slug: "alpha", BuiltIn: true},
-		{Slug: "ceo"},
+		{Slug: "cos"},
 	})
-	if got != "ceo" {
-		t.Errorf("officeLeadSlugFrom should prefer ceo, got %q", got)
+	if got != "cos" {
+		t.Errorf("officeLeadSlugFrom should prefer cos, got %q", got)
 	}
 }
 
@@ -549,22 +549,22 @@ func itoa(n int) string {
 // targeter and shares state with it.
 func TestLauncher_TargeterWiringMatchesPaneTargets(t *testing.T) {
 	l := &Launcher{
-		sessionName:      "wuphf-team",
-		paneBackedAgents: true,
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		sessionName:    "wuphf-team",
+		paneBackedBots: true,
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "fe", Name: "Frontend"},
 			},
 		},
 		failedPaneSlugs: map[string]string{},
 	}
 	got := l.targeter().PaneTargets()
-	if _, ok := got["ceo"]; !ok {
-		t.Fatalf("expected ceo in launcher pane targets, got %v", got)
+	if _, ok := got["cos"]; !ok {
+		t.Fatalf("expected cos in launcher pane targets, got %v", got)
 	}
-	if !strings.Contains(got["ceo"].PaneTarget, "wuphf-team:team.") {
-		t.Fatalf("expected wuphf-team:team.* address, got %q", got["ceo"].PaneTarget)
+	if !strings.Contains(got["cos"].PaneTarget, "wuphf-team:team.") {
+		t.Fatalf("expected wuphf-team:team.* address, got %q", got["cos"].PaneTarget)
 	}
 }

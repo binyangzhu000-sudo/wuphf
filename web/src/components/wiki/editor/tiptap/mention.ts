@@ -9,12 +9,12 @@
  * markdown that the preview pane already understands.
  *
  * This module is JSX-free. The React popup that actually renders the
- * suggestion list is owned by the editor component (a later agent); it is
+ * suggestion list is owned by the editor component (a later bot); it is
  * supplied here as the injectable `render` factory. `buildWikiMention` is a
  * pure config factory so it can be unit-tested without mounting React.
  *
  * The trigger + suggestion mechanics are standard Tiptap mention behaviour;
- * the insert target (a WUPHF wikilink mark) is ours.
+ * the insert target (a gawkbot wikilink mark) is ours.
  */
 
 import type { Node as TiptapNode } from "@tiptap/core";

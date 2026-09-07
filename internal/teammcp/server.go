@@ -8,6 +8,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/nex-crm/wuphf/internal/action"
+	"github.com/nex-crm/wuphf/internal/company"
 	"github.com/nex-crm/wuphf/internal/config"
 	"github.com/nex-crm/wuphf/internal/team"
 )
@@ -55,7 +56,7 @@ func Run(ctx context.Context) error {
 		Version: "0.1.0",
 	}, nil)
 
-	server.AddReceivingMiddleware(agentToolEventMiddleware)
+	server.AddReceivingMiddleware(botToolEventMiddleware)
 	configureServerTools(server, resolveSlugOptional(""), strings.TrimSpace(os.Getenv("WUPHF_CHANNEL")), isOneOnOneMode())
 	return server.Run(ctx, &mcp.StdioTransport{})
 }
@@ -71,17 +72,17 @@ func adminDirectWikiWriteBypassEnabled() bool {
 
 // registerSharedMemoryTools registers the active shared-memory / wiki tool
 // set on the server. Markdown-backend installs expose notebook tools and
-// team_wiki_* tools; nex/gbrain installs expose the legacy team_memory_* tools;
+// team_wiki_* tools; gbrain installs expose the legacy team_memory_* tools;
 // `none` skips them entirely. team_wiki_write stays available for explicit
 // human delegation, but the handler verifies human_request against a recent
-// human-authored broker message so agent-authored scratch knowledge starts in
+// human-authored broker message so bot-authored scratch knowledge starts in
 // notebooks and reaches the wiki through review.
 func registerSharedMemoryTools(server *mcp.Server) {
 	switch config.ResolveMemoryBackend("") {
 	case config.MemoryBackendMarkdown:
 		mcp.AddTool(server, officeWriteTool(
 			"team_wiki_write",
-			"Write directly to the canonical team wiki only when the human explicitly asked you to write the article, playbook, or canonical page to the wiki. You must pass human_request as the broker message ID for that recent human-authored wiki request. Otherwise write your working knowledge to notebook_write first and submit notebook_promote for review. The content you pass becomes the article bytes; this tool does not rewrite for you. Picks author identity from my_slug so git log shows which agent wrote each article.",
+			"Write directly to the canonical team wiki only when the human explicitly asked you to write the article, playbook, or canonical page to the wiki. You must pass human_request as the broker message ID for that recent human-authored wiki request. Otherwise write your working knowledge to notebook_write first and submit notebook_promote for review. The content you pass becomes the article bytes; this tool does not rewrite for you. Picks author identity from my_slug so git log shows which bot wrote each article.",
 		), handleTeamWikiWrite)
 		mcp.AddTool(server, readOnlyTool(
 			"team_wiki_read",
@@ -99,7 +100,7 @@ func registerSharedMemoryTools(server *mcp.Server) {
 			"wuphf_wiki_lookup",
 			"Cited-answer lookup against the team wiki. Returns a structured JSON answer with sources and inline citations. Use when you need a verified, sourced answer rather than a raw search.",
 		), handleTeamWikiLookup)
-		// Rich-artifact (visual artifact) tools: agents author self-contained
+		// Rich-artifact (visual artifact) tools: bots author self-contained
 		// HTML articles that promote into the wiki. They share the markdown
 		// backend gate with team_wiki_*.
 		registerVisualArtifactTools(server)
@@ -125,7 +126,7 @@ func registerSharedMemoryTools(server *mcp.Server) {
 	case config.MemoryBackendNone:
 		// Nothing — user explicitly disabled shared memory.
 	default:
-		// nex / gbrain (default): legacy tool set unchanged.
+		// gbrain (default): legacy tool set unchanged.
 		mcp.AddTool(server, readOnlyTool(
 			"team_memory_query",
 			"Query your private notes and, when configured, shared organizational memory. Results may suggest which teammate to ask for fresher working context.",
@@ -176,8 +177,8 @@ func configureServerTools(server *mcp.Server, slug string, channel string, oneOn
 
 		// In 1:1 / DM mode the CEO (and the Librarian, the wiki curator) link
 		// wiki articles to tasks, so the context-packer can hand those refs to
-		// first-party agents. Same gate as the office and DM branches below.
-		if slug == "" || slug == "ceo" || slug == team.LibrarianSlug {
+		// first-party bots. Same gate as the office and DM branches below.
+		if slug == "" || slug == "cos" || slug == team.LibrarianSlug {
 			registerWikiLinkTool(server)
 		}
 
@@ -190,8 +191,13 @@ func configureServerTools(server *mcp.Server, slug string, channel string, oneOn
 	// ─── Role-based tool registration ───
 	// Each role gets only the tools it needs. Cuts MCP schema overhead
 	// from ~125k tokens (27 tools) down to ~15k (4 tools in DM mode).
-	isDM := strings.HasPrefix(channel, "dm-")
-	isLead := slug == "" || slug == "ceo"
+	// team.IsDMSlug, not a raw "dm-" prefix: the canonical slug format is the
+	// pair-sorted "<a>__<b>" (channel.DirectSlug), and the prefix test missed
+	// every one of them. A bot woken in a canonical DM was therefore not
+	// recognised as being in one, so it kept team_channel and team_bridge —
+	// precisely the tools that let it post its way out of the DM.
+	isDM := team.IsDMSlug(channel)
+	isLead := slug == "" || slug == "cos"
 	// The Librarian curates the wiki: it gets the promotion-review tool (like the
 	// lead) WITHOUT the lead's structural powers (team_plan/channel/member).
 	isLibrarian := slug == team.LibrarianSlug
@@ -231,7 +237,52 @@ func configureServerTools(server *mcp.Server, slug string, channel string, oneOn
 		return
 	}
 
-	// Office mode: core tools for all agents
+	// App Builder: the operator-era build bot. It has no teammates and no
+	// user-visible channel — the 2026-08-15 QA pass showed it never calls the
+	// office coordination tools (inbox/outbox/status/members/channels/DMs/
+	// shared tasks), which cost ~100k tokens of schema per turn anyway. It
+	// keeps a voice (team_broadcast feeds the edit-channel wake loop and the
+	// durability heuristics), the human-facing request tools, context/memory
+	// grounding, its app publish tools, and external actions. The office
+	// coordination surface is deliberately absent: every bot is its own
+	// surface now, and there is no office UI left to read those posts.
+	if slug == company.AppBuilderSlug {
+		mcp.AddTool(server, officeWriteTool(
+			"team_broadcast",
+			"Post a progress note to the build channel.",
+		), handleTeamBroadcast)
+		mcp.AddTool(server, readOnlyTool(
+			"team_poll",
+			"Read recent messages in the build channel (e.g. the operator's edit request).",
+		), handleTeamPoll)
+		mcp.AddTool(server, officeWriteTool(
+			"team_request",
+			"Create a structured request for the human: confirmation, choice, approval, freeform answer, or private/secret answer.",
+		), handleTeamRequest)
+		mcp.AddTool(server, officeWriteTool(
+			"human_message",
+			"Send a direct note to the human.",
+		), handleHumanMessage)
+		// The builder's turn prompt tells it to complete its build task; the
+		// lean set previously omitted team_task, so every build ended with
+		// the instruction pointing at a tool that did not exist and the task
+		// left dangling for the durability heuristics to settle (2026-08-17
+		// quality audit, pipeline lens).
+		mcp.AddTool(server, officeWriteTool(
+			"team_task",
+			"Update your build task: claim, complete, or block it with a reason.",
+		), handleTeamTask)
+		registerContextTools(server)
+		registerSharedMemoryTools(server)
+		registerRoutineTools(server)
+		registerAppTools(server, slug)
+		if hasActionProvider() {
+			registerActionTools(server)
+		}
+		return
+	}
+
+	// Office mode: core tools for all bots
 	mcp.AddTool(server, officeWriteTool(
 		"team_broadcast",
 		"Post a message to the channel.",
@@ -240,13 +291,19 @@ func configureServerTools(server *mcp.Server, slug string, channel string, oneOn
 		"team_poll",
 		"Read recent channel messages. Only when pushed context is insufficient.",
 	), handleTeamPoll)
+	// One direct message to one teammate. Sends and returns — it does not wait
+	// for a reply. See server_agent_dm.go; nothing instructs bots to use it yet.
+	mcp.AddTool(server, officeWriteTool(
+		"agent_message",
+		"Send one direct message to a teammate. Sends and returns; it does not wait for a reply.",
+	), handleBotMessage)
 	mcp.AddTool(server, readOnlyTool(
 		"team_inbox",
-		"Read only the messages that currently belong in your agent inbox: human asks, CEO guidance, tags to you, and replies in your threads.",
+		"Read only the messages that currently belong in your bot inbox: human asks, Chief of Staff guidance, tags to you, and replies in your threads.",
 	), handleTeamInbox)
 	mcp.AddTool(server, readOnlyTool(
 		"team_outbox",
-		"Read only the messages you authored, so you can review what you already told the office.",
+		"Read only the messages you authored, so you can review what you already told the team.",
 	), handleTeamOutbox)
 
 	mcp.AddTool(server, officeWriteTool(
@@ -261,17 +318,17 @@ func configureServerTools(server *mcp.Server, slug string, channel string, oneOn
 
 	mcp.AddTool(server, readOnlyTool(
 		"team_office_members",
-		"List the office-wide roster, including members who are not in the current channel.",
+		"List the team-wide roster, including members who are not in the current channel.",
 	), handleTeamOfficeMembers)
 
 	mcp.AddTool(server, readOnlyTool(
 		"team_channels",
-		"List available office channels, their descriptions, and their memberships. Agents can see channel metadata even when they are not members.",
+		"List available office channels, their descriptions, and their memberships. Bots can see channel metadata even when they are not members.",
 	), handleTeamChannels)
 
 	mcp.AddTool(server, officeWriteTool(
 		"team_dm_open",
-		"Open or find a direct message channel with the human. Use this when the human explicitly asks to DM an agent. Agent-to-agent DMs are not allowed — all inter-agent communication must happen in public channels.",
+		"Open or find a direct message channel with the human. Use this when the human explicitly asks to DM a bot. Bot-to-bot DMs are not allowed — all inter-bot communication must happen in public channels.",
 	), handleTeamDMOpen)
 
 	mcp.AddTool(server, readOnlyTool(
@@ -291,7 +348,7 @@ func configureServerTools(server *mcp.Server, slug string, channel string, oneOn
 
 	mcp.AddTool(server, officeWriteTool(
 		"team_task",
-		"Create, define, claim, assign, complete, block, resume, or release a shared task in the office task list. action=define sets the structured task definition (goal, deliverables+format, success_criteria, access_needed) — the intake contract the owner executes against.",
+		"Create, define, claim, assign, complete, block, resume, or release a shared task on the team task list. action=define sets the structured task definition (goal, deliverables+format, success_criteria, access_needed) — the intake contract the owner executes against.",
 	), handleTeamTask)
 
 	if slug == "artist" {
@@ -325,11 +382,11 @@ func configureServerTools(server *mcp.Server, slug string, channel string, oneOn
 	), handleTeamReact)
 	mcp.AddTool(server, officeWriteTool(
 		"team_skill_run",
-		"Invoke a named team skill. When the request matches an available skill (see the skill list in your prompt), call this BEFORE doing the work — do not freelance. Bumps the skill's usage, logs a skill_invocation in the channel so the office sees you followed the playbook, and returns the skill's canonical step-by-step content for you to execute.",
+		"Invoke a named team skill. When the request matches an available skill (see the skill list in your prompt), call this BEFORE doing the work — do not freelance. Bumps the skill's usage, logs a skill_invocation in the channel so the team sees you followed the playbook, and returns the skill's canonical step-by-step content for you to execute.",
 	), handleTeamSkillRun)
 	registerSkillTools(server)
 	registerRoutineTools(server)
-	// Apps: every agent can discover (list_apps) and propose (propose_app); the
+	// Apps: every bot can discover (list_apps) and propose (propose_app); the
 	// build/publish tools (get_app, register_app) are gated to the App Builder.
 	registerAppTools(server, slug)
 
@@ -353,19 +410,19 @@ func configureServerTools(server *mcp.Server, slug string, channel string, oneOn
 		), handleTeamPlan)
 		mcp.AddTool(server, officeWriteTool(
 			"team_bridge",
-			"CEO-only tool to bridge relevant context from one channel into another and leave a visible cross-channel trail.",
+			"Chief of Staff-only tool to bridge relevant context from one channel into another and leave a visible cross-channel trail.",
 		), handleTeamBridge)
 		mcp.AddTool(server, officeWriteTool(
 			"team_channel",
-			"Create or remove an office channel. When creating a channel, include a clear description of what work belongs there and the initial roster that should be in it. Only do this when the human explicitly wants channel structure.",
+			"Propose creating (or remove) a team channel. Reuse an existing channel whenever the work fits in one. Creating a NEW channel ALWAYS requires explicit human approval: this tool raises an approval request and blocks until the human decides, then returns an error if they decline so you post in an existing channel instead. When proposing, include a clear description of what work belongs there and the initial roster that should be in it.",
 		), handleTeamChannel)
 		mcp.AddTool(server, officeWriteTool(
 			"team_channel_member",
-			"Add, remove, disable, or enable an agent in a specific office channel.",
+			"Add, remove, disable, or enable a bot in a specific office channel.",
 		), handleTeamChannelMember)
 		mcp.AddTool(server, officeWriteTool(
 			"team_member",
-			"Propose creating (or remove) an office-wide member. Reuse an existing teammate whenever one can cover the work. Creating a NEW member ALWAYS requires explicit human approval: this tool raises an approval request and blocks until the human decides, then returns an error if they decline so you assign the work to an existing specialist instead.",
+			"Propose creating (or remove) a team-wide member. Reuse an existing teammate whenever one can cover the work. Creating a NEW member ALWAYS requires explicit human approval: this tool raises an approval request and blocks until the human decides, then returns an error if they decline so you assign the work to an existing specialist instead.",
 		), handleTeamMember)
 		// Human-chat-feedback policy writer (core-loop step 11): CEO-only,
 		// fires only on explicit human operating feedback.
@@ -377,13 +434,13 @@ func configureServerTools(server *mcp.Server, slug string, channel string, oneOn
 	if isLead || isLibrarian {
 		// link_task_wiki rides with the wiki-curation roles: the CEO/Librarian
 		// link the canonical articles a task needs so the context-packer can
-		// hand exactly those refs to first-party agents.
+		// hand exactly those refs to first-party bots.
 		registerWikiLinkTool(server)
 	}
 }
 
 // hasActionProvider reports whether any external action provider is configured
-// and usable. Used to gate registerActionTools so agents in offices without a
+// and usable. Used to gate registerActionTools so bots in offices without a
 // connected provider do not see 14 action tools that would all return errors.
 func hasActionProvider() bool {
 	if externalActionProvider != nil {

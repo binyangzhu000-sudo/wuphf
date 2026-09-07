@@ -19,7 +19,7 @@ import (
 //     codepath without opting in panics / errors loudly.
 //   - The two override pointers are populated with stubs so indirect
 //     callers (e.g. EnsureTask → syncTaskWorktreeLocked →
-//     prepareTaskWorktree on a coding-agent task) get a deterministic
+//     prepareTaskWorktree on a coding-bot task) get a deterministic
 //     fake path + branch instead of registering a worktree against the
 //     developer's wuphf repo.
 //
@@ -30,6 +30,7 @@ import (
 // stub behavior call setPrepareTaskWorktreeForTest(t, fn); the
 // per-test t.Cleanup restores the package-init stub.
 func init() {
+	computerRuntimeAllowed.Store(false)
 	allowRealTaskWorktree.Store(false)
 	unscopedWikiRootAllowed = false
 	prep := prepareTaskWorktreeFn(stubPrepareTaskWorktree)

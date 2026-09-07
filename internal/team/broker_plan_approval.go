@@ -3,6 +3,7 @@ package team
 import (
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -98,10 +99,6 @@ func (b *Broker) raisePlanApprovalInterviewLocked(taskID, actor, plan string) st
 		}
 	}
 
-	channel := normalizeChannelSlug(task.Channel)
-	if channel == "" {
-		channel = "general"
-	}
 	from := strings.TrimSpace(actor)
 	if from == "" {
 		from = strings.TrimSpace(task.Owner)
@@ -109,13 +106,35 @@ func (b *Broker) raisePlanApprovalInterviewLocked(taskID, actor, plan string) st
 	if from == "" {
 		from = "office"
 	}
+	// The task's channel, else the owner's DM, else the asker's. This card is
+	// BLOCKING: the bot stalls until it is answered, so filing it into the
+	// retired "general" hangs the plan on an approval the human never sees.
+	channel := normalizeChannelSlug(task.Channel)
+	if strings.TrimSpace(task.Channel) == "" {
+		if home, err := b.homeChannelForWriterLocked(from, task.Owner, from); err == nil {
+			channel = home
+		}
+	}
 
+	title := strings.TrimSpace(task.Title)
+	if title == "" {
+		title = task.ID
+	}
 	var qb strings.Builder
-	fmt.Fprintf(&qb, "Plan ready for %q. Review it and approve to start execution (the team will create the sub-tasks and begin once you approve).\n\n", strings.TrimSpace(task.Title))
-	if p := strings.TrimSpace(plan); p != "" {
-		qb.WriteString(truncateSummary(p, 1200))
+	// Lead with the decision in the human's terms: what they get, and what
+	// happens either way. The old copy opened with the bot's framing
+	// ("Plan ready for X. Review it and approve to start execution (the team
+	// will create the sub-tasks…)") and then pasted 1200 characters of the
+	// bot's own working plan — tool names, internal reasoning, and absolute
+	// paths into the user's home directory. A human could not tell what it was
+	// for or why it was their problem.
+	fmt.Fprintf(&qb, "%s wants to start work on %s (%s).\n\n", ownerLabelForPlan(from), title, task.ID)
+	qb.WriteString("Approve and they begin. Decline and nothing happens until you say otherwise.\n\n")
+	if p := humanReadablePlanSummary(plan); p != "" {
+		qb.WriteString("Their plan, in short:\n")
+		qb.WriteString(p)
 	} else {
-		qb.WriteString("(See the owner's plan in the task channel / notebook.)")
+		qb.WriteString("They have not written a plan summary yet.")
 	}
 
 	options, recommended := requestOptionDefaults("approval")
@@ -126,8 +145,8 @@ func (b *Broker) raisePlanApprovalInterviewLocked(taskID, actor, plan string) st
 		Kind:          "approval",
 		Status:        "pending",
 		From:          from,
-		Channel:       channel,
-		Title:         "Approve plan for " + task.ID,
+		Channel:       b.requestChannelForLocked(from, channel),
+		Title:         "Start work on " + title + "?",
 		Question:      qb.String(),
 		Options:       options,
 		RecommendedID: recommended,
@@ -167,12 +186,22 @@ func (b *Broker) startApprovedPlanTaskLocked(task *teamTask, actor string) {
 		return
 	}
 	task.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	channel := normalizeChannelSlug(task.Channel)
-	b.ensureTaskOwnerChannelMembershipLocked(channel, task.Owner)
+	// Raw emptiness first: a task with no home must not be laundered into
+	// "general" here, because BOTH the promotion below and the audit write at
+	// the end of this function would then land in the retired room.
+	channel := ""
+	if raw := strings.TrimSpace(task.Channel); raw != "" {
+		channel = normalizeChannelSlug(raw)
+	}
+	if channel != "" {
+		b.ensureTaskOwnerChannelMembershipLocked(channel, task.Owner)
+	}
 	b.queueTaskBehindActiveOwnerLaneLocked(task)
 	b.scheduleTaskLifecycleLocked(task)
-	b.appendActionLocked("task_updated", "office", channel, actor,
-		truncateSummary(task.Title+" [plan approved]", 140), task.ID)
+	if channel != "" {
+		b.appendActionLocked("task_updated", "office", channel, actor,
+			truncateSummary(task.Title+" [plan approved]", 140), task.ID)
+	}
 }
 
 // applyPlanApprovalAnswerLocked is called from applyRequestAnswerLocked when a
@@ -193,3 +222,38 @@ func (b *Broker) applyPlanApprovalAnswerLocked(req humanInterview, answer *inter
 	}
 	b.startApprovedPlanTaskLocked(task, actor)
 }
+
+// ownerLabelForPlan renders the requesting bot for a human audience.
+func ownerLabelForPlan(slug string) string {
+	slug = strings.TrimSpace(slug)
+	if slug == "" || slug == "office" {
+		return "The team"
+	}
+	return "@" + slug
+}
+
+// humanReadablePlanSummary turns a bot's working plan into something worth
+// putting in front of a person.
+//
+// A bot writes its plan for itself: MCP tool names, step-by-step mechanics,
+// and the absolute path of the plan file on disk. Pasted raw into an approval
+// card that becomes noise the human has to decode before they can answer a
+// yes/no question — and it leaks local filesystem paths into a shared surface.
+//
+// This keeps the substance and drops what only the bot needs: absolute paths
+// are removed, and the whole thing is capped short enough to read at a glance.
+// The full plan stays available on the task itself for anyone who wants it.
+func humanReadablePlanSummary(plan string) string {
+	p := strings.TrimSpace(plan)
+	if p == "" {
+		return ""
+	}
+	p = absolutePathPattern.ReplaceAllString(p, "the plan file")
+	p = strings.Join(strings.Fields(p), " ")
+	return truncateSummary(p, 500)
+}
+
+// absolutePathPattern matches POSIX-style absolute paths (optionally wrapped in
+// backticks) so a plan summary never publishes where the file lives on the
+// operator's machine.
+var absolutePathPattern = regexp.MustCompile("`?/(?:Users|home|var|tmp|private|opt)/[^\\s`]*`?")

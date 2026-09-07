@@ -13,13 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nex-crm/wuphf/internal/agent"
-	"github.com/nex-crm/wuphf/internal/api"
+	"github.com/nex-crm/wuphf/internal/bot"
 	"github.com/nex-crm/wuphf/internal/channel"
 )
 
-func TestParseAgentPaneIndicesSkipsChannelPane(t *testing.T) {
-	got := parseAgentPaneIndices("0 📢 channel\n1 🤖 CEO (@ceo)\n2 🤖 Product Manager (@pm)\n5 🤖 AI Engineer (@ai)\n")
+func TestParseBotPaneIndicesSkipsChannelPane(t *testing.T) {
+	got := parseBotPaneIndices("0 📢 channel\n1 🤖 CEO (@cos)\n2 🤖 Product Manager (@pm)\n5 🤖 AI Engineer (@ai)\n")
 	want := []int{1, 2, 5}
 	if len(got) != len(want) {
 		t.Fatalf("expected %d panes, got %d", len(want), len(got))
@@ -67,12 +66,12 @@ func TestResetSessionOnlyClearsOfficeState(t *testing.T) {
 	}
 }
 
-func TestAgentPaneSlugsOneOnOneUsesOnlySelectedAgent(t *testing.T) {
+func TestBotPaneSlugsOneOnOneUsesOnlySelectedBot(t *testing.T) {
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "pm", Name: "Product Manager"},
 				{Slug: "fe", Name: "Frontend Engineer"},
 			},
@@ -85,8 +84,8 @@ func TestAgentPaneSlugsOneOnOneUsesOnlySelectedAgent(t *testing.T) {
 	if len(got) != 1 || got[0] != "pm" {
 		t.Fatalf("expected only pm in 1o1 pane list, got %v", got)
 	}
-	if l.AgentCount() != 1 {
-		t.Fatalf("expected 1 agent in 1o1 mode, got %d", l.AgentCount())
+	if l.BotCount() != 1 {
+		t.Fatalf("expected 1 bot in 1o1 mode, got %d", l.BotCount())
 	}
 	if !strings.Contains(l.PackName(), "1:1 with") {
 		t.Fatalf("expected 1o1 pack name, got %q", l.PackName())
@@ -109,12 +108,16 @@ func TestNewLauncherFromScratchUsesGenericOffice(t *testing.T) {
 	if got := l.PackName(); got != "WUPHF Office" {
 		t.Fatalf("PackName: got %q, want %q", got, "WUPHF Office")
 	}
-	if got := l.AgentCount(); got != 5 {
-		t.Fatalf("AgentCount: got %d, want 5", got)
+	if got := l.BotCount(); got != 1 {
+		t.Fatalf("BotCount: got %d, want 1", got)
 	}
 	got := l.officeMembersSnapshot()
-	// app-builder is the built-in App Builder agent, seeded into every office.
-	want := []string{"founder", "operator", "app-builder", "builder", "reviewer"}
+	// The from-scratch office is the Chief of Staff alone. It used to be five —
+	// founder, operator, app-builder, builder, reviewer — an invented team of
+	// default specialists that the founder retired. A first run should show the
+	// smallest system that produces a trustworthy output; the rest are created
+	// on demand.
+	want := []string{"cos"}
 	if len(got) != len(want) {
 		t.Fatalf("officeMembersSnapshot: got %d members, want %d (%+v)", len(got), len(want), got)
 	}
@@ -125,19 +128,19 @@ func TestNewLauncherFromScratchUsesGenericOffice(t *testing.T) {
 	}
 }
 
-func TestAgentPaneSlugsUsesOfficeRosterNotStaticPack(t *testing.T) {
+func TestBotPaneSlugsUsesOfficeRosterNotStaticPack(t *testing.T) {
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "pm", Name: "Product Manager"},
 				{Slug: "fe", Name: "Frontend Engineer"},
 			},
 		},
 		broker: &Broker{
 			members: []officeMember{
-				{Slug: "ceo", Name: "CEO"},
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "pm", Name: "Product Manager"},
 				{Slug: "fe", Name: "Frontend Engineer"},
 				{Slug: "growthops", Name: "Growth Ops"},
@@ -146,7 +149,7 @@ func TestAgentPaneSlugsUsesOfficeRosterNotStaticPack(t *testing.T) {
 	}
 
 	got := l.targeter().PaneSlugs()
-	want := []string{"ceo", "pm", "fe", "growthops"}
+	want := []string{"cos", "pm", "fe", "growthops"}
 	if len(got) != len(want) {
 		t.Fatalf("expected %d pane slugs, got %v", len(want), got)
 	}
@@ -163,7 +166,7 @@ func TestOfficeMembersSnapshotPrefersPersistedStateOverPack(t *testing.T) {
 
 	state := brokerState{
 		Members: []officeMember{
-			{Slug: "ceo", Name: "CEO"},
+			{Slug: "cos", Name: "CEO"},
 			{Slug: "pm", Name: "Product Manager"},
 			{Slug: "growthops", Name: "Growth Ops"},
 		},
@@ -177,10 +180,10 @@ func TestOfficeMembersSnapshotPrefersPersistedStateOverPack(t *testing.T) {
 	}
 
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "pm", Name: "Product Manager"},
 				{Slug: "fe", Name: "Frontend Engineer"},
 			},
@@ -196,11 +199,11 @@ func TestOfficeMembersSnapshotPrefersPersistedStateOverPack(t *testing.T) {
 	}
 }
 
-func TestNotificationTargetsForMessageOneOnOneWakesSelectedAgent(t *testing.T) {
+func TestNotificationTargetsForMessageOneOnOneWakesSelectedBot(t *testing.T) {
 	l := &Launcher{
-		sessionMode:      SessionModeOneOnOne,
-		oneOnOne:         "pm",
-		paneBackedAgents: true, // test exercises the pane-target path specifically
+		sessionMode:    SessionModeOneOnOne,
+		oneOnOne:       "pm",
+		paneBackedBots: true, // test exercises the pane-target path specifically
 	}
 
 	immediate, delayed := l.notificationTargetsForMessage(channelMessage{
@@ -239,9 +242,9 @@ func TestNotificationTargetsForMessageUsesMetadataBackedTaskOwner(t *testing.T) 
 
 	l := &Launcher{
 		sessionName: "test",
-		pack: &agent.PackDefinition{
+		pack: &bot.PackDefinition{
 			LeadSlug: "operator",
-			Agents: []agent.AgentConfig{
+			Bots: []bot.BotConfig{
 				{Slug: "operator", Name: "Operator"},
 				{Slug: "bookkeeper", Name: "Bookkeeper"},
 				{Slug: "reviewer", Name: "Reviewer"},
@@ -283,59 +286,12 @@ func TestLoadRunningSessionModePrefersLiveBrokerState(t *testing.T) {
 	t.Setenv("WUPHF_BROKER_TOKEN", "test-token")
 	t.Setenv("WUPHF_BROKER_BASE_URL", server.URL)
 
-	mode, agent := loadRunningSessionMode()
+	mode, bot := loadRunningSessionMode()
 	if mode != SessionModeOneOnOne {
 		t.Fatalf("expected live session mode %q, got %q", SessionModeOneOnOne, mode)
 	}
-	if agent != "pm" {
-		t.Fatalf("expected live 1o1 agent pm, got %q", agent)
-	}
-}
-
-func TestFormatNexFeedItem(t *testing.T) {
-	title, content := formatNexFeedItem(nexFeedItem{
-		Type: "context_alert",
-		Content: nexFeedItemContent{
-			ImportantItems: []nexFeedItemContentItem{
-				{Title: "Budget pressure", Context: "Acme mentioned a freeze"},
-			},
-			EntityChanges: []nexFeedItemContentItem{
-				{Title: "Champion changed", Context: "New VP now owns the deal"},
-			},
-		},
-	})
-
-	if title != "Context alert" {
-		t.Fatalf("unexpected title: %q", title)
-	}
-	if !strings.Contains(content, "Important: Budget pressure") || !strings.Contains(content, "Change: Champion changed") {
-		t.Fatalf("unexpected content: %q", content)
-	}
-}
-
-func TestFetchAndIngestNexNotificationsSeedsCursorOnColdStart(t *testing.T) {
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		t.Fatalf("expected cold start to seed cursor without calling feed, got %s", r.URL.String())
-	}))
-	defer server.Close()
-
-	b := newTestBroker(t)
-	launcher := &Launcher{broker: b}
-	client := api.NewClient("test-key")
-	client.BaseURL = server.URL
-
-	launcher.fetchAndIngestNexNotifications(client)
-
-	if requests != 0 {
-		t.Fatalf("expected no feed requests on cold start, got %d", requests)
-	}
-	if got := b.NotificationCursor(); got == "" {
-		t.Fatal("expected cold start to seed notification cursor")
-	}
-	if len(b.Messages()) != 0 {
-		t.Fatalf("expected no notifications to be posted on cold start, got %d", len(b.Messages()))
+	if bot != "pm" {
+		t.Fatalf("expected live 1o1 bot pm, got %q", bot)
 	}
 }
 
@@ -397,7 +353,7 @@ func TestShouldPrimeClaudePane(t *testing.T) {
 		},
 		{
 			name:    "normal conversation",
-			content: "@ceo I think the wedge should be meeting notes to follow-up tasks.",
+			content: "@cos I think the wedge should be meeting notes to follow-up tasks.",
 			want:    false,
 		},
 	}
@@ -454,18 +410,18 @@ func TestChannelPaneLogPaths(t *testing.T) {
 	}
 }
 
-func TestPrimeVisibleAgentsWithoutBrokerDoesNotPanic(t *testing.T) {
+func TestPrimeVisibleBotsWithoutBrokerDoesNotPanic(t *testing.T) {
 	l := &Launcher{sessionName: SessionName}
-	l.primeVisibleAgents()
+	l.primeVisibleBots()
 }
 
 func TestNotificationTargetsForHumanMessageDirectToTaggedSpecialists(t *testing.T) {
 	l := &Launcher{
 		focusMode: true,
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "fe", Name: "Frontend Engineer"},
 				{Slug: "be", Name: "Backend Engineer"},
 				{Slug: "cmo", Name: "CMO"},
@@ -514,10 +470,10 @@ func TestNotificationTargetsCEOWakesOnlyOnMention(t *testing.T) {
 	newLauncher := func(focus bool) *Launcher {
 		return &Launcher{
 			focusMode: focus,
-			pack: &agent.PackDefinition{
-				LeadSlug: "ceo",
-				Agents: []agent.AgentConfig{
-					{Slug: "ceo", Name: "CEO"},
+			pack: &bot.PackDefinition{
+				LeadSlug: "cos",
+				Bots: []bot.BotConfig{
+					{Slug: "cos", Name: "CEO"},
 					{Slug: "fe", Name: "Frontend Engineer"},
 					{Slug: "be", Name: "Backend Engineer"},
 				},
@@ -547,7 +503,7 @@ func TestNotificationTargetsCEOWakesOnlyOnMention(t *testing.T) {
 				From:    "be",
 				Content: "wired up the handler and shipped the first slice, two files left",
 			})
-			if hasSlug(immediate, "ceo") || hasSlug(delayed, "ceo") {
+			if hasSlug(immediate, "cos") || hasSlug(delayed, "cos") {
 				t.Fatalf("CEO must not wake on an untagged specialist message; immediate=%+v delayed=%+v", immediate, delayed)
 			}
 		})
@@ -556,10 +512,10 @@ func TestNotificationTargetsCEOWakesOnlyOnMention(t *testing.T) {
 			l := newLauncher(focus)
 			immediate, _ := l.notificationTargetsForMessage(channelMessage{
 				From:    "be",
-				Content: "@ceo this needs a routing decision",
-				Tagged:  []string{"ceo"},
+				Content: "@cos this needs a routing decision",
+				Tagged:  []string{"cos"},
 			})
-			if !hasSlug(immediate, "ceo") {
+			if !hasSlug(immediate, "cos") {
 				t.Fatalf("CEO must wake when a specialist @mentions it; got %+v", immediate)
 			}
 		})
@@ -570,13 +526,13 @@ func TestNotificationTargetsCEOWakesOnlyOnMention(t *testing.T) {
 				From:    "you",
 				Content: "what's the status of the launch?",
 			})
-			if !hasSlug(immediate, "ceo") {
+			if !hasSlug(immediate, "cos") {
 				t.Fatalf("CEO must wake on an untagged human message; got %+v", immediate)
 			}
 		})
 
 		// Automation/nex traffic is inbound external work (scheduled triggers,
-		// Nex notifications), not internal agent chatter — it routes to the CEO
+		// Nex notifications), not internal bot chatter — it routes to the CEO
 		// to triage even when untagged. The router keeps two independent wake
 		// predicates (Kind=="automation" and From=="nex"); cover each on its own
 		// so dropping either one fails this regression.
@@ -591,7 +547,7 @@ func TestNotificationTargetsCEOWakesOnlyOnMention(t *testing.T) {
 			t.Run(mode+"/untagged inbound "+inbound.name+" wakes CEO", func(t *testing.T) {
 				l := newLauncher(focus)
 				immediate, _ := l.notificationTargetsForMessage(inbound.msg)
-				if !hasSlug(immediate, "ceo") {
+				if !hasSlug(immediate, "cos") {
 					t.Fatalf("CEO must wake on untagged inbound %s work; got %+v", inbound.name, immediate)
 				}
 			})
@@ -603,10 +559,10 @@ func TestNotificationTargetsCEOWakesOnlyOnMention(t *testing.T) {
 			l := newLauncher(focus)
 			immediate, _ := l.notificationTargetsForMessage(channelMessage{
 				From:    "you",
-				Content: "@ceo @be please handle this",
-				Tagged:  []string{"ceo", "be"},
+				Content: "@cos @be please handle this",
+				Tagged:  []string{"cos", "be"},
 			})
-			if !hasSlug(immediate, "ceo") {
+			if !hasSlug(immediate, "cos") {
 				t.Fatalf("CEO must wake when a human @mentions it alongside a specialist; got %+v", immediate)
 			}
 			if !hasSlug(immediate, "be") {
@@ -626,7 +582,7 @@ func TestNotificationTargetsCEOWakesOnlyOnMention(t *testing.T) {
 					Content: "@be ship the handler",
 					Tagged:  []string{"be"},
 				})
-				if hasSlug(immediate, "ceo") {
+				if hasSlug(immediate, "cos") {
 					t.Fatalf("CEO must not wake when the human tags only a specialist; got %+v", immediate)
 				}
 				if !hasSlug(immediate, "be") {
@@ -638,13 +594,13 @@ func TestNotificationTargetsCEOWakesOnlyOnMention(t *testing.T) {
 }
 
 func TestNotificationTargetsForDMChannel(t *testing.T) {
-	// DMs should route only to the target agent, not to CEO or other specialists.
+	// DMs should route only to the target bot, not to CEO or other specialists.
 	l := &Launcher{
 		focusMode: true,
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "fe", Name: "Frontend Engineer"},
 				{Slug: "be", Name: "Backend Engineer"},
 			},
@@ -667,24 +623,24 @@ func TestNotificationTargetsForDMChannel(t *testing.T) {
 		t.Errorf("expected 0 delayed targets for DM, got %d", len(delayed))
 	}
 
-	// Agent's own message in DM should not echo back
+	// Bot's own message in DM should not echo back
 	immediate2, _ := l.notificationTargetsForMessage(channelMessage{
 		From:    "fe",
 		Channel: "dm-fe",
 		Content: "Here's what I found",
 	})
 	if len(immediate2) != 0 {
-		t.Errorf("agent's own DM message should not echo back, got %+v", immediate2)
+		t.Errorf("bot's own DM message should not echo back, got %+v", immediate2)
 	}
 }
 
 func TestNotificationTargetsForDMChannelCodexRuntimeUsesHeadlessTarget(t *testing.T) {
 	l := &Launcher{
 		provider: "codex",
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "fe", Name: "Frontend Engineer"},
 			},
 		},
@@ -726,17 +682,17 @@ func TestDeliverDMMessageQueuesCodexHeadlessTurn(t *testing.T) {
 		return nil
 	})
 
-	dmSlug := DMSlugFor("ceo")
+	dmSlug := DMSlugFor("cos")
 	l.deliverMessageNotification(channelMessage{
 		ID:      "msg-1",
 		From:    "you",
 		Channel: dmSlug,
-		Content: "Real agent smoke test",
+		Content: "Real bot smoke test",
 	})
 
 	got := waitForString(t, processed)
-	if !strings.Contains(got, "ceo") {
-		t.Fatalf("expected ceo headless turn, got %q", got)
+	if !strings.Contains(got, "cos") {
+		t.Fatalf("expected cos headless turn, got %q", got)
 	}
 	if !strings.Contains(got, dmSlug) {
 		t.Fatalf("expected DM channel %q in headless turn, got %q", dmSlug, got)
@@ -748,12 +704,12 @@ func TestDeliverDMMessageQueuesCodexHeadlessTurn(t *testing.T) {
 
 func TestNotificationTargetsForDMChannelNewSlugFormat(t *testing.T) {
 	// New-style deterministic DM slugs (e.g. "fe__human") should route the same
-	// way as legacy "dm-fe" slugs: only the target agent is notified.
+	// way as legacy "dm-fe" slugs: only the target bot is notified.
 	b := newTestBroker(t)
-	// Override broker members so officeMembersSnapshot returns test agents.
+	// Override broker members so officeMembersSnapshot returns test bots.
 	b.mu.Lock()
 	b.members = []officeMember{
-		{Slug: "ceo", Name: "CEO"},
+		{Slug: "cos", Name: "CEO"},
 		{Slug: "fe", Name: "Frontend Engineer"},
 		{Slug: "be", Name: "Backend Engineer"},
 	}
@@ -786,14 +742,14 @@ func TestNotificationTargetsForDMChannelNewSlugFormat(t *testing.T) {
 		t.Errorf("expected 0 delayed targets for DM (new slug), got %d", len(delayed))
 	}
 
-	// Agent's own message in new-slug DM should not echo back.
+	// Bot's own message in new-slug DM should not echo back.
 	immediate2, _ := l.notificationTargetsForMessage(channelMessage{
 		From:    "fe",
 		Channel: dmSlug,
 		Content: "Here's what I found",
 	})
 	if len(immediate2) != 0 {
-		t.Errorf("agent's own DM message (new slug) should not echo back, got %+v", immediate2)
+		t.Errorf("bot's own DM message (new slug) should not echo back, got %+v", immediate2)
 	}
 }
 
@@ -801,7 +757,7 @@ func TestNotificationTargetsForDMChannelAcceptsHumanSlugSender(t *testing.T) {
 	b := newTestBroker(t)
 	b.mu.Lock()
 	b.members = []officeMember{
-		{Slug: "ceo", Name: "CEO"},
+		{Slug: "cos", Name: "CEO"},
 		{Slug: "fe", Name: "Frontend Engineer"},
 	}
 	b.mu.Unlock()
@@ -828,10 +784,10 @@ func TestResponseInstructionForTargetDMChannelNewSlugFormat(t *testing.T) {
 	// New-style deterministic DM slugs should produce the same "messaging you directly"
 	// instruction as legacy dm-* slugs, ensuring specialists respond in DMs.
 	b := newTestBroker(t)
-	// Override broker members so officeMembersSnapshot returns test agents.
+	// Override broker members so officeMembersSnapshot returns test bots.
 	b.mu.Lock()
 	b.members = []officeMember{
-		{Slug: "ceo", Name: "CEO"},
+		{Slug: "cos", Name: "CEO"},
 		{Slug: "engineering", Name: "Engineering"},
 	}
 	b.mu.Unlock()
@@ -855,22 +811,22 @@ func TestResponseInstructionForTargetDMChannelNewSlugFormat(t *testing.T) {
 		t.Errorf("DM instruction (new slug) should indicate direct message, got %q", dmInstr)
 	}
 
-	// Wrong agent should not receive the DM instruction for this channel.
-	wrongAgentInstr := l.responseInstructionForTarget(channelMessage{
+	// Wrong bot should not receive the DM instruction for this channel.
+	wrongBotInstr := l.responseInstructionForTarget(channelMessage{
 		From:    "you",
 		Channel: dmSlug,
-	}, "ceo")
-	if strings.Contains(wrongAgentInstr, "messaging you directly") {
-		t.Errorf("DM to engineering (new slug) should not give DM instruction to CEO, got %q", wrongAgentInstr)
+	}, "cos")
+	if strings.Contains(wrongBotInstr, "messaging you directly") {
+		t.Errorf("DM to engineering (new slug) should not give DM instruction to CEO, got %q", wrongBotInstr)
 	}
 }
 
 func TestNotificationTargetsExplicitTagsAlwaysDeliverRegardlessOfDomain(t *testing.T) {
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "fe", Name: "Frontend Engineer"},
 				{Slug: "cmo", Name: "CMO"},
 			},
@@ -884,9 +840,9 @@ func TestNotificationTargetsExplicitTagsAlwaysDeliverRegardlessOfDomain(t *testi
 	})
 
 	// Explicit @-tags always deliver regardless of domain inference. Domain is
-	// "marketing" here, but fe was explicitly tagged — so ceo + fe + cmo all wake.
+	// "marketing" here, but fe was explicitly tagged — so cos + fe + cmo all wake.
 	if len(immediate) != 3 {
-		t.Fatalf("expected 3 immediate targets (ceo + fe + cmo), got %+v", immediate)
+		t.Fatalf("expected 3 immediate targets (cos + fe + cmo), got %+v", immediate)
 	}
 	if len(delayed) != 0 {
 		t.Fatalf("expected 0 delayed targets, got %+v", delayed)
@@ -895,10 +851,10 @@ func TestNotificationTargetsExplicitTagsAlwaysDeliverRegardlessOfDomain(t *testi
 
 func TestNotificationTargetsTaggedSpecialistsGetImmediateDelivery(t *testing.T) {
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "fe", Name: "Frontend Engineer"},
 				{Slug: "be", Name: "Backend Engineer"},
 			},
@@ -914,7 +870,7 @@ func TestNotificationTargetsTaggedSpecialistsGetImmediateDelivery(t *testing.T) 
 	ceoFound := false
 	feFound := false
 	for _, tgt := range immediate {
-		if tgt.Slug == "ceo" {
+		if tgt.Slug == "cos" {
 			ceoFound = true
 		}
 		if tgt.Slug == "fe" {
@@ -934,10 +890,10 @@ func TestNotificationTargetsTaggedSpecialistsGetImmediateDelivery(t *testing.T) 
 
 func TestNotificationTargetsForCEOMessageNotifyTaggedOnly(t *testing.T) {
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "fe", Name: "Frontend Engineer"},
 				{Slug: "be", Name: "Backend Engineer"},
 				{Slug: "cmo", Name: "CMO"},
@@ -946,7 +902,7 @@ func TestNotificationTargetsForCEOMessageNotifyTaggedOnly(t *testing.T) {
 	}
 
 	immediate, delayed := l.notificationTargetsForMessage(channelMessage{
-		From:    "ceo",
+		From:    "cos",
 		Content: "Frontend take this",
 		Tagged:  []string{"fe"},
 	})
@@ -961,10 +917,10 @@ func TestNotificationTargetsForCEOMessageNotifyTaggedOnly(t *testing.T) {
 
 func TestTaskNotificationTargetsFollowOwnerAndCEOHeadStart(t *testing.T) {
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "cmo", Name: "CMO"},
 				{Slug: "fe", Name: "Frontend Engineer"},
 			},
@@ -987,7 +943,7 @@ func TestTaskNotificationTargetsFollowOwnerAndCEOHeadStart(t *testing.T) {
 		RelatedID: "task-1",
 	}, task)
 
-	if len(immediate) != 2 || !containsNotificationTarget(immediate, "ceo") || !containsNotificationTarget(immediate, "cmo") {
+	if len(immediate) != 2 || !containsNotificationTarget(immediate, "cos") || !containsNotificationTarget(immediate, "cmo") {
 		t.Fatalf("expected CEO immediate target, got %+v", immediate)
 	}
 	if len(delayed) != 0 {
@@ -996,7 +952,7 @@ func TestTaskNotificationTargetsFollowOwnerAndCEOHeadStart(t *testing.T) {
 
 	immediate, delayed = l.taskNotificationTargets(officeActionLog{
 		Kind:      "task_created",
-		Actor:     "ceo",
+		Actor:     "cos",
 		Channel:   "general",
 		RelatedID: "task-1",
 	}, task)
@@ -1028,7 +984,7 @@ func TestTaskNotificationTargetsFollowOwnerAndCEOHeadStart(t *testing.T) {
 		Channel:   "general",
 		RelatedID: "task-1",
 	}, task)
-	if len(immediate) != 1 || immediate[0].Slug != "ceo" {
+	if len(immediate) != 1 || immediate[0].Slug != "cos" {
 		t.Fatalf("expected CEO immediate target on review-ready owner update, got %+v", immediate)
 	}
 	if len(delayed) != 0 {
@@ -1036,16 +992,16 @@ func TestTaskNotificationTargetsFollowOwnerAndCEOHeadStart(t *testing.T) {
 	}
 }
 
-// Regression: an app-builder build/edit is self-sufficient single-agent work.
+// Regression: an app-builder build/edit is self-sufficient single-bot work.
 // The lead (CEO) must NOT be woken alongside the app-builder owner — doing so
 // spawns a redundant parallel build that wastes turns/tokens and trips the
 // budget gate. Only the app-builder owner should start.
 func TestTaskNotificationTargetsAppBuilderDoesNotWakeLead(t *testing.T) {
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: appBuilderSlug, Name: "App Builder"},
 			},
 		},
@@ -1067,7 +1023,7 @@ func TestTaskNotificationTargetsAppBuilderDoesNotWakeLead(t *testing.T) {
 		RelatedID: "task-office-1",
 	}, task)
 
-	if containsNotificationTarget(immediate, "ceo") || containsNotificationTarget(delayed, "ceo") {
+	if containsNotificationTarget(immediate, "cos") || containsNotificationTarget(delayed, "cos") {
 		t.Fatalf("CEO must not be woken for an app-builder build; immediate=%+v delayed=%+v", immediate, delayed)
 	}
 	if len(immediate) != 1 || immediate[0].Slug != appBuilderSlug {
@@ -1077,10 +1033,10 @@ func TestTaskNotificationTargetsAppBuilderDoesNotWakeLead(t *testing.T) {
 
 func TestTaskNotificationTargetsWakeCEOWhenOwnerBlocksTask(t *testing.T) {
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "eng", Name: "Engineer"},
 			},
 		},
@@ -1092,7 +1048,7 @@ func TestTaskNotificationTargetsWakeCEOWhenOwnerBlocksTask(t *testing.T) {
 		Owner:     "eng",
 		status:    "blocked",
 		blocked:   true,
-		CreatedBy: "ceo",
+		CreatedBy: "cos",
 	}
 
 	immediate, delayed := l.taskNotificationTargets(officeActionLog{
@@ -1101,7 +1057,7 @@ func TestTaskNotificationTargetsWakeCEOWhenOwnerBlocksTask(t *testing.T) {
 		Channel:   "general",
 		RelatedID: "task-2",
 	}, task)
-	if len(immediate) != 1 || immediate[0].Slug != "ceo" {
+	if len(immediate) != 1 || immediate[0].Slug != "cos" {
 		t.Fatalf("expected CEO wake on blocked owner update, got %+v", immediate)
 	}
 	if len(delayed) != 0 {
@@ -1146,7 +1102,7 @@ func TestTaskNotificationContentIncludesWorktreeDetails(t *testing.T) {
 	l := &Launcher{}
 	got := l.taskNotificationContent(officeActionLog{
 		Kind:  "task_updated",
-		Actor: "ceo",
+		Actor: "cos",
 	}, teamTask{
 		ID:             "task-10",
 		Channel:        "general",
@@ -1172,7 +1128,7 @@ func TestBuildTaskExecutionPacketLocalWorktreeForbidsNestedOffice(t *testing.T) 
 	l := &Launcher{}
 	got := l.buildTaskExecutionPacket("eng", officeActionLog{
 		Kind:  "task_updated",
-		Actor: "ceo",
+		Actor: "cos",
 	}, teamTask{
 		ID:            "task-11",
 		Channel:       "general",
@@ -1216,7 +1172,7 @@ func TestBuildTaskExecutionPacketRequiresRealExternalExecution(t *testing.T) {
 	l := &Launcher{}
 	got := l.buildTaskExecutionPacket("builder", officeActionLog{
 		Kind:  "task_updated",
-		Actor: "ceo",
+		Actor: "cos",
 	}, teamTask{
 		ID:      "task-42",
 		Channel: "delivery",
@@ -1250,10 +1206,10 @@ func TestBuildTaskExecutionPacketRequiresRealExternalExecution(t *testing.T) {
 
 func TestBuildPromptIncludesTaskStatusAndWorktreeGuidance(t *testing.T) {
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "fe", Name: "Frontend Engineer"},
 			},
 		},
@@ -1297,7 +1253,7 @@ func TestBuildPromptIncludesTaskStatusAndWorktreeGuidance(t *testing.T) {
 		t.Fatalf("expected capability-gap guidance in specialist prompt: %q", specialist)
 	}
 
-	lead := l.buildPrompt("ceo")
+	lead := l.buildPrompt("cos")
 	if !strings.Contains(lead, "team_task_status") {
 		t.Fatalf("expected team_task_status guidance in lead prompt: %q", lead)
 	}
@@ -1353,16 +1309,16 @@ func TestBuildPromptIncludesMarkdownWikiAndArtifactGuidance(t *testing.T) {
 	t.Setenv("NEX_API_KEY", "")
 
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "builder", Name: "Builder"},
 			},
 		},
 	}
 
-	for _, slug := range []string{"ceo", "builder"} {
+	for _, slug := range []string{"cos", "builder"} {
 		prompt := l.buildPrompt(slug)
 		for _, want := range []string{
 			"visual_artifact_create",
@@ -1403,10 +1359,10 @@ func TestResponseInstructionForTargetLiveExternalTaskPromptsCapabilityCreation(t
 
 	l := &Launcher{
 		broker: b,
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "builder", Name: "Builder"},
 			},
 		},
@@ -1438,7 +1394,7 @@ func TestTaskOwnerForMessageResolvesByChannel(t *testing.T) {
 			{ID: "task-bkp", Channel: "general", Title: "Backup & Migration", Owner: "system", status: "archived"},
 		},
 	}
-	l := &Launcher{broker: b, pack: &agent.PackDefinition{LeadSlug: "ceo"}}
+	l := &Launcher{broker: b, pack: &bot.PackDefinition{LeadSlug: "cos"}}
 
 	// Short, content-mismatched chat in the task's own channel → its owner.
 	if owner := l.taskOwnerForMessage(channelMessage{ID: "m1", From: "you", Channel: "task-a", Content: "actually, target SMBs"}); owner != "builder" {
@@ -1455,7 +1411,7 @@ func TestTaskNotificationContentIncludesCapabilityGapRecovery(t *testing.T) {
 	l := &Launcher{}
 	got := l.taskNotificationContent(officeActionLog{
 		Kind:  "task_updated",
-		Actor: "ceo",
+		Actor: "cos",
 	}, teamTask{
 		ID:            "task-99",
 		Channel:       "delivery",
@@ -1478,7 +1434,7 @@ func TestTaskNotificationContentIncludesCapabilityGapRecovery(t *testing.T) {
 
 func TestBuildPromptIncludesActivePolicies(t *testing.T) {
 	b := newTestBroker(t)
-	if err := b.SetSessionMode(SessionModeOffice, "ceo"); err != nil {
+	if err := b.SetSessionMode(SessionModeOffice, "cos"); err != nil {
 		t.Fatalf("set session mode: %v", err)
 	}
 	if _, err := b.RecordPolicy("human_directed", "Slack and Notion writes are allowed for this proof."); err != nil {
@@ -1490,16 +1446,16 @@ func TestBuildPromptIncludesActivePolicies(t *testing.T) {
 
 	l := &Launcher{
 		broker: b,
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "builder", Name: "Builder"},
 			},
 		},
 	}
 
-	lead := l.buildPrompt("ceo")
+	lead := l.buildPrompt("cos")
 	if !strings.Contains(lead, "== ACTIVE OFFICE POLICIES ==") {
 		t.Fatalf("expected lead prompt to include active policies: %q", lead)
 	}
@@ -1518,13 +1474,13 @@ func TestBuildPromptIncludesActivePolicies(t *testing.T) {
 
 func TestResponseInstructionForLeadOnSpecialistWakeRequiresContinuation(t *testing.T) {
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents:   []agent.AgentConfig{{Slug: "ceo", Name: "CEO"}},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots:     []bot.BotConfig{{Slug: "cos", Name: "CEO"}},
 		},
 	}
 
-	got := l.responseInstructionForTarget(channelMessage{From: "eng", Channel: "general", Content: "audit done"}, "ceo")
+	got := l.responseInstructionForTarget(channelMessage{From: "eng", Channel: "general", Content: "audit done"}, "cos")
 	if !strings.Contains(got, "create the next owned team_task records") {
 		t.Fatalf("expected continuation guidance in lead response instruction: %q", got)
 	}
@@ -1535,13 +1491,13 @@ func TestResponseInstructionForLeadOnSpecialistWakeRequiresContinuation(t *testi
 
 func TestResponseInstructionForLeadOnHumanBuildAskRequiresSingleSlice(t *testing.T) {
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents:   []agent.AgentConfig{{Slug: "ceo", Name: "CEO"}},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots:     []bot.BotConfig{{Slug: "cos", Name: "CEO"}},
 		},
 	}
 
-	got := l.responseInstructionForTarget(channelMessage{From: "you", Channel: "general", Content: "Build this end to end"}, "ceo")
+	got := l.responseInstructionForTarget(channelMessage{From: "you", Channel: "general", Content: "Build this end to end"}, "cos")
 	if !strings.Contains(got, "first engineering task itself must be a single smallest runnable feature slice") {
 		t.Fatalf("expected single-slice guidance in human-wake lead response instruction: %q", got)
 	}
@@ -1558,9 +1514,9 @@ func TestResponseInstructionForLeadOnHumanBuildAskRequiresSingleSlice(t *testing
 
 func TestBuildTaskNotificationContextLeadFlagsReviewAction(t *testing.T) {
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents:   []agent.AgentConfig{{Slug: "ceo", Name: "CEO"}},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots:     []bot.BotConfig{{Slug: "cos", Name: "CEO"}},
 		},
 		broker: &Broker{
 			tasks: []teamTask{
@@ -1576,7 +1532,7 @@ func TestBuildTaskNotificationContextLeadFlagsReviewAction(t *testing.T) {
 		},
 	}
 
-	got := l.buildTaskNotificationContext("", "ceo", 3)
+	got := l.buildTaskNotificationContext("", "cos", 3)
 	if !strings.Contains(got, "waiting in review") {
 		t.Fatalf("expected review action guidance in lead task context: %q", got)
 	}
@@ -1584,16 +1540,16 @@ func TestBuildTaskNotificationContextLeadFlagsReviewAction(t *testing.T) {
 
 func TestResponseInstructionForLeadWakeRequiresDurableTaskMutationBeforeNarration(t *testing.T) {
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "eng", Name: "Engineer"},
 			},
 		},
 	}
 
-	got := l.responseInstructionForTarget(channelMessage{From: "eng", Channel: "general", Content: "task is ready"}, "ceo")
+	got := l.responseInstructionForTarget(channelMessage{From: "eng", Channel: "general", Content: "task is ready"}, "cos")
 	if !strings.Contains(got, "Before you say a task is approved, closed, back in progress, reassigned, or blocked, you MUST make the matching team_task or team_plan call first") {
 		t.Fatalf("expected durable task mutation guidance in lead specialist-wake instruction: %q", got)
 	}
@@ -1610,12 +1566,12 @@ func TestTaskNotificationTargetsWakeOwnerOnWatchdog(t *testing.T) {
 		channels: []teamChannel{{
 			Slug:    "general",
 			Name:    "general",
-			Members: []string{"ceo", "fe"},
+			Members: []string{"cos", "fe"},
 		}},
 	}
 	b.mu.Lock()
 	b.members = []officeMember{
-		{Slug: "ceo", Name: "CEO"},
+		{Slug: "cos", Name: "CEO"},
 		{Slug: "fe", Name: "Frontend Engineer"},
 	}
 	b.mu.Unlock()
@@ -1634,7 +1590,7 @@ func TestTaskNotificationTargetsWakeOwnerOnWatchdog(t *testing.T) {
 		Channel:   "general",
 		RelatedID: "task-1",
 	}, task)
-	if !containsNotificationTarget(immediate, "ceo") || !containsNotificationTarget(immediate, "fe") {
+	if !containsNotificationTarget(immediate, "cos") || !containsNotificationTarget(immediate, "fe") {
 		t.Fatalf("expected watchdog to wake CEO and owner immediately, got %+v", immediate)
 	}
 	if len(delayed) != 0 {
@@ -1647,12 +1603,12 @@ func TestTaskNotificationTargetsDoNotRewakeCEOForOwnCreatedTask(t *testing.T) {
 		channels: []teamChannel{{
 			Slug:    "general",
 			Name:    "general",
-			Members: []string{"ceo", "fe"},
+			Members: []string{"cos", "fe"},
 		}},
 	}
 	b.mu.Lock()
 	b.members = []officeMember{
-		{Slug: "ceo", Name: "CEO"},
+		{Slug: "cos", Name: "CEO"},
 		{Slug: "fe", Name: "Frontend Engineer"},
 	}
 	b.mu.Unlock()
@@ -1667,14 +1623,14 @@ func TestTaskNotificationTargetsDoNotRewakeCEOForOwnCreatedTask(t *testing.T) {
 
 	immediate, delayed := l.taskNotificationTargets(officeActionLog{
 		Kind:      "task_created",
-		Actor:     "ceo",
+		Actor:     "cos",
 		Channel:   "general",
 		RelatedID: "task-2",
 	}, task)
 	if !containsNotificationTarget(immediate, "fe") {
 		t.Fatalf("expected owner wake, got %+v", immediate)
 	}
-	if containsNotificationTarget(immediate, "ceo") {
+	if containsNotificationTarget(immediate, "cos") {
 		t.Fatalf("expected CEO not to be re-notified for its own created task, got %+v", immediate)
 	}
 	if len(delayed) != 0 {
@@ -1762,7 +1718,7 @@ func TestBuildNotificationContextFormatsMessages(t *testing.T) {
 	if _, err := b.PostMessage("you", "general", "First message", nil, ""); err != nil {
 		t.Fatalf("post msg 1: %v", err)
 	}
-	if _, err := b.PostMessage("ceo", "general", "Second message", nil, ""); err != nil {
+	if _, err := b.PostMessage("cos", "general", "Second message", nil, ""); err != nil {
 		t.Fatalf("post msg 2: %v", err)
 	}
 	if _, err := b.PostMessage("human", "general", "Third message", nil, ""); err != nil {
@@ -1775,8 +1731,8 @@ func TestBuildNotificationContextFormatsMessages(t *testing.T) {
 	if !strings.Contains(ctx, "@you") {
 		t.Error("expected @you in context")
 	}
-	if !strings.Contains(ctx, "@ceo") {
-		t.Error("expected @ceo in context")
+	if !strings.Contains(ctx, "@cos") {
+		t.Error("expected @cos in context")
 	}
 	if !strings.Contains(ctx, "@human") {
 		t.Error("expected @human in context")
@@ -1796,8 +1752,8 @@ func TestBuildNotificationContextFiltersSystem(t *testing.T) {
 	if _, err := b.PostMessage("you", "general", "Real message", nil, ""); err != nil {
 		t.Fatalf("post msg: %v", err)
 	}
-	b.PostSystemMessage("general", "Routing to @ceo...", "routing")
-	if _, err := b.PostMessage("ceo", "general", "[STATUS] thinking", nil, ""); err != nil {
+	b.PostSystemMessage("general", "Routing to @cos...", "routing")
+	if _, err := b.PostMessage("cos", "general", "[STATUS] thinking", nil, ""); err != nil {
 		t.Fatalf("post status msg: %v", err)
 	}
 
@@ -1877,7 +1833,7 @@ func TestUltimateThreadRootFlat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post humanAsk: %v", err)
 	}
-	ceoDelegate, err := b.PostMessage("ceo", "general", "CEO delegation", nil, humanAsk.ID)
+	ceoDelegate, err := b.PostMessage("cos", "general", "CEO delegation", nil, humanAsk.ID)
 	if err != nil {
 		t.Fatalf("post ceoDelegate: %v", err)
 	}
@@ -1901,7 +1857,7 @@ func TestUltimateThreadRootDeep(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post x: %v", err)
 	}
-	y, err := b.PostMessage("ceo", "general", "Mid Y", nil, x.ID)
+	y, err := b.PostMessage("cos", "general", "Mid Y", nil, x.ID)
 	if err != nil {
 		t.Fatalf("post y: %v", err)
 	}
@@ -1944,7 +1900,7 @@ func TestThreadMessageIDsParallelDelegation(t *testing.T) {
 	// Thread structure:
 	//   X (human ask)
 	//   ├── B_reply (specialist-b replies to X)
-	//   └── Y (ceo delegates to A, replyTo X)
+	//   └── Y (cos delegates to A, replyTo X)
 	//       └── A_reply (specialist-a reply to CEO, replyTo Y)
 	//
 	// CEO gets notified about A_reply. threadMessageIDs from ultimate root X must
@@ -1963,7 +1919,7 @@ func TestThreadMessageIDsParallelDelegation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post b_reply: %v", err)
 	}
-	y, err := b.PostMessage("ceo", "general", "A: please handle this", nil, x.ID)
+	y, err := b.PostMessage("cos", "general", "A: please handle this", nil, x.ID)
 	if err != nil {
 		t.Fatalf("post y: %v", err)
 	}
@@ -1998,12 +1954,12 @@ func TestBuildNotificationContextThreadFiltering(t *testing.T) {
 	}
 	defer b.Stop()
 
-	// Thread A: human root + ceo reply
+	// Thread A: human root + cos reply
 	threadA, err := b.PostMessage("human", "general", "Thread A root", nil, "")
 	if err != nil {
 		t.Fatalf("post threadA root: %v", err)
 	}
-	if _, err := b.PostMessage("ceo", "general", "Thread A reply", nil, threadA.ID); err != nil {
+	if _, err := b.PostMessage("cos", "general", "Thread A reply", nil, threadA.ID); err != nil {
 		t.Fatalf("post threadA reply: %v", err)
 	}
 
@@ -2032,17 +1988,17 @@ func TestBuildNotificationContextThreadFiltering(t *testing.T) {
 }
 
 func TestBuildNotificationContextIncludesDeepThreadMessages(t *testing.T) {
-	// Regression: in a research→marketing chain the marketing agent's context must
+	// Regression: in a research→marketing chain the marketing bot's context must
 	// include the researcher's results (a grandchild of root), not just root + direct
 	// children. Previous filter only showed root + replyTo==root messages.
 	//
 	// Thread tree:
 	//   X (human: "research competitors and write email")
-	//   └── Y (ceo: "@researcher please research")
+	//   └── Y (cos: "@researcher please research")
 	//       └── R (researcher: "here are the findings...")
-	//           └── Z (ceo: "@marketing write email based on research") ← TRIGGER
+	//           └── Z (cos: "@marketing write email based on research") ← TRIGGER
 	//
-	// Marketing agent's context should show X (root anchor) and R (research results),
+	// Marketing bot's context should show X (root anchor) and R (research results),
 	// NOT just X and Y (which is all the old shallow filter produced).
 	b := newTestBroker(t)
 	if err := b.StartOnPort(0); err != nil {
@@ -2054,7 +2010,7 @@ func TestBuildNotificationContextIncludesDeepThreadMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post x: %v", err)
 	}
-	y, err := b.PostMessage("ceo", "general", "Researcher: please research", nil, x.ID)
+	y, err := b.PostMessage("cos", "general", "Researcher: please research", nil, x.ID)
 	if err != nil {
 		t.Fatalf("post y: %v", err)
 	}
@@ -2062,13 +2018,13 @@ func TestBuildNotificationContextIncludesDeepThreadMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post r: %v", err)
 	}
-	z, err := b.PostMessage("ceo", "general", "Marketing: write email based on research", nil, r.ID)
+	z, err := b.PostMessage("cos", "general", "Marketing: write email based on research", nil, r.ID)
 	if err != nil {
 		t.Fatalf("post z: %v", err)
 	}
 
 	l := &Launcher{broker: b}
-	// Marketing agent receives z as trigger; thread root is x.
+	// Marketing bot receives z as trigger; thread root is x.
 	ctx := l.buildNotificationContext("", "general", z.ID, x.ID, 4)
 
 	if !strings.Contains(ctx, "[Recent thread]") {
@@ -2102,29 +2058,29 @@ func TestBuildTaskNotificationContextCEOSeesAllChannels(t *testing.T) {
 	if _, err := b.PostMessage("you", "general", "initial ask", nil, ""); err != nil {
 		t.Fatalf("post initial: %v", err)
 	}
-	if _, _, err := b.EnsureTask("general", "general-task", "Task in general channel", "ceo", "you", ""); err != nil {
+	if _, _, err := b.EnsureTask("general", "general-task", "Task in general channel", "cos", "you", ""); err != nil {
 		t.Fatalf("create task: %v", err)
 	}
 
 	l := &Launcher{
 		broker: b,
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "engineering", Name: "Engineering"},
 			},
 		},
 	}
 
 	// Passing "" to buildTaskNotificationContext means AllTasks — should see general tasks.
-	ctx := l.buildTaskNotificationContext("", "ceo", 3)
+	ctx := l.buildTaskNotificationContext("", "cos", 3)
 	if !strings.Contains(ctx, "general-task") {
 		t.Errorf("expected task from general channel in AllTasks context, got %q", ctx)
 	}
 
 	// Passing "engineering" only shows engineering tasks — should NOT see general task.
-	ctxEngOnly := l.buildTaskNotificationContext("engineering", "ceo", 3)
+	ctxEngOnly := l.buildTaskNotificationContext("engineering", "cos", 3)
 	if strings.Contains(ctxEngOnly, "general-task") {
 		t.Errorf("channel-scoped context should not include general-channel task, got %q", ctxEngOnly)
 	}
@@ -2135,24 +2091,24 @@ func TestResponseInstructionForTargetLeadFromSpecialist(t *testing.T) {
 	// when woken by the human. Specialist completion should prompt "stay quiet or
 	// coordinate" behavior, not "give first reply quickly".
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "engineering", Name: "Engineering"},
 			},
 		},
 	}
 
 	// Woken by human → should get "reply quickly" instruction
-	humanInstr := l.responseInstructionForTarget(channelMessage{From: "you"}, "ceo")
+	humanInstr := l.responseInstructionForTarget(channelMessage{From: "you"}, "cos")
 	if !strings.Contains(humanInstr, "Give the first top-level reply quickly") {
 		t.Errorf("expected quick-reply instruction when woken by human, got %q", humanInstr)
 	}
 
 	// Woken by specialist → should get continuation guidance, not the human-style
 	// quick-reply instruction.
-	specialistInstr := l.responseInstructionForTarget(channelMessage{From: "engineering"}, "ceo")
+	specialistInstr := l.responseInstructionForTarget(channelMessage{From: "engineering"}, "cos")
 	if strings.Contains(specialistInstr, "Give the first top-level reply quickly") {
 		t.Errorf("specialist wake-up should not use human-style quick-reply instruction, got %q", specialistInstr)
 	}
@@ -2169,10 +2125,10 @@ func TestResponseInstructionForTargetDMChannelRespondsHelpfully(t *testing.T) {
 	// should get a "respond helpfully" instruction, not the default "stay quiet".
 	// This is the root cause of the "DMs don't get responses" bug.
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "engineering", Name: "Engineering"},
 			},
 		},
@@ -2191,7 +2147,7 @@ func TestResponseInstructionForTargetDMChannelRespondsHelpfully(t *testing.T) {
 	}
 
 	// Non-DM without @tag — should invite an in-character chime-in, not the
-	// strict DM "messaging you directly" treatment. The agent is woken because
+	// strict DM "messaging you directly" treatment. The bot is woken because
 	// the topic brushes their domain; the prompt asks for a short alive reply
 	// when they have one, and to skip otherwise.
 	channelInstr := l.responseInstructionForTarget(channelMessage{
@@ -2205,14 +2161,14 @@ func TestResponseInstructionForTargetDMChannelRespondsHelpfully(t *testing.T) {
 		t.Errorf("non-DM untagged should get the substantive chime-in default, got %q", channelInstr)
 	}
 
-	// DM with agent slug mismatch — wrong agent should not get DM instruction
-	wrongAgentInstr := l.responseInstructionForTarget(channelMessage{
+	// DM with bot slug mismatch — wrong bot should not get DM instruction
+	wrongBotInstr := l.responseInstructionForTarget(channelMessage{
 		From:    "you",
 		Channel: "dm-engineering",
-	}, "ceo")
+	}, "cos")
 	// CEO gets its own instruction (lead branch), not the DM branch
-	if strings.Contains(wrongAgentInstr, "messaging you directly") {
-		t.Errorf("DM to engineering should not give DM instruction to CEO, got %q", wrongAgentInstr)
+	if strings.Contains(wrongBotInstr, "messaging you directly") {
+		t.Errorf("DM to engineering should not give DM instruction to CEO, got %q", wrongBotInstr)
 	}
 }
 
@@ -2263,12 +2219,16 @@ func TestRelevantTaskForTargetCrossChannel(t *testing.T) {
 	})
 	setCleanupTaskWorktreeForTest(t, func(string, string) error { return nil })
 	b := NewBrokerAt(filepath.Join(tmpDir, "broker-state.json"))
+	// The room the human posts into below. #general is no longer seeded by
+	// the product, so the fixture supplies it -- this test is about thread
+	// routing, not about which rooms exist.
+	seedTestLegacyRoom(b)
 
 	// Create "engineering" channel directly in broker state.
 	b.mu.Lock()
 	b.channels = append(b.channels, teamChannel{
 		Slug:    "engineering",
-		Members: []string{"ceo", "engineering"},
+		Members: []string{"cos", "engineering"},
 	})
 	b.mu.Unlock()
 
@@ -2279,7 +2239,7 @@ func TestRelevantTaskForTargetCrossChannel(t *testing.T) {
 	}
 
 	// CEO creates task in "engineering" channel with threadID pointing to human's message.
-	task, _, err := b.EnsureTask("engineering", "Rate limiting middleware", "Implement middleware", "engineering", "ceo", humanMsg.ID)
+	task, _, err := b.EnsureTask("engineering", "Rate limiting middleware", "Implement middleware", "engineering", "cos", humanMsg.ID)
 	if err != nil {
 		t.Fatalf("ensure task: %v", err)
 	}
@@ -2287,10 +2247,10 @@ func TestRelevantTaskForTargetCrossChannel(t *testing.T) {
 
 	l := &Launcher{
 		broker: b,
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "engineering", Name: "Engineering"},
 			},
 		},
@@ -2301,7 +2261,7 @@ func TestRelevantTaskForTargetCrossChannel(t *testing.T) {
 	// but the task lives in "engineering" — this tests the AllTasks() cross-channel search.
 	ceoMsg := channelMessage{
 		ID:      "ceo-msg-1",
-		From:    "ceo",
+		From:    "cos",
 		Channel: "general",
 		Content: "Please implement rate limiting. @engineering",
 		ReplyTo: humanMsg.ID, // CEO replies in the same thread as the human ask
@@ -2338,7 +2298,7 @@ func TestRelevantTaskForTargetCrossChannel(t *testing.T) {
 	// A different specialist not in Tagged and not owning the task should stay quiet.
 	unrelatedMsg := channelMessage{
 		ID:      "ceo-msg-2",
-		From:    "ceo",
+		From:    "cos",
 		Channel: "general",
 		Content: "Just an update.",
 		ReplyTo: humanMsg.ID,
@@ -2371,9 +2331,9 @@ func TestRelevantTaskForTargetUsesRosterMetadata(t *testing.T) {
 
 	l := &Launcher{
 		broker: b,
-		pack: &agent.PackDefinition{
+		pack: &bot.PackDefinition{
 			LeadSlug: "operator",
-			Agents: []agent.AgentConfig{
+			Bots: []bot.BotConfig{
 				{Slug: "operator", Name: "Operator"},
 				{Slug: "community-manager", Name: "Community Manager"},
 				{Slug: "reviewer", Name: "Reviewer"},
@@ -2416,36 +2376,36 @@ func TestBlockedTaskNotificationAndUnblockFlow(t *testing.T) {
 	defer b.Stop()
 
 	// Create research task (in_progress).
-	researchTask, _, err := b.EnsureTask("general", "Research rate limiting", "", "research", "ceo", "")
+	researchTask, _, err := b.EnsureTask("general", "Research rate limiting", "", "research", "cos", "")
 	if err != nil {
 		t.Fatalf("create research task: %v", err)
 	}
 
 	// Create marketing task depending on the research task → should be Blocked.
-	marketingTask, _, err := b.EnsureTask("general", "Write blog copy", "Based on research results", "marketing", "ceo", "", researchTask.ID)
+	marketingTask, _, err := b.EnsureTask("general", "Write blog copy", "Based on research results", "marketing", "cos", "", researchTask.ID)
 	if err != nil {
 		t.Fatalf("create marketing task: %v", err)
 	}
 
-	// Set broker members so agentPaneTargets can build notification targets.
+	// Set broker members so botPaneTargets can build notification targets.
 	b.mu.Lock()
 	b.members = []officeMember{
-		{Slug: "ceo", Name: "CEO"},
+		{Slug: "cos", Name: "CEO"},
 		{Slug: "research", Name: "Researcher"},
 		{Slug: "marketing", Name: "Marketer"},
 	}
-	// Also populate the general channel's Members so EnabledMembers returns our agents.
+	// Also populate the general channel's Members so EnabledMembers returns our bots.
 	if ch := b.findChannelLocked("general"); ch != nil {
-		ch.Members = []string{"ceo", "research", "marketing"}
+		ch.Members = []string{"cos", "research", "marketing"}
 	}
 	b.mu.Unlock()
 
 	l := &Launcher{
 		broker: b,
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "research", Name: "Researcher"},
 				{Slug: "marketing", Name: "Marketer"},
 			},
@@ -2463,7 +2423,7 @@ func TestBlockedTaskNotificationAndUnblockFlow(t *testing.T) {
 		DependsOn: []string{researchTask.ID},
 		blocked:   true,
 	}
-	createdAction := officeActionLog{Kind: "task_created", Actor: "ceo", Channel: "general", RelatedID: marketingTask.ID}
+	createdAction := officeActionLog{Kind: "task_created", Actor: "cos", Channel: "general", RelatedID: marketingTask.ID}
 	immediate, _ := l.taskNotificationTargets(createdAction, blockedTask)
 	for _, t2 := range immediate {
 		if t2.Slug == "marketing" {
@@ -2541,20 +2501,20 @@ func TestActionLoopAllowsTaskUnblocked(t *testing.T) {
 
 	b.mu.Lock()
 	b.members = []officeMember{
-		{Slug: "ceo", Name: "CEO"},
+		{Slug: "cos", Name: "CEO"},
 		{Slug: "research", Name: "Researcher"},
 		{Slug: "marketing", Name: "Marketer"},
 	}
 	if ch := b.findChannelLocked("general"); ch != nil {
-		ch.Members = []string{"ceo", "research", "marketing"}
+		ch.Members = []string{"cos", "research", "marketing"}
 	}
 	b.mu.Unlock()
 
-	researchTask, _, err := b.EnsureTask("general", "Research competitors", "", "research", "ceo", "")
+	researchTask, _, err := b.EnsureTask("general", "Research competitors", "", "research", "cos", "")
 	if err != nil {
 		t.Fatalf("create research task: %v", err)
 	}
-	marketingTask, _, err := b.EnsureTask("general", "Write blog post about findings", "", "marketing", "ceo", "")
+	marketingTask, _, err := b.EnsureTask("general", "Write blog post about findings", "", "marketing", "cos", "")
 	if err != nil {
 		t.Fatalf("create marketing task: %v", err)
 	}
@@ -2624,10 +2584,10 @@ done:
 	// in immediate notification targets (this is what deliverTaskNotification does).
 	l := &Launcher{
 		broker: b,
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "research", Name: "Researcher"},
 				{Slug: "marketing", Name: "Marketer"},
 			},
@@ -2657,13 +2617,13 @@ func TestProcessDueTaskJobResumesRateLimitedBlockedTask(t *testing.T) {
 	b := newTestBroker(t)
 	b.mu.Lock()
 	b.members = []officeMember{
-		{Slug: "ceo", Name: "CEO"},
+		{Slug: "cos", Name: "CEO"},
 		{Slug: "builder", Name: "Builder"},
 	}
 	b.channels = []teamChannel{{
 		Slug:    "client-loop",
 		Name:    "client-loop",
-		Members: []string{"ceo", "builder"},
+		Members: []string{"cos", "builder"},
 	}}
 	b.mu.Unlock()
 
@@ -2672,14 +2632,14 @@ func TestProcessDueTaskJobResumesRateLimitedBlockedTask(t *testing.T) {
 		Title:         "Retry kickoff send",
 		Details:       "429 RESOURCE_EXHAUSTED. Retry after 2026-04-15T22:00:29.610Z.",
 		Owner:         "builder",
-		CreatedBy:     "ceo",
+		CreatedBy:     "cos",
 		TaskType:      "follow_up",
 		ExecutionMode: "live_external",
 	})
 	if err != nil || reused {
 		t.Fatalf("ensure planned task: %v reused=%v", err, reused)
 	}
-	if _, changed, err := b.BlockTask(task.ID, "ceo", "Provider cooldown", ""); err != nil || !changed {
+	if _, changed, err := b.BlockTask(task.ID, "cos", "Provider cooldown", ""); err != nil || !changed {
 		t.Fatalf("block task: %v changed=%v", err, changed)
 	}
 
@@ -2723,14 +2683,14 @@ func TestOfficeChangeTaskNotificationsBackfillGeneratedMemberTask(t *testing.T) 
 	b := NewBrokerAt(filepath.Join(t.TempDir(), "broker-state.json"))
 	b.mu.Lock()
 	b.members = []officeMember{
-		{Slug: "ceo", Name: "CEO"},
+		{Slug: "cos", Name: "CEO"},
 		{Slug: "eng", Name: "Engineer"},
 		{Slug: "gtm", Name: "GTM"},
 		{Slug: "ops", Name: "Automation Ops"},
 	}
 	b.channels = []teamChannel{
-		{Slug: "general", Name: "general", Members: []string{"ceo", "eng", "gtm"}},
-		{Slug: "youtube-factory", Name: "YouTube Factory", Members: []string{"ceo", "eng", "gtm", "ops"}},
+		{Slug: "general", Name: "general", Members: []string{"cos", "eng", "gtm"}},
+		{Slug: "youtube-factory", Name: "YouTube Factory", Members: []string{"cos", "eng", "gtm", "ops"}},
 	}
 	b.tasks = []teamTask{
 		{
@@ -2744,13 +2704,13 @@ func TestOfficeChangeTaskNotificationsBackfillGeneratedMemberTask(t *testing.T) 
 	b.mu.Unlock()
 
 	l := &Launcher{
-		broker:           b,
-		sessionName:      "office-test",
-		paneBackedAgents: true, // test exercises the pane-target path specifically
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		broker:         b,
+		sessionName:    "office-test",
+		paneBackedBots: true, // test exercises the pane-target path specifically
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "eng", Name: "Engineer"},
 				{Slug: "gtm", Name: "GTM"},
 				{Slug: "ops", Name: "Automation Ops"},
@@ -2777,12 +2737,12 @@ func TestOfficeChangeTaskNotificationsBackfillChannelMembershipTask(t *testing.T
 	b := NewBrokerAt(filepath.Join(t.TempDir(), "broker-state.json"))
 	b.mu.Lock()
 	b.members = []officeMember{
-		{Slug: "ceo", Name: "CEO"},
+		{Slug: "cos", Name: "CEO"},
 		{Slug: "ops", Name: "Automation Ops"},
 	}
 	b.channels = []teamChannel{
-		{Slug: "general", Name: "general", Members: []string{"ceo"}},
-		{Slug: "youtube-factory", Name: "YouTube Factory", Members: []string{"ceo", "ops"}},
+		{Slug: "general", Name: "general", Members: []string{"cos"}},
+		{Slug: "youtube-factory", Name: "YouTube Factory", Members: []string{"cos", "ops"}},
 	}
 	b.tasks = []teamTask{
 		{
@@ -2804,13 +2764,13 @@ func TestOfficeChangeTaskNotificationsBackfillChannelMembershipTask(t *testing.T
 	b.mu.Unlock()
 
 	l := &Launcher{
-		broker:           b,
-		sessionName:      "office-test",
-		paneBackedAgents: true, // test exercises the pane-target path specifically
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		broker:         b,
+		sessionName:    "office-test",
+		paneBackedBots: true, // test exercises the pane-target path specifically
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "ops", Name: "Automation Ops"},
 			},
 		},
@@ -2828,7 +2788,7 @@ func TestOfficeChangeTaskNotificationsBackfillChannelMembershipTask(t *testing.T
 // TestAllOperationBlueprintsUseCEOLead enforces the product invariant that
 // every shipped operation blueprint declares CEO as its lead_slug. Non-ceo
 // leads (e.g. "operator") silently break routing and UI affordances because
-// the rest of the system assumes "ceo" is always a registered member that
+// the rest of the system assumes "cos" is always a registered member that
 // receives focus-mode messages.
 func TestAllOperationBlueprintsUseCEOLead(t *testing.T) {
 	root, err := os.Getwd()
@@ -2864,24 +2824,24 @@ func TestAllOperationBlueprintsUseCEOLead(t *testing.T) {
 		if !bytes.Contains(data, []byte("lead_slug:")) {
 			continue
 		}
-		if !bytes.Contains(data, []byte("lead_slug: ceo")) {
-			t.Errorf("blueprint %s must declare lead_slug: ceo", entry.Name())
+		if !bytes.Contains(data, []byte("lead_slug: cos")) {
+			t.Errorf("blueprint %s must declare lead_slug: cos", entry.Name())
 		}
 	}
 }
 
 func TestBuildPromptToolHygieneSection(t *testing.T) {
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "eng", Name: "Engineer"},
 			},
 		},
 	}
 
-	for _, slug := range []string{"ceo", "eng"} {
+	for _, slug := range []string{"cos", "eng"} {
 		prompt := l.buildPrompt(slug)
 		if !strings.Contains(prompt, "== TOOL HYGIENE ==") {
 			t.Errorf("%s prompt missing TOOL HYGIENE section", slug)
@@ -2898,12 +2858,12 @@ func TestBuildPromptToolHygieneSection(t *testing.T) {
 	}
 }
 
-func TestBuildMessageActiveAgentsSorted(t *testing.T) {
+func TestBuildMessageActiveBotsSorted(t *testing.T) {
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "eng", Name: "Engineer"},
 			},
 		},
@@ -2923,7 +2883,7 @@ func TestBuildMessageActiveAgentsSorted(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		packet := l.buildMessageWorkPacket(channelMessage{
 			ID: "h1", From: "you", Channel: "general", Content: "ship it",
-		}, "ceo")
+		}, "cos")
 		idx := strings.Index(packet, "Already active in this thread")
 		if idx == -1 {
 			t.Fatal("expected 'Already active in this thread' line in work packet")
@@ -2939,27 +2899,27 @@ func TestBuildMessageActiveAgentsSorted(t *testing.T) {
 		if first == "" {
 			first = line
 		} else if line != first {
-			t.Fatalf("active-agents line is non-deterministic:\n  iter 0: %q\n  iter %d: %q", first, i, line)
+			t.Fatalf("active-bots line is non-deterministic:\n  iter 0: %q\n  iter %d: %q", first, i, line)
 		}
 	}
 	if !strings.Contains(first, "@alpha, @mango, @zebra") {
-		t.Fatalf("active-agents line not alphabetically sorted: %q", first)
+		t.Fatalf("active-bots line not alphabetically sorted: %q", first)
 	}
 }
 
 func TestEngineerPromptMentionsGHPRCreate(t *testing.T) {
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "eng", Name: "Engineer", Expertise: []string{"backend", "golang"}},
 			},
 		},
 	}
 	prompt := l.buildPrompt("eng")
 	if !strings.Contains(prompt, "gh pr create") {
-		t.Fatal("engineer prompt must instruct the agent to run `gh pr create` via bash")
+		t.Fatal("engineer prompt must instruct the bot to run `gh pr create` via bash")
 	}
 	if !strings.Contains(prompt, "https://github.com") {
 		t.Fatal("engineer prompt must require pasting the returned GitHub URL into the channel")

@@ -58,6 +58,17 @@ vi.mock("../../api/client", async () => {
   };
 });
 
+// The real chat pane reaches useChannelSlug -> useMatches, which needs a
+// TanStack Router context this suite does not mount. Stub it: what these
+// tests assert is which BRANCH TaskDocument takes — chat pane vs the
+// no-conversation empty state — not what the pane renders inside. Keeps the
+// real component's data-testid so the assertions stay honest.
+vi.mock("./TaskChannelChat", () => ({
+  TaskChannelChat: ({ channel }: { channel: string }) => (
+    <div data-testid="task-channel-chat" data-channel={channel} />
+  ),
+}));
+
 // ── Fixtures ───────────────────────────────────────────────────────────
 
 const BASE_DOC: TaskDocumentType = {
@@ -116,13 +127,18 @@ function renderDoc(
 
 // ── Suite ──────────────────────────────────────────────────────────────
 
-// FIXME(v3-mvp): full-file vitest run hangs the worker at module-load
-// phase. Filtered -t runs (and the normalizeTaskDocument describe in
-// isolation) work fine in <1s. Root cause not yet isolated — likely a
-// transitive timer/SSE handle that survives teardown despite mocks for
-// EventSource, getTaskActivity, getSubTasks, and useOfficeMembers.
-// Tracking issue: TODO. Re-enable once the trigger is identified.
-describe.skip("<TaskDocument>", () => {
+// This describe (and "— parked Start" below) carried a FIXME and a
+// describe.skip: the full file hung the vitest worker, suspected to be "a
+// transitive timer/SSE handle that survives teardown". Both are un-skipped
+// now and the file runs green in under a second.
+//
+// The trigger looks to have been the real TaskChannelChat: mounting it pulls
+// in MessageFeed + Composer and their polling/SSE, which the existing mocks
+// for EventSource / getTaskActivity / getSubTasks / useOfficeMembers did not
+// cover. Stubbing TaskChannelChat (see above) removes that whole subtree, and
+// with it the hang. If this file ever hangs again, that mock is the first
+// thing to check.
+describe("<TaskDocument>", () => {
   beforeEach(() => {
     // Clear sessionStorage to keep tests independent.
     try {
@@ -217,14 +233,33 @@ describe("normalizeTaskDocument", () => {
     expect(doc.description).toBe("Importer reads the CSV and writes contacts.");
   });
 
-  it("rejects task documents without a channel", () => {
-    expect(() =>
-      normalizeTaskDocument({
-        taskId: "task-5",
-        title: "Pull unread emails",
-        lifecycleState: "drafting",
-      }),
-    ).toThrow("task channel is missing");
+  it("accepts a task with no channel instead of throwing", () => {
+    // Inverted deliberately. This used to assert a throw, and because the
+    // throw ran inside the React Query fetcher it did not crash the app — it
+    // rendered TaskDocumentError ("Could not load task / task channel is
+    // missing") with a Retry that could never succeed. A task with no
+    // conversation home is an unowned task, not a load failure.
+    const doc = normalizeTaskDocument({
+      taskId: "task-5",
+      title: "Pull unread emails",
+      lifecycleState: "drafting",
+    });
+
+    expect(doc.channel).toBeUndefined();
+    expect(doc.taskId).toBe("task-5");
+    expect(doc.title).toBe("Pull unread emails");
+  });
+
+  it("treats a whitespace-only channel as no channel", () => {
+    // "   " is truthy, so a permissive check would have carried it into a
+    // message query as a channel slug.
+    const doc = normalizeTaskDocument({
+      taskId: "task-8",
+      lifecycleState: "running",
+      task: { id: "task-8", channel: "   ", title: "Blank channel" },
+    });
+
+    expect(doc.channel).toBeUndefined();
   });
 
   it("normalizes the structured definition from the wrapped task record", () => {
@@ -272,8 +307,7 @@ describe("normalizeTaskDocument", () => {
 
 // ── Parked Start button ───────────────────────────────────────────────
 
-// FIXME(v3-mvp): same hang as <TaskDocument> above. Re-enable when fixed.
-describe.skip("<TaskDocument> — parked Start", () => {
+describe("<TaskDocument> — parked Start", () => {
   beforeEach(() => {
     try {
       sessionStorage.clear();
@@ -327,8 +361,8 @@ describe.skip("<TaskDocument> — parked Start", () => {
 
 // ── StartParkedTaskButton (ceremony retirement regression) ──────────────
 //
-// Pure component — tested directly (not via the full <TaskDocument>
-// mount, which is describe.skip'd above pending the vitest hang FIXME).
+// Pure component — tested directly rather than through a full <TaskDocument>
+// mount, because the assertions here are about the button itself.
 // Pins the retirement of the Approve & Start ceremony: the start button
 // reads "Start"-family copy and posts the decision approve on click; the
 // old "Waiting on you — press Approve & Start" chat hint is gone.
@@ -366,5 +400,61 @@ describe("<StartParkedTaskButton>", () => {
         "approve",
       ),
     );
+  });
+});
+
+// A task with no conversation home must render an ordinary empty state, not
+// the "Could not load task" error card with its unwinnable Retry. Kept in its
+// own describe rather than the skipped <TaskDocument> one above, which is
+// disabled for an unrelated worker-teardown hang.
+describe("<TaskDocument> with no conversation home", () => {
+  const NO_CHANNEL_DOC: TaskDocumentType = {
+    ...BASE_DOC,
+    taskId: "task-homeless",
+    channel: undefined,
+    ownerSlug: undefined,
+  };
+
+  it("renders the no-conversation empty state, not an error", () => {
+    renderDoc(NO_CHANNEL_DOC);
+
+    expect(screen.getByTestId("issue-doc-no-conversation")).toBeInTheDocument();
+    // The bug: this rendered TaskDocumentError with a Retry that could never
+    // succeed, so the whole detail page was dead.
+    expect(
+      screen.queryByTestId("issue-document-error"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/task channel is missing/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("says what to do about it, and never names #general", () => {
+    renderDoc(NO_CHANNEL_DOC);
+
+    const panel = screen.getByTestId("issue-doc-no-conversation");
+    expect(panel).toHaveTextContent(/no owner yet/i);
+    expect(panel).toHaveTextContent(/assign/i);
+    expect(panel.textContent ?? "").not.toMatch(/general/i);
+  });
+
+  it("does not render a chat pane for a task with nowhere to talk", () => {
+    renderDoc(NO_CHANNEL_DOC);
+    expect(screen.queryByTestId("task-channel-chat")).not.toBeInTheDocument();
+  });
+
+  it("still renders the task header so the page is usable", () => {
+    renderDoc(NO_CHANNEL_DOC);
+    expect(screen.getByTestId("issue-document")).toBeInTheDocument();
+    expect(screen.getByText("Stripe webhook handler")).toBeInTheDocument();
+  });
+
+  it("leaves a task WITH a channel showing its chat, unchanged", () => {
+    renderDoc(BASE_DOC);
+
+    expect(screen.getByTestId("task-channel-chat")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("issue-doc-no-conversation"),
+    ).not.toBeInTheDocument();
   });
 });

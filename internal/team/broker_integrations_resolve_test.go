@@ -27,7 +27,16 @@ func decodeResolve(t *testing.T, resp *http.Response) integrationResolveResponse
 // decision can guide setup), never proceeds blind.
 func TestResolveUnconfiguredRoutesToConnect(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	b := NewBrokerAt(filepath.Join(t.TempDir(), "state.json"))
+	// Hermetic: these tests assert the UNCONFIGURED catalog, so they must not
+	// inherit a composio credential from the developer's environment or from
+	// another test's t.Setenv window. Observed failing in the full-package run
+	// while passing in isolation, with gmail reported "connected" -- the
+	// signature of ambient config leaking in.
+	t.Setenv("COMPOSIO_API_KEY", "")
+	t.Setenv("COMPOSIO_USER_ID", "")
+	t.Setenv("COMPOSIO_INSTALL_DIR", "")
+	t.Setenv("COMPOSIO_CACHE_DIR", "")
+	b := newBrokerWithTeamRoom(filepath.Join(t.TempDir(), "state.json"))
 	srv := newIntegrationsTestServer(t, b)
 	defer srv.Close()
 
@@ -53,7 +62,7 @@ func TestResolveConnectedApproveAndReadOnlyProceed(t *testing.T) {
 	t.Setenv("HOME", tmp)
 	t.Setenv("WUPHF_RUNTIME_HOME", tmp)
 	t.Setenv("WUPHF_COMPOSIO_API_KEY", "cmp_test")
-	t.Setenv("WUPHF_COMPOSIO_USER_ID", "ceo@example.com")
+	t.Setenv("WUPHF_COMPOSIO_USER_ID", "cos@example.com")
 
 	composioMux := http.NewServeMux()
 	composioMux.HandleFunc("/connected_accounts", func(w http.ResponseWriter, _ *http.Request) {
@@ -76,7 +85,7 @@ func TestResolveConnectedApproveAndReadOnlyProceed(t *testing.T) {
 	t.Setenv("WUPHF_COMPOSIO_BASE_URL", composioServer.URL)
 
 	statePath := filepath.Join(t.TempDir(), "state.json")
-	b := NewBrokerAt(statePath)
+	b := newBrokerWithTeamRoom(statePath)
 	srv := newIntegrationsTestServer(t, b)
 	defer srv.Close()
 
@@ -122,7 +131,7 @@ func TestResolveConnectedApproveAndReadOnlyProceed(t *testing.T) {
 	if entry, ok := b.lookupConnectionRegistry("gmail"); !ok || entry.State != "connected" || entry.ConnectionKey != "ca_123" {
 		t.Fatalf("registry not updated from probe: ok=%v entry=%+v", ok, entry)
 	}
-	b2 := NewBrokerAt(statePath)
+	b2 := newBrokerWithTeamRoom(statePath)
 	if err := b2.loadState(); err != nil {
 		t.Fatalf("loadState: %v", err)
 	}
@@ -132,6 +141,10 @@ func TestResolveConnectedApproveAndReadOnlyProceed(t *testing.T) {
 }
 
 func TestMaskSensitivePayload(t *testing.T) {
+	t.Setenv("COMPOSIO_API_KEY", "")
+	t.Setenv("COMPOSIO_USER_ID", "")
+	t.Setenv("COMPOSIO_INSTALL_DIR", "")
+	t.Setenv("COMPOSIO_CACHE_DIR", "")
 	in := map[string]any{
 		"to":                   "lead@acme.com",
 		"token":                "secret-1",
@@ -186,7 +199,16 @@ func TestMaskSensitivePayload(t *testing.T) {
 
 func TestResolveRejectsMissingFields(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	b := NewBrokerAt(filepath.Join(t.TempDir(), "state.json"))
+	// Hermetic: these tests assert the UNCONFIGURED catalog, so they must not
+	// inherit a composio credential from the developer's environment or from
+	// another test's t.Setenv window. Observed failing in the full-package run
+	// while passing in isolation, with gmail reported "connected" -- the
+	// signature of ambient config leaking in.
+	t.Setenv("COMPOSIO_API_KEY", "")
+	t.Setenv("COMPOSIO_USER_ID", "")
+	t.Setenv("COMPOSIO_INSTALL_DIR", "")
+	t.Setenv("COMPOSIO_CACHE_DIR", "")
+	b := newBrokerWithTeamRoom(filepath.Join(t.TempDir(), "state.json"))
 	srv := newIntegrationsTestServer(t, b)
 	defer srv.Close()
 

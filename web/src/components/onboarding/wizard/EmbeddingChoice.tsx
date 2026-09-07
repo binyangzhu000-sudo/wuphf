@@ -1,7 +1,7 @@
 /**
  * EmbeddingChoice — the company-brain step's "Power the company brain" section.
  *
- * The company brain holds the rules agents run on, so this is where the user
+ * The company brain holds the rules bots run on, so this is where the user
  * picks how it recalls a rule: by meaning (embeddings) or by exact word (keyword
  * search). The backend's EnsureBrain auto-selects in priority order — an OpenAI
  * key, then a local Ollama model, then keyword — so this section is mostly
@@ -31,7 +31,27 @@ import { ONBOARDING_EMBEDDING_COPY as COPY } from "./wizardSteps";
 /** How often to re-read the options while an install is running. */
 const INSTALL_POLL_MS = 2_000;
 /** Hard ceiling on the poll so a wedged install never loops forever (~6 min). */
-const INSTALL_POLL_CAP_MS = 6 * 60 * 1_000;
+// Must OUTLAST the broker's install budget (12 minutes, installTimeout in
+// broker_knowledge.go) — a shorter cap fabricated a client-side failure
+// while the real install was still running (2026-08-16 audit).
+/** The backend streams BOTH curated step headlines ("Installing Bun...")
+ * and raw installer stdout through the same progress field. Only the
+ * curated lines belong in the headline slot — raw bootstrap output reads
+ * as developer exhaust to a first-run operator (2026-08-16 audit). */
+function curatedProgressLine(progress: string): string {
+  const line = progress.trim();
+  if (!line) return "";
+  if (
+    /^(Installing|Applying|Preparing|Starting|Checking|Downloading|Setting up|Finishing)\b/.test(
+      line,
+    )
+  ) {
+    return line;
+  }
+  return "";
+}
+
+const INSTALL_POLL_CAP_MS = 13 * 60 * 1_000;
 
 interface EmbeddingChoiceViewProps {
   /** The current embedding options (drives every state). */
@@ -54,6 +74,11 @@ interface EmbeddingChoiceViewProps {
   installBusy: boolean;
   /** Kick off (or retry) the gbrain install. */
   onInstallGbrain: () => void;
+  /** The optional upgrade machinery is unfolded (auto-unfolds when it
+   * already matters: key saved, local path picked, install active). */
+  expanded: boolean;
+  /** Unfold the upgrade machinery. */
+  onExpand: () => void;
 }
 
 /** The Ollama setup command, using the broker's model id when it gave one. */
@@ -123,8 +148,14 @@ function InstallPanel({
             className="onboarding-embedding-install-progress"
             data-testid="onboarding-embedding-install-progress"
           >
-            {progress.trim() || COPY.install.progressPending}
+            {curatedProgressLine(progress) || COPY.install.progressPending}
           </p>
+          {progress.trim() && !curatedProgressLine(progress) ? (
+            <details className="onboarding-embedding-install-raw">
+              <summary>Show technical detail</summary>
+              <pre>{progress.trim()}</pre>
+            </details>
+          ) : null}
           <p className="onboarding-embedding-install-hint">
             {COPY.install.installingHint}
           </p>
@@ -159,8 +190,14 @@ function InstallPanel({
             role="alert"
             data-testid="onboarding-embedding-install-error"
           >
-            {error.trim() || COPY.install.errorFallback}
+            {COPY.install.errorFallback}
           </p>
+          {error.trim() ? (
+            <details className="onboarding-embedding-install-raw">
+              <summary>Show technical detail</summary>
+              <pre>{error.trim()}</pre>
+            </details>
+          ) : null}
           <p className="onboarding-embedding-install-hint">
             {COPY.install.keywordFallback}
           </p>
@@ -289,6 +326,8 @@ export function EmbeddingChoiceView({
   onChooseOllama,
   installBusy,
   onInstallGbrain,
+  expanded,
+  onExpand,
 }: EmbeddingChoiceViewProps) {
   const resolved = resolveEmbedder(options);
   const keySet = resolved === "openai";
@@ -298,6 +337,12 @@ export function EmbeddingChoiceView({
       : resolved === "ollama"
         ? COPY.statusOllama
         : COPY.statusKeyword;
+
+  // Auto-unfold when the choice already matters: a key is saved, the local
+  // path was picked, or an install is running/errored (its progress must
+  // never hide).
+  const showBody =
+    expanded || keySet || ollamaChosen || options.install_state !== "idle";
 
   const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -338,9 +383,24 @@ export function EmbeddingChoiceView({
         </p>
       </div>
 
-      <p className="onboarding-embedding-note">{COPY.note}</p>
+      {showBody ? (
+        <p className="onboarding-embedding-note">{COPY.note}</p>
+      ) : (
+        // Activation default: keyword search is ON and stated in the status
+        // line above. The upgrade machinery only unfolds on request — a
+        // fresh operator should not weigh embedders before seeing anything
+        // work (2026-08-16 audit, founder-approved).
+        <button
+          type="button"
+          className="onboarding-embedding-expand"
+          onClick={onExpand}
+          data-testid="onboarding-embedding-expand"
+        >
+          Improve recall (optional)
+        </button>
+      )}
 
-      {keySet ? (
+      {showBody && keySet ? (
         <p
           className="onboarding-embedding-success"
           data-testid="onboarding-embedding-success"
@@ -348,7 +408,8 @@ export function EmbeddingChoiceView({
           <CheckMark />
           {COPY.openaiSet}
         </p>
-      ) : (
+      ) : null}
+      {showBody && !keySet ? (
         <>
           <form className="onboarding-embedding-key" onSubmit={onSubmit}>
             <div className="onboarding-embedding-key-head">
@@ -412,7 +473,7 @@ export function EmbeddingChoiceView({
             />
           ) : null}
         </>
-      )}
+      ) : null}
     </section>
   );
 }
@@ -429,6 +490,7 @@ export function EmbeddingChoice() {
     EMBEDDING_OPTIONS_FALLBACK,
   );
   const [keyValue, setKeyValue] = useState("");
+  const [expanded, setExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [ollamaChosen, setOllamaChosen] = useState(false);
@@ -518,6 +580,8 @@ export function EmbeddingChoice() {
       onChooseOllama={onChooseOllama}
       installBusy={installBusy}
       onInstallGbrain={onInstallGbrain}
+      expanded={expanded}
+      onExpand={() => setExpanded(true)}
     />
   );
 }

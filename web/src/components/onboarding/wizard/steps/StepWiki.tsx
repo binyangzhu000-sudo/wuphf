@@ -1,17 +1,17 @@
 /**
- * StepWiki — wizard step 02, "Your company brain."
+ * StepWiki — wizard step 02, "Your knowledge base."
  *
- * Explains the company brain through the RevOps lens: it holds the operator's
- * CRM rules and playbooks (tiering, deal stages, dedupe policy), and agents
- * read them as first-class context before they touch a record.
+ * Explains the shared brain through the RevOps lens: the wiki holds the
+ * operator's CRM rules and playbooks (tiering, deal stages, dedupe policy),
+ * and bots read them as first-class context before they touch a record.
  *
- * The stage visual is a rendered clip (web/public/media/onboarding/
- * knowledge-base.gif): a "wuphf · company brain" window where the playbook
- * pages light up as they are captured. The clip is a self-contained product
- * window, so it reads correctly on every onboarding page theme.
+ * The stage visual is a rendered Remotion clip (web/public/media/onboarding/
+ * knowledge-base.gif): a "gawkbot · wiki / revops" window where the RevOps
+ * playbooks light up and @revops reads them. The clip is a self-contained
+ * product window, so it reads correctly on every onboarding page theme.
  *
  * Informational step plus the one optional input on this page: the
- * "Power the company brain" section, where the user can hand the brain an
+ * "Power semantic memory" section, where the user can hand the shared brain an
  * OpenAI key (the recommended embedder), see the local Ollama alternative, or
  * stay on the no-setup keyword default. Advancing is never gated on it. Copy
  * from ONBOARDING_WIZARD_COPY.wiki and ONBOARDING_EMBEDDING_COPY.
@@ -39,8 +39,8 @@ export function StepWiki({ active }: OnboardingWizardStepProps) {
         </h2>
         <p className="office-tour-slide-body">{COPY.body}</p>
         <p className="office-tour-slide-caption">
-          Your agents read these rules before they merge an account, route a
-          lead, or close a stale opportunity.
+          Your bots read these rules before they merge an account, route a lead,
+          or close a stale opportunity.
         </p>
 
         <EmbeddingChoice />
@@ -57,7 +57,7 @@ export function StepWiki({ active }: OnboardingWizardStepProps) {
             src="/media/onboarding/knowledge-base.gif"
             width={800}
             height={680}
-            alt="A company brain: CRM hygiene playbook, account tiering, deal stage definitions, lead routing rules, duplicate merge policy, and stale opportunity thresholds, each captured once for every agent to read before acting."
+            alt="A RevOps knowledge base: CRM hygiene playbook, account tiering, deal stage definitions, lead routing rules, duplicate merge policy, and stale opportunity thresholds, with a bot reading the playbook before acting."
             loading="lazy"
             decoding="async"
           />

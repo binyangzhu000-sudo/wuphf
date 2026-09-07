@@ -115,7 +115,9 @@ async function fetchWithTimeout(
     return await fetch(url, { signal: controller.signal });
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
-      throw new Error(`Timed out connecting to broker after ${timeoutMs}ms`);
+      throw new Error(
+        "Timed out connecting to your workspace. Give it a moment and try again.",
+      );
     }
     throw err;
   } finally {
@@ -168,7 +170,9 @@ export function getRequestSignal(options?: GetOptions): AbortSignal {
 
 function describeGetError(err: unknown): Error | null {
   if (err instanceof Error && err.name === "TimeoutError") {
-    return new Error("Broker not responding — request timed out.");
+    return new Error(
+      "Your workspace is not responding — the request timed out.",
+    );
   }
   return null;
 }
@@ -501,7 +505,7 @@ export interface Message {
   content: string;
   /**
    * Server-assigned message kind. Empty/absent for plain chat. Known kinds:
-   *  - "agent_issue"        legacy agent-authored issue banner
+   *  - "agent_issue"        legacy bot-authored issue banner
    *  - "system_auth_error"  system-authored provider-auth failure card (#933)
    *  - "ceo_*"              onboarding cards (form_field, chip_row, etc.)
    * The SPA's MessageBubble dispatches on this field to pick a renderer.
@@ -522,7 +526,22 @@ export interface Message {
   reply_to?: string;
   thread_id?: string;
   thread_count?: number;
-  reactions?: Record<string, string[]>;
+  /**
+   * Two shapes reach the client and both are real.
+   *
+   * The map form is `{ "👀": ["cos", "eng"] }` — emoji to the slugs that
+   * reacted. The array form is a pre-counted `[{ emoji, count }]`. MessageBubble
+   * has always handled both, branching on Array.isArray and casting, because
+   * the cast was the only way past a type that claimed only one of them existed.
+   *
+   * The type was the wrong half of that disagreement, not the code. A cast that
+   * exists to work around a declaration is a note saying the declaration is
+   * lying; widening it removes the cast and lets a test construct either shape
+   * without pretending.
+   */
+  reactions?:
+    | Record<string, string[]>
+    | Array<{ emoji: string; count?: number; reacted?: boolean }>;
   tagged?: string[];
   usage?: TokenUsage;
 }
@@ -536,13 +555,42 @@ export interface TokenUsage {
   cost_usd?: number;
 }
 
+/**
+ * Assert a channel was actually named, and return it trimmed.
+ *
+ * Every call below used to read `channel || "general"`. That was survivable
+ * while a shared room existed; now it addresses a channel that was retired, so
+ * a write lands nowhere and a read comes back empty and indistinguishable from
+ * "you have no messages". Neither failure is visible to the user, which is the
+ * whole problem.
+ *
+ * Throwing is deliberate. There is no default room left to pick, and inventing
+ * one is the leak the retirement exists to close — so a caller that reaches
+ * here without a channel has a bug, and it should surface as a query error the
+ * moment it happens rather than as quiet emptiness weeks later. Callers that
+ * legitimately have no channel yet must not call at all (guard the hook's
+ * `enabled`, or early-return) rather than pass "".
+ */
+function requireChannel(
+  channel: string | undefined | null,
+  op: string,
+): string {
+  const trimmed = (channel ?? "").trim();
+  if (!trimmed) {
+    throw new Error(
+      `${op}: channel is required — there is no shared room to fall back to. Name the bot's DM.`,
+    );
+  }
+  return trimmed;
+}
+
 export function getMessages(
   channel: string,
   sinceId?: string | null,
   limit = 50,
 ) {
   return get<{ messages: Message[] }>("/messages", {
-    channel: channel || "general",
+    channel: requireChannel(channel, "getMessages"),
     viewer_slug: "human",
     since_id: sinceId ?? null,
     limit,
@@ -557,7 +605,7 @@ export function postMessage(
 ) {
   const body: Record<string, string | string[]> = {
     from: "you",
-    channel: channel || "general",
+    channel: requireChannel(channel, "postMessage"),
     content,
   };
   if (replyTo) body.reply_to = replyTo;
@@ -571,7 +619,7 @@ export function postMessage(
 
 export function getThreadMessages(channel: string, threadId: string) {
   return get<{ messages: Message[] }>("/messages", {
-    channel: channel || "general",
+    channel: requireChannel(channel, "getThreadMessages"),
     thread_id: threadId,
     viewer_slug: "human",
     limit: 50,
@@ -582,7 +630,7 @@ export function toggleReaction(msgId: string, emoji: string, channel: string) {
   return post("/messages/react", {
     message_id: msgId,
     emoji,
-    channel: channel || "general",
+    channel: requireChannel(channel, "toggleReaction"),
   });
 }
 
@@ -612,18 +660,18 @@ export function fetchCommands() {
 // ── Members ──
 
 export interface ProviderBinding {
-  // kind tags the runtime or gateway for this agent. Empty string means
+  // kind tags the runtime or gateway for this bot. Empty string means
   // "inherit from global default". Use IsGatewayKind on a Kind to decide
   // whether to render the runtime picker (LLM kinds) or a "Managed by
-  // <Gateway>" badge (gateway kinds) in the agent profile.
+  // <Gateway>" badge (gateway kinds) in the bot profile.
   kind?: LLMProvider | "";
   // model is the runtime-specific model identifier. Free-form on the wire —
   // validated by each provider implementation, not at the schema layer.
   // Common shapes: "claude-3-5-sonnet-latest", "gpt-4o", "llama3.1:8b".
   model?: string;
   // openclaw is populated only when kind === "openclaw" — it carries the
-  // gateway-side session key + agent id. Set by the OpenClaw bridge bootstrap
-  // path, not by the per-agent runtime picker.
+  // gateway-side session key + bot id. Set by the OpenClaw bridge bootstrap
+  // path, not by the per-bot runtime picker.
   openclaw?: {
     session_key?: string;
     agent_id?: string;
@@ -631,7 +679,7 @@ export interface ProviderBinding {
 }
 
 // Helper for UI code: returns true when binding.kind is a gateway-controlled
-// tag. Per-agent runtime pickers and the AgentWizard should swap their UI to
+// tag. Per-bot runtime pickers and the BotWizard should swap their UI to
 // a read-only "Managed by <Gateway>" pill when this returns true.
 export function isGatewayBinding(
   binding: ProviderBinding | string | undefined,
@@ -663,7 +711,7 @@ export interface OfficeMember {
   /**
    * Transport-presence flag: true when an adapter session is currently live for
    * this member. Distinct from `status`/`activity` (which reflect "is the
-   * agent processing right now") — `online` reflects "is the adapter
+   * bot processing right now") — `online` reflects "is the adapter
    * reachable at all". Always present (no omitempty on the Go side) so
    * "false" and "missing field" cannot be confused.
    */
@@ -675,6 +723,13 @@ export interface OfficeMember {
    * and not render a "last seen" line.
    */
   last_seen_at?: string;
+  /**
+   * Where this bot's computer runs. "" (or absent) means auto: sandbox when
+   * a container runtime exists, else off. See docs/specs/gawkbot-bot-computers.md.
+   */
+  computer?: "" | "off" | "sandbox" | "cloud";
+  /** Cloud provider for `computer: "cloud"`. "" means box. */
+  cloud_backend?: "" | "box";
 }
 
 /**
@@ -696,7 +751,7 @@ export function getOfficeMembers() {
   return get<OfficeMembersResponse>("/office-members");
 }
 
-export interface GeneratedAgentTemplate {
+export interface GeneratedBotTemplate {
   slug?: string;
   name?: string;
   role?: string;
@@ -707,13 +762,13 @@ export interface GeneratedAgentTemplate {
   model?: string;
 }
 
-export function generateAgent(prompt: string) {
-  return post<GeneratedAgentTemplate>("/office-members/generate", { prompt });
+export function generateBot(prompt: string) {
+  return post<GeneratedBotTemplate>("/office-members/generate", { prompt });
 }
 
 export function getMembers(channel: string) {
   return get<{ members: OfficeMember[] }>("/members", {
-    channel: channel || "general",
+    channel: requireChannel(channel, "getMembers"),
     viewer_slug: "human",
   });
 }
@@ -791,7 +846,7 @@ export interface InterviewMetadata {
   [key: string]: unknown;
 }
 
-export interface AgentRequest {
+export interface BotRequest {
   id: string;
   from: string;
   question: string;
@@ -816,7 +871,7 @@ export interface AgentRequest {
   redacted?: boolean;
   redaction_count?: number;
   redaction_reasons?: string[];
-  /** Issue/task id this request belongs to, when the owner agent
+  /** Issue/task id this request belongs to, when the owner bot
    * filed the request from inside an owned Issue. The Inbox card
    * renders a breadcrumb when set so the human sees the parent
    * Issue at a glance. */
@@ -857,8 +912,8 @@ export interface ActionApprovalPayload {
 }
 
 export function getRequests(channel: string) {
-  return get<{ requests: AgentRequest[] }>("/requests", {
-    channel: channel || "general",
+  return get<{ requests: BotRequest[] }>("/requests", {
+    channel: requireChannel(channel, "getRequests"),
     viewer_slug: "human",
   });
 }
@@ -867,7 +922,7 @@ export function getRequests(channel: string) {
 // global overlay + inline interview bar need every blocking request the human
 // can answer, not just the ones in the current channel.
 export function getAllRequests() {
-  return get<{ requests: AgentRequest[] }>("/requests", {
+  return get<{ requests: BotRequest[] }>("/requests", {
     scope: "all",
     viewer_slug: "human",
   });
@@ -912,7 +967,7 @@ export interface CreateActionGrantInput {
 }
 
 // Mints a scoped grant so the resolver auto-approves exactly this
-// (agent, platform, action_id) without re-prompting. Backs the approval
+// (bot, platform, action_id) without re-prompting. Backs the approval
 // modal's "Approve & always allow" button (deterministic-integrations slice 5b).
 export function createActionGrant(input: CreateActionGrantInput) {
   return trackOn(
@@ -1010,7 +1065,7 @@ export * from "./skills";
 // ── Memory ──
 
 export function getMemory(channel: string) {
-  return get("/memory", { channel: channel || "general" });
+  return get("/memory", { channel: requireChannel(channel, "getMemory") });
 }
 
 export function setMemory(namespace: string, key: string, value: string) {
@@ -1020,8 +1075,8 @@ export function setMemory(namespace: string, key: string, value: string) {
 // ── Config (Settings) ──
 
 // LLMRuntimeKind names a directly-dispatchable LLM runtime — the kinds that
-// belong in any runtime picker (Settings default-runtime, AgentProfilePanel
-// Runtime section, AgentWizard provider field). Mirrors the non-gateway
+// belong in any runtime picker (Settings default-runtime, BotProfilePanel
+// Runtime section, BotWizard provider field). Mirrors the non-gateway
 // subset returned by provider.LLMProviderKinds in the Go layer.
 export type LLMRuntimeKind =
   | "claude-code"
@@ -1033,13 +1088,13 @@ export type LLMRuntimeKind =
   | "exo";
 
 // GatewayKind names a runtime that is reached through an integration gateway
-// rather than dispatched directly. Gateway-bound agents are imported via the
+// rather than dispatched directly. Gateway-bound bots are imported via the
 // Integrations app (OpenClaw / Hermes) and never appear in runtime pickers;
-// they receive a "Managed by <Gateway>" badge on the agent profile.
+// they receive a "Managed by <Gateway>" badge on the bot profile.
 export type GatewayKind = "openclaw" | "openclaw-http" | "hermes-agent";
 
 // LLMProvider is the union of both — used wherever a value carries either an
-// LLM runtime or a gateway tag (per-agent ProviderBinding.Kind on the wire,
+// LLM runtime or a gateway tag (per-bot ProviderBinding.Kind on the wire,
 // ConfigSnapshot.llm_provider for backward compatibility). New UI code should
 // prefer LLMRuntimeKind / GatewayKind and only widen to LLMProvider at the
 // raw-wire boundary.
@@ -1123,6 +1178,8 @@ export interface ConfigSnapshot {
   telegram_token_set?: boolean;
   openclaw_token_set?: boolean;
   openclaw_gateway_url?: string;
+  // ascii.dev Box key for cloud bot computers.
+  box_key_set?: boolean;
   // Product-analytics consent (PostHog). Both default true. `analytics_configured`
   // reports whether the broker injects a key; the frontend ORs it with its own
   // build-time key to decide whether the toggles are meaningful to show.
@@ -1165,6 +1222,8 @@ export type ConfigUpdate = Partial<{
   telegram_bot_token: string;
   openclaw_token: string;
   openclaw_gateway_url: string;
+  // ascii.dev Box key; blank keeps the existing key.
+  box_api_key: string;
   // Product-analytics consent toggles.
   analytics_telemetry_enabled: boolean;
   analytics_session_recording_enabled: boolean;

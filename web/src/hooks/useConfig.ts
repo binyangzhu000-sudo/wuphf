@@ -24,7 +24,7 @@ function useConfigSnapshot(): ConfigSnapshot | undefined {
 
 /**
  * Returns the install-wide default harness kind, used to render the avatar
- * badge for agents that have no explicit provider binding.
+ * badge for bots that have no explicit provider binding.
  */
 export function useDefaultHarness(): HarnessKind {
   const cfg = useConfigSnapshot();
@@ -37,7 +37,7 @@ export function useDefaultHarness(): HarnessKind {
 /**
  * Resolve the team-lead slug. Prefers the explicitly configured
  * `team_lead_slug` from /config; falls back to the first built-in office
- * member, then to "ceo" as a last-resort default.
+ * member, then to "cos" as a last-resort default.
  *
  * Mirrors `resolveLeadSlug` in components/messages/Composer.tsx so any
  * surface that needs to address the lead can do so without parsing config
@@ -53,7 +53,7 @@ export function resolveLeadSlug(
     (m) => m.built_in && m.slug && m.slug !== "human" && m.slug !== "you",
   );
   if (builtin?.slug) return builtin.slug;
-  return "ceo";
+  return "cos";
 }
 
 /**

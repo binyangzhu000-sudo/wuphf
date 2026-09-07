@@ -16,7 +16,7 @@ import (
 
 	"go.uber.org/goleak"
 
-	"github.com/nex-crm/wuphf/internal/agent"
+	"github.com/nex-crm/wuphf/internal/bot"
 	"github.com/nex-crm/wuphf/internal/gitexec"
 )
 
@@ -126,7 +126,7 @@ func TestMain(m *testing.M) {
 // must opt in through this helper.
 func reloadedBroker(t *testing.T, b *Broker) *Broker {
 	t.Helper()
-	fresh := NewBrokerAt(b.statePath)
+	fresh := newBrokerWithTeamRoom(b.statePath)
 	if err := fresh.loadState(); err != nil {
 		t.Fatalf("loadState: %v", err)
 	}
@@ -175,7 +175,7 @@ func initUsableGitWorktree(t *testing.T, path string) {
 func TestBrokerPersistsAndReloadsState(t *testing.T) {
 	b := newTestBroker(t)
 	b.mu.Lock()
-	b.messages = []channelMessage{{ID: "msg-1", From: "ceo", Content: "Persist me", Timestamp: "2026-03-24T10:00:00Z"}}
+	b.messages = []channelMessage{{ID: "msg-1", From: "cos", Content: "Persist me", Timestamp: "2026-03-24T10:00:00Z"}}
 	b.counter = 1
 	if err := b.saveLocked(); err != nil {
 		b.mu.Unlock()
@@ -202,7 +202,7 @@ func TestBrokerPersistsAndReloadsState(t *testing.T) {
 func TestBrokerLoadsLastGoodSnapshotWhenPrimaryStateIsClobbered(t *testing.T) {
 	b := newTestBroker(t)
 	b.mu.Lock()
-	b.messages = []channelMessage{{ID: "msg-1", From: "human", Channel: "general", Content: "Run the consulting loop", Timestamp: "2026-04-16T00:00:00Z"}}
+	b.messages = []channelMessage{{ID: "msg-1", From: "human", Channel: "team", Content: "Run the consulting loop", Timestamp: "2026-04-16T00:00:00Z"}}
 	b.tasks = []teamTask{{ID: "task-1", Channel: "delivery", Title: "Create the client brief", Owner: "builder", status: "in_progress", ExecutionMode: "office", CreatedBy: "operator", CreatedAt: "2026-04-16T00:00:01Z", UpdatedAt: "2026-04-16T00:00:01Z"}}
 	b.actions = []officeActionLog{{ID: "act-1", Kind: "task_created", Channel: "delivery", Actor: "operator", Summary: "Create the client brief", RelatedID: "task-1", CreatedAt: "2026-04-16T00:00:01Z"}}
 	b.counter = 2
@@ -222,11 +222,11 @@ func TestBrokerLoadsLastGoodSnapshotWhenPrimaryStateIsClobbered(t *testing.T) {
 	clobbered.tasks = nil
 	clobbered.actions = nil
 	clobbered.channels = []teamChannel{
-		{Slug: "general", Name: "general", Members: []string{"ceo", "builder"}},
-		{Slug: "delivery", Name: "delivery", Members: []string{"ceo", "builder"}},
+		{Slug: "team", Name: "team", Members: []string{"cos", "builder"}},
+		{Slug: "delivery", Name: "delivery", Members: []string{"cos", "builder"}},
 	}
 	clobbered.members = []officeMember{
-		{Slug: "ceo", Name: "CEO"},
+		{Slug: "cos", Name: "CEO"},
 		{Slug: "builder", Name: "Builder"},
 	}
 	clobbered.counter = 0
@@ -241,7 +241,8 @@ func TestBrokerLoadsLastGoodSnapshotWhenPrimaryStateIsClobbered(t *testing.T) {
 	if snap, err := loadBrokerStateFile(b.stateSnapshotPath()); err != nil {
 		t.Fatalf("read snapshot: %v", err)
 	} else if len(snap.Messages) != 1 || len(snap.Tasks) != 1 || len(snap.Actions) != 1 {
-		t.Fatalf("unexpected snapshot contents: %+v", snap)
+		t.Fatalf("unexpected snapshot contents: messages=%d tasks=%d actions=%d skills=%d",
+			len(snap.Messages), len(snap.Tasks), len(snap.Actions), len(snap.Skills))
 	}
 
 	reloaded := reloadedBroker(t, b)
@@ -306,34 +307,35 @@ func TestBrokerBridgeEndpointRecordsVisibleBridge(t *testing.T) {
 	defer b.Stop()
 
 	base := fmt.Sprintf("http://%s", b.Addr())
-	createChannelBody, _ := json.Marshal(map[string]any{
-		"action":      "create",
-		"slug":        "launch",
-		"name":        "Launch",
-		"description": "Launch planning and messaging.",
-		"members":     []string{"pm", "cmo"},
-		"created_by":  "ceo",
+	// The target room comes from createChannelLocked, not POST /channels:
+	// named-channel create is retired at the handler (409), which left this
+	// test bridging into a channel that was never created and failing on the
+	// bridge's own "channel not found". The bridge endpoint — what this test is
+	// about — is not gated, and the rooms it bridges between still exist.
+	b.mu.Lock()
+	_, cerr := b.createChannelLocked(channelCreateInput{
+		Slug:        "launch",
+		Name:        "Launch",
+		Description: "Launch planning and messaging.",
+		Members:     []string{"pm", "cmo"},
+		CreatedBy:   "cos",
 	})
-	req, _ := http.NewRequest(http.MethodPost, base+"/channels", bytes.NewReader(createChannelBody))
+	b.mu.Unlock()
+	if cerr != nil {
+		t.Fatalf("create launch channel: %d %s", cerr.Code, cerr.Msg)
+	}
+
+	bridgeBody, _ := json.Marshal(map[string]any{
+		"actor":          "cos",
+		"source_channel": "team",
+		"target_channel": "launch",
+		"summary":        "Use the stronger product narrative from #team in this launch channel before drafting the landing page.",
+		"tagged":         []string{"cmo"},
+	})
+	req, _ := http.NewRequest(http.MethodPost, base+"/bridges", bytes.NewReader(bridgeBody))
 	req.Header.Set("Authorization", "Bearer "+b.Token())
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("create channel: %v", err)
-	}
-	resp.Body.Close()
-
-	bridgeBody, _ := json.Marshal(map[string]any{
-		"actor":          "ceo",
-		"source_channel": "general",
-		"target_channel": "launch",
-		"summary":        "Use the stronger product narrative from #general in this launch channel before drafting the landing page.",
-		"tagged":         []string{"cmo"},
-	})
-	req, _ = http.NewRequest(http.MethodPost, base+"/bridges", bytes.NewReader(bridgeBody))
-	req.Header.Set("Authorization", "Bearer "+b.Token())
-	req.Header.Set("Content-Type", "application/json")
-	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("bridge request: %v", err)
 	}
@@ -347,7 +349,7 @@ func TestBrokerBridgeEndpointRecordsVisibleBridge(t *testing.T) {
 	if len(messages) != 1 {
 		t.Fatalf("expected one bridge message in launch, got %d", len(messages))
 	}
-	if messages[0].Source != "ceo_bridge" || !strings.Contains(messages[0].Content, "#general") {
+	if messages[0].Source != "ceo_bridge" || !strings.Contains(messages[0].Content, "#team") {
 		t.Fatalf("unexpected bridge message: %+v", messages[0])
 	}
 	if got := len(b.Signals()); got != 1 {
@@ -363,10 +365,10 @@ func TestBrokerBridgeEndpointRecordsVisibleBridge(t *testing.T) {
 
 func TestHeadlessQueue_EmptyBeforePush(t *testing.T) {
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "eng", Name: "Engineer"},
 			},
 		},
@@ -381,17 +383,17 @@ func TestHeadlessQueue_EmptyBeforePush(t *testing.T) {
 	}
 
 	l.headless.mu.Lock()
-	ceoLen := len(l.headless.queues[headlessLane{slug: "ceo"}])
+	ceoLen := len(l.headless.queues[headlessLane{slug: "cos"}])
 	engLen := len(l.headless.queues[headlessLane{slug: "eng"}])
 	l.headless.mu.Unlock()
 
 	if ceoLen != 0 || engLen != 0 {
-		t.Fatalf("expected empty queues before any push, got ceo=%d eng=%d", ceoLen, engLen)
+		t.Fatalf("expected empty queues before any push, got cos=%d eng=%d", ceoLen, engLen)
 	}
 }
 
 // TestHeadlessQueue_PopulatedAfterEnqueue verifies that enqueueHeadlessCodexTurn
-// adds exactly one turn to the target agent's queue.
+// adds exactly one turn to the target bot's queue.
 func TestHeadlessQueue_PopulatedAfterEnqueue(t *testing.T) {
 	// Override headlessCodexRunTurn to be a no-op so no real process is started.
 	setHeadlessCodexRunTurnForTest(t, func(l *Launcher, ctx context.Context, slug, notification string, channel ...string) error {
@@ -402,10 +404,10 @@ func TestHeadlessQueue_PopulatedAfterEnqueue(t *testing.T) {
 	})
 
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "eng", Name: "Engineer"},
 			},
 		},
@@ -425,7 +427,7 @@ func TestHeadlessQueue_PopulatedAfterEnqueue(t *testing.T) {
 
 	l.headless.mu.Lock()
 	engLen := len(l.headless.queues[headlessLane{slug: "eng"}])
-	ceoLen := len(l.headless.queues[headlessLane{slug: "ceo"}])
+	ceoLen := len(l.headless.queues[headlessLane{slug: "cos"}])
 	engWorkerStarted := l.headless.workers[headlessLane{slug: "eng"}]
 	l.headless.mu.Unlock()
 
@@ -433,7 +435,7 @@ func TestHeadlessQueue_PopulatedAfterEnqueue(t *testing.T) {
 	// that is valid. What matters is that the queue was populated (worker started)
 	// and that CEO was NOT added to the queue (not triggered by a specialist enqueue).
 	if ceoLen != 0 {
-		t.Fatalf("expected ceo queue empty after enqueuing for eng, got %d", ceoLen)
+		t.Fatalf("expected cos queue empty after enqueuing for eng, got %d", ceoLen)
 	}
 	if !engWorkerStarted {
 		t.Fatalf("expected eng worker to be flagged as started after enqueue")
@@ -443,14 +445,14 @@ func TestHeadlessQueue_PopulatedAfterEnqueue(t *testing.T) {
 }
 
 // TestHeadlessQueue_NoTimerDrivenWakeup verifies that creating a Launcher and
-// waiting briefly does not populate any agent's queue — agents wake only on
+// waiting briefly does not populate any bot's queue — bots wake only on
 // explicit push (enqueue), never on a background timer.
 func TestHeadlessQueue_NoTimerDrivenWakeup(t *testing.T) {
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "eng", Name: "Engineer"},
 			},
 		},
@@ -485,4 +487,4 @@ func TestHeadlessQueue_NoTimerDrivenWakeup(t *testing.T) {
 // ensureDefaultOfficeMembersLocked must seed the full default manifest ONLY
 // when there are no existing members. Its prior behavior (append-any-missing-
 // default) was the source of the load-path leak: blueprint-seeded teams saw
-// ceo/planner/executor/reviewer re-appended on every broker Load.
+// cos/planner/executor/reviewer re-appended on every broker Load.

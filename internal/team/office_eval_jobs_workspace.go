@@ -3,7 +3,7 @@ package team
 // office_eval_jobs_workspace.go — the `workspace-isolation` eval job
 // (ICP-eval v3 round-2 fix family #3, V3-N5/V3-N6).
 //
-// The v3 live run had agents executing in the FOUNDER'S host git worktree
+// The v3 live run had bots executing in the FOUNDER'S host git worktree
 // (the broker process's launch cwd): the CEO wrote landing/index.html into
 // the host repo ([19:53], explaining the recurring "Git index lock"
 // contention), a Stop-response ran `git checkout HEAD` there and destroyed
@@ -14,12 +14,12 @@ package team
 //  (a) a dispatched turn for a task WITHOUT a worktree carries a
 //      working_directory inside the office runtime home — asserted on the
 //      queue's launch-param record, never the broker process cwd;
-//  (b) a chat-turn (no task) gets the per-agent scratch dir;
+//  (b) a chat-turn (no task) gets the per-bot scratch dir;
 //  (c) the J3 done-means-done chain end-to-end over HTTP: create with
 //      Sam's verbatim DoD phrasing → verification derived at create →
-//      the task lands running (creation is the authorization) → agent
+//      the task lands running (creation is the authorization) → bot
 //      complete WITHOUT the file → 409 verification_failed → deliverable
-//      created in the agent's working dir → complete succeeds → Verified
+//      created in the bot's working dir → complete succeeds → Verified
 //      visible on the task detail endpoint;
 //  (d) a Halt note's packet carries the do-not-revert instruction.
 
@@ -39,7 +39,7 @@ func evalJobWorkspaceIsolation(fx *officeEvalFixture, r *OfficeEvalReport) error
 	const job = "workspace-isolation"
 
 	// Pin the office runtime home to this job's scratch dir — the same env
-	// knob the live office launches with (WUPHF_RUNTIME_HOME) — so agent
+	// knob the live team launches with (WUPHF_RUNTIME_HOME) — so bot
 	// scratch dirs land in the fixture, never the developer's real home.
 	// Workers are stopped before the env is restored (defers run LIFO).
 	priorHome, hadHome := os.LookupEnv("WUPHF_RUNTIME_HOME")
@@ -70,7 +70,7 @@ func evalJobWorkspaceIsolation(fx *officeEvalFixture, r *OfficeEvalReport) error
 	createTask := func(title, details, owner string) (id, channel string, err error) {
 		status, raw, err := client.postJSON("/tasks", map[string]any{
 			"action": "create", "channel": "general", "title": title,
-			"details": details, "owner": owner, "created_by": "ceo",
+			"details": details, "owner": owner, "created_by": "cos",
 		})
 		if err != nil {
 			return "", "", fmt.Errorf("create %q: %w", title, err)
@@ -136,7 +136,7 @@ func evalJobWorkspaceIsolation(fx *officeEvalFixture, r *OfficeEvalReport) error
 	}
 	fx.launcher.sendTaskUpdate(
 		notificationTarget{Slug: "eng"},
-		officeActionLog{Kind: "task_updated", Actor: "ceo", Channel: aChannel, RelatedID: aID},
+		officeActionLog{Kind: "task_updated", Actor: "cos", Channel: aChannel, RelatedID: aID},
 		*aTask,
 		"Work packet for the launch brief.",
 	)
@@ -147,7 +147,7 @@ func evalJobWorkspaceIsolation(fx *officeEvalFixture, r *OfficeEvalReport) error
 			pathWithinRoot(aDir, runtimeHome) && aDir != processCwd,
 		fmt.Sprintf("worktree=%q working_dir=%q runtime_home=%q process_cwd=%q", aTask.WorktreePath, aDir, runtimeHome, processCwd), "")
 
-	// ── (b) chat turn (no task): per-agent scratch dir ─────────────────────
+	// ── (b) chat turn (no task): per-bot scratch dir ─────────────────────
 	fx.launcher.enqueueHeadlessCodexTurnRecord("eng", headlessCodexTurn{
 		Prompt:    "Quick question from the human in #general — no task attached.",
 		Channel:   "general",
@@ -156,7 +156,7 @@ func evalJobWorkspaceIsolation(fx *officeEvalFixture, r *OfficeEvalReport) error
 	awaitWake()
 	bDir := activeWorkspaceDir("")
 	wantScratch := normalizeHeadlessWorkspaceDir(filepath.Join(fx.scratchDir, ".wuphf", "agent-scratch", "eng"))
-	r.add(job, "chat turn (no task) runs in the agent's scratch dir under the runtime home",
+	r.add(job, "chat turn (no task) runs in the bot's scratch dir under the runtime home",
 		bDir != "" && bDir == wantScratch && pathWithinRoot(bDir, runtimeHome) && bDir != processCwd,
 		fmt.Sprintf("working_dir=%q want=%q process_cwd=%q", bDir, wantScratch, processCwd), "")
 	fx.launcher.stopHeadlessWorkers()
@@ -165,7 +165,7 @@ func evalJobWorkspaceIsolation(fx *officeEvalFixture, r *OfficeEvalReport) error
 	jID, jChannel, err := createTask(
 		"Build a single-page landing page for MeetingMind",
 		"Ship the MeetingMind landing page. Definition of done: a file landing/index.html exists. Don't tell me it's done unless that check passes.",
-		"ceo",
+		"cos",
 	)
 	if err != nil {
 		return err
@@ -178,13 +178,13 @@ func evalJobWorkspaceIsolation(fx *officeEvalFixture, r *OfficeEvalReport) error
 		derived, fmt.Sprintf("verification=%+v", created.Verification), "")
 
 	// No activation step: the create above landed the task running —
-	// the DoD gate is what stands between the agent and "done" now.
+	// the DoD gate is what stands between the bot and "done" now.
 
 	// Complete WITHOUT the deliverable: the DoD gate must refuse with a
 	// structured verification failure — not pass because a stale
 	// landing/index.html happens to exist in the broker process cwd.
 	missStatus, missBody, err := client.postJSON("/tasks", map[string]any{
-		"action": "complete", "id": jID, "channel": jChannel, "created_by": "ceo",
+		"action": "complete", "id": jID, "channel": jChannel, "created_by": "cos",
 	})
 	if err != nil {
 		return err
@@ -197,9 +197,9 @@ func evalJobWorkspaceIsolation(fx *officeEvalFixture, r *OfficeEvalReport) error
 		fmt.Sprintf("status=%d body=%s result=%+v", missStatus, truncate(missBody, 160), missTask.VerificationResult), "")
 
 	// Produce the deliverable where the owner's turns actually run: the
-	// agent scratch dir (the task has no worktree). This is the isolation
-	// contract — the gate must look at the agent's working dir.
-	deliverable := filepath.Join(agentScratchDir("ceo"), "landing", "index.html")
+	// bot scratch dir (the task has no worktree). This is the isolation
+	// contract — the gate must look at the bot's working dir.
+	deliverable := filepath.Join(botScratchDir("cos"), "landing", "index.html")
 	if err := os.MkdirAll(filepath.Dir(deliverable), 0o755); err != nil {
 		return err
 	}
@@ -207,12 +207,12 @@ func evalJobWorkspaceIsolation(fx *officeEvalFixture, r *OfficeEvalReport) error
 		return err
 	}
 	hitStatus, hitBody, err := client.postJSON("/tasks", map[string]any{
-		"action": "complete", "id": jID, "channel": jChannel, "created_by": "ceo",
+		"action": "complete", "id": jID, "channel": jChannel, "created_by": "cos",
 	})
 	if err != nil {
 		return err
 	}
-	r.add(job, "J3: complete succeeds once the deliverable exists in the agent's working dir",
+	r.add(job, "J3: complete succeeds once the deliverable exists in the bot's working dir",
 		hitStatus == http.StatusOK,
 		fmt.Sprintf("status=%d body=%s", hitStatus, truncate(hitBody, 160)), "")
 
@@ -235,7 +235,7 @@ func evalJobWorkspaceIsolation(fx *officeEvalFixture, r *OfficeEvalReport) error
 		fmt.Sprintf("lifecycle=%s result=%+v", detail.Task.LifecycleState, detail.Task.VerificationResult), "")
 
 	// ── (d) Halt note packet carries the do-not-revert instruction ────────
-	dID, dChannel, err := createTask("Refresh the pricing page copy (workspace d)", "Probe for the Stop contract.", "ceo")
+	dID, dChannel, err := createTask("Refresh the pricing page copy (workspace d)", "Probe for the Stop contract.", "cos")
 	if err != nil {
 		return err
 	}
@@ -246,7 +246,7 @@ func evalJobWorkspaceIsolation(fx *officeEvalFixture, r *OfficeEvalReport) error
 	halted := dTask != nil && dTask.HumanNotePending != nil && dTask.HumanNotePending.Halt
 	packet := ""
 	if dTask != nil {
-		packet = fx.launcher.notifyCtx().BuildTaskExecutionPacket("ceo", officeActionLog{Actor: "ceo"}, *dTask, "continue")
+		packet = fx.launcher.notifyCtx().BuildTaskExecutionPacket("cos", officeActionLog{Actor: "cos"}, *dTask, "continue")
 	}
 	r.add(job, "Halt note's packet says do-not-revert: pause, report state, wait",
 		halted && strings.Contains(packet, "Do NOT discard or revert any work. Report state and wait.") &&

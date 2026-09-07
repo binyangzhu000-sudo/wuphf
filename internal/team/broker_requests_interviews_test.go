@@ -107,7 +107,7 @@ func TestBrokerRequestsLifecycle(t *testing.T) {
 	base := fmt.Sprintf("http://%s", b.Addr())
 	body, _ := json.Marshal(map[string]any{
 		"kind":     "approval",
-		"from":     "ceo",
+		"from":     "cos",
 		"channel":  "general",
 		"title":    "Approval needed",
 		"question": "Should we proceed?",
@@ -191,7 +191,7 @@ func TestBrokerRequestsLifecycle(t *testing.T) {
 }
 
 // TestBrokerPostRequestDedupeKeyCollapsesDuplicates locks in the fix
-// for the 117-stacked-approval bug: when an agent retries a mutating
+// for the 117-stacked-approval bug: when a bot retries a mutating
 // external action, every call into the approval gate POSTs /requests
 // with the same dedupe_key. The broker must return the existing
 // active request instead of stacking duplicates.
@@ -280,14 +280,14 @@ func TestBrokerPostRequestDedupeKeyCollapsesDuplicates(t *testing.T) {
 // TestBrokerPostRequestDedupeKeyReusesApprovedApproval pins the
 // post-Slice-7 contract: once an APPROVAL is approved, a subsequent
 // POST with the same dedupe_key within recentApprovalReuseWindow
-// reuses the existing answered request (so the calling agent's poll
+// reuses the existing answered request (so the calling bot's poll
 // loop sees the approval immediately and executes without re-prompting
 // the human). This is the explicit fix for the "I approved it but it
 // asked me again" loop the user reported. The window-expiry +
 // non-approval-kind paths are covered by the other dedupe tests.
 func TestBrokerPostRequestDedupeKeyReusesApprovedApproval(t *testing.T) {
 	b := newTestBroker(t)
-	ensureTestMemberAccess(b, "general", "ceo", "CEO")
+	ensureTestMemberAccess(b, "general", "cos", "CEO")
 	if err := b.StartOnPort(0); err != nil {
 		t.Fatalf("failed to start broker: %v", err)
 	}
@@ -296,13 +296,13 @@ func TestBrokerPostRequestDedupeKeyReusesApprovedApproval(t *testing.T) {
 	base := fmt.Sprintf("http://%s", b.Addr())
 	body, _ := json.Marshal(map[string]any{
 		"kind":       "approval",
-		"from":       "ceo",
+		"from":       "cos",
 		"channel":    "general",
 		"title":      "Approve",
 		"question":   "Approve?",
 		"blocking":   true,
 		"required":   true,
-		"dedupe_key": "action:ceo:gmail:send:k",
+		"dedupe_key": "action:cos:gmail:send:k",
 	})
 	post := func() (string, bool) {
 		t.Helper()
@@ -352,8 +352,8 @@ func TestBrokerPostRequestDedupeKeyReusesApprovedApproval(t *testing.T) {
 	}
 
 	// Same dedupe key after approve → reuse the existing answered
-	// approval (deduped=true). The agent's poll loop on /interview/
-	// answer?id=<first> already shows answer=approve, so the agent
+	// approval (deduped=true). The bot's poll loop on /interview/
+	// answer?id=<first> already shows answer=approve, so the bot
 	// proceeds to execute without spamming the human with a new card.
 	second, deduped := post()
 	if second != first {
@@ -371,7 +371,7 @@ func TestBrokerPostRequestDedupeKeyReusesApprovedApproval(t *testing.T) {
 // request rather than silently mapping to the canceled one.
 func TestBrokerPostRequestDedupeKeyRecreatesAfterCancel(t *testing.T) {
 	b := newTestBroker(t)
-	ensureTestMemberAccess(b, "general", "ceo", "CEO")
+	ensureTestMemberAccess(b, "general", "cos", "CEO")
 	if err := b.StartOnPort(0); err != nil {
 		t.Fatalf("failed to start broker: %v", err)
 	}
@@ -382,13 +382,13 @@ func TestBrokerPostRequestDedupeKeyRecreatesAfterCancel(t *testing.T) {
 		t.Helper()
 		body, _ := json.Marshal(map[string]any{
 			"kind":       "approval",
-			"from":       "ceo",
+			"from":       "cos",
 			"channel":    "general",
 			"title":      "Approve",
 			"question":   "Approve?",
 			"blocking":   true,
 			"required":   true,
-			"dedupe_key": "action:ceo:gmail:send:k",
+			"dedupe_key": "action:cos:gmail:send:k",
 		})
 		req, _ := http.NewRequest(http.MethodPost, base+"/requests", bytes.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+b.Token())
@@ -418,7 +418,7 @@ func TestBrokerPostRequestDedupeKeyRecreatesAfterCancel(t *testing.T) {
 	}
 
 	// Cancel the first request → terminal state.
-	cancelBody, _ := json.Marshal(map[string]any{"action": "cancel", "id": first, "from": "ceo"})
+	cancelBody, _ := json.Marshal(map[string]any{"action": "cancel", "id": first, "from": "cos"})
 	req, _ := http.NewRequest(http.MethodPost, base+"/requests", bytes.NewReader(cancelBody))
 	req.Header.Set("Authorization", "Bearer "+b.Token())
 	req.Header.Set("Content-Type", "application/json")
@@ -448,7 +448,7 @@ func TestHumanRequestAnswerUsesSessionActor(t *testing.T) {
 		ID:        "request-human",
 		Kind:      "approval",
 		Status:    "pending",
-		From:      "ceo",
+		From:      "cos",
 		Channel:   "general",
 		Title:     "Approval needed",
 		Question:  "Ship it?",
@@ -517,8 +517,8 @@ func TestHumanRequestAnswerUsesSessionActor(t *testing.T) {
 // in another channel — leaving the human stuck: can't send, can't see why.
 func TestBrokerGetRequestsScopeAllSeesCrossChannelBlocker(t *testing.T) {
 	b := newTestBroker(t)
-	ensureTestMemberAccess(b, "general", "ceo", "CEO")
-	ensureTestMemberAccess(b, "backend", "ceo", "CEO")
+	ensureTestMemberAccess(b, "general", "cos", "CEO")
+	ensureTestMemberAccess(b, "backend", "cos", "CEO")
 	ensureTestMemberAccess(b, "backend", "human", "Human")
 	ensureTestMemberAccess(b, "general", "human", "Human")
 	if err := b.StartOnPort(0); err != nil {
@@ -530,7 +530,7 @@ func TestBrokerGetRequestsScopeAllSeesCrossChannelBlocker(t *testing.T) {
 
 	createBody, _ := json.Marshal(map[string]any{
 		"kind":     "approval",
-		"from":     "ceo",
+		"from":     "cos",
 		"channel":  "backend",
 		"title":    "Deploy approval",
 		"question": "Ship the backend migration?",
@@ -603,7 +603,7 @@ func TestBrokerCancelBlockingApprovalUnblocksMessages(t *testing.T) {
 	base := fmt.Sprintf("http://%s", b.Addr())
 	createBody, _ := json.Marshal(map[string]any{
 		"kind":     "approval",
-		"from":     "ceo",
+		"from":     "cos",
 		"channel":  "general",
 		"title":    "Approval needed",
 		"question": "Ship it?",
@@ -692,7 +692,7 @@ func TestBrokerHumanInterviewDoesNotBlockAndThreadReplyAnswers(t *testing.T) {
 	base := fmt.Sprintf("http://%s", b.Addr())
 	createBody, _ := json.Marshal(map[string]any{
 		"kind":     "interview",
-		"from":     "ceo",
+		"from":     "cos",
 		"channel":  "general",
 		"title":    "Human interview",
 		"question": "Which customer segment should we prioritize?",
@@ -737,7 +737,7 @@ func TestBrokerHumanInterviewDoesNotBlockAndThreadReplyAnswers(t *testing.T) {
 
 	createFollowUpBody, _ := json.Marshal(map[string]any{
 		"kind":     "interview",
-		"from":     "ceo",
+		"from":     "cos",
 		"channel":  "general",
 		"title":    "Follow-up interview",
 		"question": "Which launch channel should we test next?",
@@ -887,13 +887,13 @@ func TestBrokerHumanInterviewDoesNotBlockAndThreadReplyAnswers(t *testing.T) {
 	}
 	if answer.Answered == nil || answer.Status != "answered" ||
 		answer.Answered.CustomText != "Let's keep moving in this thread." {
-		t.Fatalf("expected the polling agent to receive the thread-reply answer, got %+v", answer)
+		t.Fatalf("expected the polling bot to receive the thread-reply answer, got %+v", answer)
 	}
 }
 
 func TestBrokerRequestAnswerUnblocksDependentTask(t *testing.T) {
 	b := newTestBroker(t)
-	ensureTestMemberAccess(b, "general", "ceo", "CEO")
+	ensureTestMemberAccess(b, "general", "cos", "CEO")
 	ensureTestMemberAccess(b, "general", "builder", "Builder")
 	if err := b.StartOnPort(0); err != nil {
 		t.Fatalf("failed to start broker: %v", err)
@@ -903,7 +903,7 @@ func TestBrokerRequestAnswerUnblocksDependentTask(t *testing.T) {
 	base := fmt.Sprintf("http://%s", b.Addr())
 	createRequestBody, _ := json.Marshal(map[string]any{
 		"action":   "create",
-		"from":     "ceo",
+		"from":     "cos",
 		"channel":  "general",
 		"title":    "Approve the launch packet",
 		"question": "Should we proceed with the external launch?",
@@ -940,7 +940,7 @@ func TestBrokerRequestAnswerUnblocksDependentTask(t *testing.T) {
 		"channel":    "general",
 		"title":      "Ship the launch packet after approval",
 		"details":    "Continue once the approval request is answered.",
-		"created_by": "ceo",
+		"created_by": "cos",
 		"owner":      "builder",
 		"depends_on": []string{reqID},
 		"task_type":  "launch",
@@ -987,7 +987,7 @@ func TestBrokerRequestAnswerUnblocksDependentTask(t *testing.T) {
 	// "Ship the launch packet after approval" is a business-objective task
 	// (title contains "launch") so it gets its own per-task channel — query
 	// using all_channels=true so the check is channel-location-agnostic.
-	req, _ = http.NewRequest(http.MethodGet, base+"/tasks?all_channels=true&viewer=ceo", nil)
+	req, _ = http.NewRequest(http.MethodGet, base+"/tasks?all_channels=true&viewer=cos", nil)
 	req.Header.Set("Authorization", "Bearer "+b.Token())
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
@@ -1028,7 +1028,7 @@ func TestBrokerDecisionRequestsDefaultToBlocking(t *testing.T) {
 	base := fmt.Sprintf("http://%s", b.Addr())
 	body, _ := json.Marshal(map[string]any{
 		"kind":     "approval",
-		"from":     "ceo",
+		"from":     "cos",
 		"channel":  "general",
 		"title":    "Approval needed",
 		"question": "Should we proceed?",
@@ -1083,7 +1083,7 @@ func TestBrokerRequestAnswerRequiresCustomTextWhenOptionNeedsIt(t *testing.T) {
 	base := fmt.Sprintf("http://%s", b.Addr())
 	body, _ := json.Marshal(map[string]any{
 		"kind":     "approval",
-		"from":     "ceo",
+		"from":     "cos",
 		"channel":  "general",
 		"title":    "Approval needed",
 		"question": "Should we proceed?",
@@ -1234,13 +1234,13 @@ func TestAlsoAskingSurvivesRestart(t *testing.T) {
 	if err := b2.loadState(); err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if !b2.AgentAwaitingInterviewAnswer("revops") {
+	if !b2.BotAwaitingInterviewAnswer("revops") {
 		t.Fatal("also_asking subscriber must still be awaiting after restart")
 	}
-	if !b2.AgentAwaitingInterviewAnswer("ae") {
+	if !b2.BotAwaitingInterviewAnswer("ae") {
 		t.Fatal("original asker must still be awaiting after restart")
 	}
-	if b2.AgentAwaitingInterviewAnswer("eng") {
+	if b2.BotAwaitingInterviewAnswer("eng") {
 		t.Fatal("non-subscriber must not be parked")
 	}
 }
@@ -1266,7 +1266,7 @@ func TestGetRequestsFilterByID(t *testing.T) {
 		t.Helper()
 		body, _ := json.Marshal(map[string]any{
 			"kind":     "approval",
-			"from":     "ceo",
+			"from":     "cos",
 			"channel":  "general",
 			"title":    title,
 			"question": "Run " + title + "?",

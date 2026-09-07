@@ -13,7 +13,7 @@ import (
 )
 
 // TestHandleOTLPLogs_RejectsOversizedBody pins the 4 MiB body cap.
-// Without this an authenticated agent emitting a runaway batch could
+// Without this an authenticated bot emitting a runaway batch could
 // grow broker memory unbounded; with it the broker rejects before
 // json.Decoder finishes reading. We use a payload that LOOKS like
 // JSON so the decoder reads past the start byte and actually trips
@@ -133,14 +133,14 @@ func TestMessageIsWithinUsageAttachWindow_BoundaryCases(t *testing.T) {
 	}
 }
 
-func TestRecordAgentUsageAttachesToCurrentTurnMessagesOnly(t *testing.T) {
+func TestRecordBotUsageAttachesToCurrentTurnMessagesOnly(t *testing.T) {
 	b := newTestBroker(t)
 	now := time.Now().UTC()
 	b.mu.Lock()
 	b.messages = []channelMessage{
 		{
 			ID:        "msg-1",
-			From:      "ceo",
+			From:      "cos",
 			Content:   "older turn",
 			Timestamp: now.Add(-2 * time.Minute).Format(time.RFC3339),
 			Usage:     &messageUsage{TotalTokens: 111},
@@ -153,7 +153,7 @@ func TestRecordAgentUsageAttachesToCurrentTurnMessagesOnly(t *testing.T) {
 		},
 		{
 			ID:        "msg-3",
-			From:      "ceo",
+			From:      "cos",
 			Content:   "current turn kickoff",
 			Timestamp: now.Add(-10 * time.Second).Format(time.RFC3339),
 		},
@@ -165,14 +165,14 @@ func TestRecordAgentUsageAttachesToCurrentTurnMessagesOnly(t *testing.T) {
 		},
 		{
 			ID:        "msg-5",
-			From:      "ceo",
+			From:      "cos",
 			Content:   "current turn answer",
 			Timestamp: now.Format(time.RFC3339),
 		},
 	}
 	b.mu.Unlock()
 
-	b.RecordAgentUsage("ceo", "claude-sonnet-4-6", provider.ClaudeUsage{
+	b.RecordBotUsage("cos", "claude-sonnet-4-6", provider.ClaudeUsage{
 		InputTokens:         800,
 		OutputTokens:        200,
 		CacheReadTokens:     50,
@@ -224,8 +224,8 @@ func TestParseOTLPUsageEvents(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("expected 1 usage event, got %d", len(events))
 	}
-	if events[0].AgentSlug != "fe" {
-		t.Fatalf("expected fe slug, got %q", events[0].AgentSlug)
+	if events[0].BotSlug != "fe" {
+		t.Fatalf("expected fe slug, got %q", events[0].BotSlug)
 	}
 	if events[0].InputTokens != 1200 || events[0].OutputTokens != 300 {
 		t.Fatalf("unexpected token counts: %+v", events[0])
@@ -298,7 +298,7 @@ func TestBrokerUsageEndpointAggregatesTelemetry(t *testing.T) {
 	if usage.Session.TotalTokens != 1000 {
 		t.Fatalf("expected 1000 session tokens, got %d", usage.Session.TotalTokens)
 	}
-	if usage.Agents["be"].CostUsd != 0.18 {
-		t.Fatalf("expected backend cost 0.18, got %+v", usage.Agents["be"])
+	if usage.Bots["be"].CostUsd != 0.18 {
+		t.Fatalf("expected backend cost 0.18, got %+v", usage.Bots["be"])
 	}
 }

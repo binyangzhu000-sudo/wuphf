@@ -1,11 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import type { OfficeStatsTasks } from "../../api/platform";
+import type { OfficeStats, OfficeStatsTasks } from "../../api/platform";
 import type { Task } from "../../api/tasks";
+import { router } from "../../lib/router";
 import type { InboxItem } from "../../lib/types/inbox";
+import { useAppStore } from "../../stores/app";
 import { TasksList } from "./TasksList";
 
 function makeTask(overrides: Partial<Task>): Task {
@@ -17,10 +19,28 @@ function makeTask(overrides: Partial<Task>): Task {
   };
 }
 
+/** Wrap the task buckets into a full stats payload. The Needs-human header is
+ *  the shared needsYouCount, so a tasks-only seam would not exercise the real
+ *  formula — `over` lets a test add requests/inbox_attention when that matters. */
+function seedStats(
+  tasks: OfficeStatsTasks,
+  over: Partial<OfficeStats> = {},
+): OfficeStats {
+  return {
+    tasks,
+    requests: { blocking: 0, notices: 0 },
+    inbox_attention: 0,
+    wiki_articles: 0,
+    agents_active: 0,
+    ...over,
+  } as OfficeStats;
+}
+
 function renderList(
   tasks: Task[],
   stats?: OfficeStatsTasks,
   inboxItems?: InboxItem[],
+  statsOver?: Partial<OfficeStats>,
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -29,7 +49,7 @@ function renderList(
     <QueryClientProvider client={client}>
       <TasksList
         initialTasks={tasks}
-        initialStats={stats}
+        initialStats={stats ? seedStats(stats, statsOver) : undefined}
         initialInboxItems={inboxItems}
       />
     </QueryClientProvider>,
@@ -41,7 +61,7 @@ describe("<TasksList>", () => {
     renderList([
       makeTask({
         id: "task-issue",
-        title: "Spec the agent issue app",
+        title: "Spec the bot issue app",
         task_type: "issue",
       }),
       makeTask({
@@ -51,7 +71,7 @@ describe("<TasksList>", () => {
       }),
     ]);
 
-    expect(screen.getByText("Spec the agent issue app")).toBeInTheDocument();
+    expect(screen.getByText("Spec the bot issue app")).toBeInTheDocument();
     expect(screen.queryByText("Fix button spacing")).not.toBeInTheDocument();
   });
 
@@ -260,9 +280,64 @@ describe("<TasksList>", () => {
     expect(screen.getByText("Wire up Stripe webhooks")).toBeInTheDocument();
   });
 
+  it("renders the board, not the empty state, when the only thing waiting is a blocking request", () => {
+    // Observed live 2026-09-03: the board printed "1 NEED YOU" in the header
+    // chips, the sidebar badge showed 1, and a desktop notification + sound
+    // fired — while the body said "No tasks yet". The header counts
+    // needsYouCount (tasks.needs_human + requests.blocking) but the empty
+    // state was gated on issue-task count alone, so a blocking request with
+    // no accompanying task was counted everywhere and rendered nowhere.
+    //
+    // The empty state means "nothing is waiting on you". A blocking request
+    // IS something waiting on you, so it must open the board.
+    const inboxItems: InboxItem[] = [
+      {
+        kind: "request",
+        requestId: "request-3",
+        title: "Add Prospector to the team?",
+        request: {
+          kind: "decision",
+          question: "Add Prospector to the team?",
+          from: "cos",
+          blocking: true,
+        },
+      },
+    ];
+
+    renderList(
+      [],
+      {
+        backlog: 0,
+        active: 0,
+        blocked: 0,
+        review: 0,
+        needs_human: 0,
+        done: 0,
+        archive: 0,
+      },
+      inboxItems,
+      { requests: { blocking: 1, notices: 0 } },
+    );
+
+    expect(screen.queryByTestId("issues-list-empty")).not.toBeInTheDocument();
+    expect(screen.getByTestId("issues-list")).toBeInTheDocument();
+    expect(screen.getByText("Add Prospector to the team?")).toBeInTheDocument();
+  });
+
+  it("still shows the empty state when nothing is waiting on the human", () => {
+    // The counterpart to the test above: with no tasks AND no attention
+    // items, the empty state is the correct render. Guards the fix from
+    // over-correcting into "never show the empty state".
+    renderList([], undefined, []);
+
+    expect(screen.getByTestId("issues-list-empty")).toHaveTextContent(
+      "No tasks yet.",
+    );
+  });
+
   it("folds blocking requests and pending reviews into the Needs-human lane", () => {
     // The standalone Inbox was consolidated into the board: its non-task
-    // attention items (agent questions + promotion reviews) render as cards
+    // attention items (bot questions + promotion reviews) render as cards
     // next to the decision-state tasks already in the Needs-human lane, and
     // the lane header count includes them.
     const inboxItems: InboxItem[] = [
@@ -273,7 +348,7 @@ describe("<TasksList>", () => {
         request: {
           kind: "decision",
           question: "Approve the Q3 budget?",
-          from: "ceo",
+          from: "cos",
           blocking: true,
         },
       },
@@ -309,6 +384,9 @@ describe("<TasksList>", () => {
         archive: 0,
       },
       inboxItems,
+      // A blocking request appears in BOTH the inbox feed and the stats
+      // payload, so a production-shaped seed sets it in both places.
+      { requests: { blocking: 1, notices: 0 } },
     );
 
     const needsHuman = screen.getByTestId("issues-kanban-column-needs_human");
@@ -318,10 +396,66 @@ describe("<TasksList>", () => {
     expect(screen.getByTestId("attention-request-row")).toBeInTheDocument();
     expect(screen.getByTestId("attention-review-row")).toBeInTheDocument();
 
-    // 1 decision task (from stats) + 2 folded attention items.
+    // The header is the SHARED needs-you count: 1 decision task + 1 blocking
+    // request = 2. It is no longer "however many cards happen to be folded
+    // in", which is what let this lane print a number the runtime strip
+    // contradicted.
+    //
+    // KNOWN GAP: the pending REVIEW renders as a card but is not counted.
+    // /office/stats carries no human-review field to count it from
+    // (tasks.review is bot-side review, a different thing), so the shared
+    // formula cannot see it. Counting it here instead would re-create the
+    // per-surface arithmetic this change removed. Better: give stats a
+    // reviews-pending field, then add it to needsYouCount once.
     const count = needsHuman.querySelector(
       ".issues-kanban-column-count",
     )?.textContent;
-    expect(count).toBe("3");
+    expect(count).toBe("2");
+  });
+
+  describe("clicking a task", () => {
+    it("opens the shared task modal and does NOT navigate into chat", async () => {
+      const navigate = vi
+        .spyOn(router, "navigate")
+        .mockResolvedValue(undefined);
+      useAppStore.setState({ taskModalTaskId: null });
+
+      renderList([
+        makeTask({
+          id: "DUNDE-72",
+          title: "Ship the Q3 pricing page",
+          task_type: "issue",
+        }),
+      ]);
+
+      await userEvent.click(screen.getByTestId("issue-row"));
+
+      expect(useAppStore.getState().taskModalTaskId).toBe("DUNDE-72");
+      expect(navigate).not.toHaveBeenCalled();
+      navigate.mockRestore();
+    });
+
+    it("opens a sub-task row in the modal too", async () => {
+      const navigate = vi
+        .spyOn(router, "navigate")
+        .mockResolvedValue(undefined);
+      useAppStore.setState({ taskModalTaskId: null });
+
+      renderList([
+        makeTask({ id: "DUNDE-72", title: "Parent", task_type: "issue" }),
+        makeTask({
+          id: "DUNDE-73",
+          title: "Child",
+          task_type: "issue",
+          parent_issue_id: "DUNDE-72",
+        }),
+      ]);
+
+      await userEvent.click(screen.getByTestId("issue-subtask-row"));
+
+      expect(useAppStore.getState().taskModalTaskId).toBe("DUNDE-73");
+      expect(navigate).not.toHaveBeenCalled();
+      navigate.mockRestore();
+    });
   });
 });

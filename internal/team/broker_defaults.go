@@ -1,6 +1,7 @@
 package team
 
 import (
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -36,12 +37,10 @@ func defaultOfficeMembers() []officeMember {
 	}
 	members := make([]officeMember, 0, len(manifest.Members)+1)
 	for _, cfg := range manifest.Members {
-		builtIn := cfg.System || cfg.Slug == manifest.Lead || cfg.Slug == "ceo"
+		builtIn := cfg.System || cfg.Slug == manifest.Lead || cfg.Slug == "cos"
 		members = append(members, memberFromSpec(cfg, "wuphf", now, builtIn))
 	}
-	// The Librarian and App Builder are built-in, present in every workspace
-	// alongside the lead.
-	return ensureAppBuilderOfficeMember(ensureLibrarianMember(members))
+	return members
 }
 
 func defaultOfficeMemberSlugs() []string {
@@ -61,6 +60,24 @@ func defaultTeamChannels() []teamChannel {
 	}
 	channels := make([]teamChannel, 0, len(manifest.Channels))
 	for _, channel := range manifest.Channels {
+		// #general kill switch, gate 2 of 7. This is the broker's only view of
+		// the manifest's CHANNEL list, so filtering here also covers
+		// company.DefaultManifest and company.normalizeManifest re-adding
+		// general upstream. Those are gated at the source too (gate 3), but a
+		// hand-written manifest.yaml on disk reaches us through here and past
+		// them, so the broker filters as well.
+		//
+		// "Only view" is narrower than it sounds, and the distinction is load
+		// bearing. company.DefaultManifest has five other callers —
+		// broker_pane.go, broker_misc_handlers.go, cmd/wuphf/channel_splash.go,
+		// and two in cmd/wuphf/channelui/manifest.go — plus LoadRuntimeManifest
+		// in launcher_membership.go. Every one of them reads manifest.Members
+		// and never manifest.Channels, which is the only reason this stays the
+		// sole channel path. If any of them starts reading Channels, it becomes
+		// another gate; do not assume this one still covers the package.
+		if !generalChannelEnabled() && channel.Slug == GeneralChannelSlug {
+			continue
+		}
 		tc := teamChannel{
 			Slug:        channel.Slug,
 			Name:        channel.Name,
@@ -134,8 +151,21 @@ func normalizeChannelSlug(slug string) string {
 	slug = strings.ReplaceAll(slug, "_", "-")
 	slug = strings.ReplaceAll(slug, placeholder, "__")
 	if slug == "" {
+		// KNOWN WART, kept deliberately (2026-08-30). With #general retired
+		// this returns the slug of a channel that cannot exist, which fails
+		// CLOSED everywhere (lookups miss, access checks deny) but produced
+		// "channel not found" at write sites that passed an empty channel.
+		// Every known write site is fixed at the caller (see the ~12 "Raw
+		// emptiness first" guards, apps.ts, escalation, the kickoff). The
+		// honest fix is returning "" and letting callers resolve a home from
+		// the actor — but this function has 259 call sites, so that flip is
+		// its own audited change, not a drive-by. If you hit a fresh
+		// "channel not found" traced here, fix the CALLER to check emptiness
+		// before normalising, like the existing guards do.
 		return "general"
 	}
+	// Old callers still say "ceo__human"; the lead bot is "cos" now.
+	slug = migrateLegacyLeadSlug(slug)
 	return slug
 }
 
@@ -143,6 +173,9 @@ func normalizeActorSlug(slug string) string {
 	slug = strings.ToLower(strings.TrimSpace(slug))
 	slug = strings.ReplaceAll(slug, " ", "-")
 	slug = strings.ReplaceAll(slug, "_", "-")
+	if slug == legacyLeadSlug {
+		return LeadSlug
+	}
 	return slug
 }
 
@@ -150,18 +183,33 @@ func (b *Broker) ensureDefaultChannelsLocked() {
 	if len(b.channels) == 0 {
 		b.channels = defaultTeamChannels()
 	} else {
-		hasGeneral := false
-		for _, ch := range b.channels {
-			if ch.Slug == "general" {
-				hasGeneral = true
-				break
-			}
-		}
-		if !hasGeneral {
-			for _, def := range defaultTeamChannels() {
-				if def.Slug == "general" {
-					b.channels = append([]teamChannel{def}, b.channels...)
+		// #general kill switch, gate 1 of 7. This block re-prepends general to
+		// any roster that lacks it, and it runs on every Load — so leaving it
+		// ungated would resurrect the channel on the next boot no matter what
+		// the other six gates do. It is the single most likely way the whole
+		// switch self-heals.
+		//
+		// DO NOT "simplify" this gate or gate 2 away on the grounds that
+		// removing one changes nothing. It was measured: gates 1+2 here and
+		// gate 3 in company/manifest.go are each INDEPENDENTLY sufficient to
+		// keep general off a fresh boot, so neutering either alone leaves
+		// TestGeneralChannelKillSwitchHasNoResurrectionPath green. Only
+		// neutering both turns it red. That is deliberate defence in depth
+		// against exactly one resurrection, not redundancy to be cleaned up.
+		if generalChannelEnabled() {
+			hasGeneral := false
+			for _, ch := range b.channels {
+				if ch.Slug == GeneralChannelSlug {
+					hasGeneral = true
 					break
+				}
+			}
+			if !hasGeneral {
+				for _, def := range defaultTeamChannels() {
+					if def.Slug == GeneralChannelSlug {
+						b.channels = append([]teamChannel{def}, b.channels...)
+						break
+					}
 				}
 			}
 		}
@@ -190,11 +238,69 @@ func (b *Broker) ensureDefaultChannelsLocked() {
 	// Always seed the "Backup & Migration" system task that owns #general,
 	// now that we have guaranteed #general exists.
 	b.ensureBackupMigrationTaskLocked()
+
+	// With #general retired, every conversation is a 1:1 DM — so the DMs have
+	// to exist, or the roster has nowhere to talk.
+	b.ensureBotDMsLocked()
+}
+
+// ensureBotDMsLocked gives every roster member a 1:1 DM with the human.
+//
+// THIS IS THE THING #general WAS BLOCKING ON. The kill switch was threaded
+// through seven gates and left off, and flipping it produced a workspace with
+// six bots and ZERO channels: a full roster and nowhere to say anything. The
+// switch removed the shared room without anyone building what replaces it.
+// Measured, not assumed — a fresh broker with generalEnabled=false seeded
+// `channels: 0, members: 6`.
+//
+// A DM per bot is the replacement the product design already calls for:
+// "all chats will be in bot DMs, and you can tag a bot in a DM to make
+// your bot go consult them and report back". This seeds exactly that.
+//
+// Idempotent by slug, so it is safe on every Load: an existing DM is left
+// completely alone, including its history and its member list.
+//
+// Runs regardless of the switch. When #general is enabled these DMs sit
+// alongside it and nothing is lost; when it is disabled they are the only way
+// to reach a bot. Gating this on the switch would mean the DMs appear only
+// in the configuration where they are load-bearing, which is the configuration
+// least able to survive a bug in this function.
+func (b *Broker) ensureBotDMsLocked() {
+	if b.channelStore == nil {
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, m := range b.members {
+		bot := strings.TrimSpace(strings.ToLower(m.Slug))
+		if bot == "" || isHumanMessageSender(bot) {
+			continue
+		}
+		slug := channel.DirectSlug("human", bot)
+		if b.findChannelLocked(slug) != nil {
+			continue // already there; never touch an existing conversation
+		}
+		if _, err := b.channelStore.GetOrCreateDirect("human", bot); err != nil {
+			// Degrade rather than fail the boot: one unseedable DM must not
+			// stop the office from starting.
+			log.Printf("seed: could not create DM with %s: %v", bot, err)
+			continue
+		}
+		b.channels = append(b.channels, teamChannel{
+			Slug:        slug,
+			Name:        m.Name,
+			Type:        "dm",
+			Description: "Direct messages with " + bot,
+			Members:     []string{"human", bot},
+			CreatedBy:   "system",
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		})
+	}
 }
 
 // ensureDefaultOfficeMembersLocked seeds the DefaultManifest roster ONLY when
 // no members exist. Prior implementation appended any missing default slug to
-// a non-empty roster, which caused ceo/planner/executor/reviewer to leak back
+// a non-empty roster, which caused cos/planner/executor/reviewer to leak back
 // into blueprint-seeded teams (e.g. niche-crm) on every Broker.Load(). The
 // function is called from broker init and post-load normalization as a true
 // recovery hook: if state was corrupted or never seeded, fall back to defaults.
@@ -203,7 +309,7 @@ func (b *Broker) ensureDefaultOfficeMembersLocked() {
 		return
 	}
 	// An onboarded office with zero members is intentional, not corrupted:
-	// since the packs/CEO removal, agents are user-created and a fresh office
+	// since the packs/CEO removal, bots are user-created and a fresh office
 	// starts empty. Only an office that never finished onboarding gets the
 	// recovery roster.
 	if s, err := onboarding.Load(); err == nil && s != nil && strings.TrimSpace(s.CompletedAt) != "" {
@@ -214,17 +320,30 @@ func (b *Broker) ensureDefaultOfficeMembersLocked() {
 
 func (b *Broker) normalizeLoadedStateLocked() {
 	b.sessionMode = NormalizeSessionMode(b.sessionMode)
-	b.oneOnOneAgent = NormalizeOneOnOneAgent(b.oneOnOneAgent)
-	if b.findMemberLocked(b.oneOnOneAgent) == nil {
-		b.oneOnOneAgent = DefaultOneOnOneAgent
+	b.oneOnOneBot = NormalizeOneOnOneBot(b.oneOnOneBot)
+	if b.findMemberLocked(b.oneOnOneBot) == nil {
+		b.oneOnOneBot = DefaultOneOnOneBot
 	}
 	seenMembers := make(map[string]struct{}, len(b.members))
 	normalizedMembers := make([]officeMember, 0, len(b.members))
 	for _, member := range b.members {
-		member.Slug = normalizeChannelSlug(member.Slug)
-		if member.Slug == "" {
+		// A member slug is an ACTOR slug. This is the WRITE half of a pair
+		// whose READ half is findMemberLocked (broker_indexes.go) — the two
+		// must use the same normaliser or a member that exists is never found.
+		//
+		// Emptiness is tested on the raw value: normalizeChannelSlug returned
+		// "general" for a blank slug, so the `continue` below never fired and a
+		// slugless member was silently persisted under the name of a CHANNEL.
+		//
+		// This value is PERSISTED. Existing rosters were normalised with the
+		// channel normaliser, and the two normalisers agree on every ordinary
+		// bot slug (lowercase, hyphenated), so this load-path rewrite is a
+		// no-op for real data. It would only rewrite a slug containing "__" or
+		// a leading "#", which operationSlug cannot produce.
+		if strings.TrimSpace(member.Slug) == "" {
 			continue
 		}
+		member.Slug = normalizeChannelSlug(member.Slug)
 		if _, ok := seenMembers[member.Slug]; ok {
 			continue
 		}
@@ -237,28 +356,43 @@ func (b *Broker) normalizeLoadedStateLocked() {
 		if member.Role == "" {
 			member.Role = member.Name
 		}
-		member.BuiltIn = member.Slug == "ceo" || isLibrarianSlug(member.Slug) || isAppBuilderSlug(member.Slug)
+		// Only the lead is built-in now. A legacy librarian or app-builder on
+		// disk becomes an ordinary, removable member: with the bots retired
+		// as defaults, pinning them undeletable would strand users with two
+		// bots the product no longer defines.
+		member.BuiltIn = member.Slug == "cos"
+		// A built-in's display name is owned by the code, not by the saved
+		// roster. Renaming the Librarian to "Pam the librarian" changed the
+		// constant, but every office already on disk kept the old name — the
+		// rename only reached brand-new workspaces, which is the least useful
+		// place for it. A built-in is not a user-editable member, so its name
+		// is reconciled on load like its BuiltIn flag directly above.
+		if isLibrarianSlug(member.Slug) {
+			member.Name = librarianName
+		}
+		// Same treatment for the lead: "Chief of Staff" became "Chief of Staff", and
+		// without this the rename would only ever reach brand-new workspaces.
+		if member.Slug == "cos" {
+			member.Name = company.ChiefOfStaffName()
+			member.Role = company.ChiefOfStaffRole()
+		}
 		member.Expertise = normalizeStringList(member.Expertise)
 		member.AllowedTools = normalizeStringList(member.AllowedTools)
 		normalizedMembers = append(normalizedMembers, member)
 	}
-	// Phase 6 migration: the Librarian (Pam) is a built-in agent like the CEO,
+	// Phase 6 migration: the Librarian (Pam) is a built-in bot like the CEO,
 	// added to every NEW workspace at seed time. Existing rosters loaded from
 	// disk predate her, and ensureDefaultOfficeMembersLocked only seeds when the
 	// roster is empty — so append her here on every load. Idempotent (no-op once
 	// present); the BuiltIn line above keeps her flag set on subsequent loads.
-	// The App Builder is back-filled the same way so it shows in the roster of
-	// offices created before the Apps feature.
-	//
-	// The back-fill only applies to a NON-empty roster: since the packs/CEO
-	// removal a fresh office intentionally seeds zero agents (people spin up
-	// agents that run their workflows end to end), and resurrecting built-ins
-	// on every load would undo that contract on the first restart.
-	if len(normalizedMembers) > 0 {
-		b.members = ensureAppBuilderOfficeMember(ensureLibrarianMember(normalizedMembers))
-	} else {
-		b.members = normalizedMembers
-	}
+	// No back-fill. The load path used to append the Librarian and App Builder
+	// to any non-empty roster ("legacy-safe migration"), which is precisely how
+	// the founder's removal of both bots kept undoing itself: the seed edit
+	// was real, and this line resurrected them on the next boot. Existing
+	// members already on disk load unchanged — the migration's data-safety half
+	// — but nothing is ever appended.
+	b.members = normalizedMembers
+	b.ensureSystemSkillsLocked()
 	for i := range b.channels {
 		b.channels[i].Slug = normalizeChannelSlug(b.channels[i].Slug)
 		if strings.TrimSpace(b.channels[i].Name) == "" {
@@ -276,23 +410,46 @@ func (b *Broker) normalizeLoadedStateLocked() {
 			}
 			b.channels[i].Members = allSlugs
 		}
+		// A DM's membership is its ACCESS CONTROL LIST, not a roster view.
+		// canAccessChannelLocked authorizes a bot by membership alone, so
+		// anything added here is granted read AND post on that conversation.
+		//
+		// Two bugs lived in this block, both invisible until #general was
+		// switched off and DMs became the only surface:
+		//
+		//  1. The filter below drops any slug that is not a roster member.
+		//     "human" is not a bot, so it was stripped from every DM --
+		//     the one participant who is always a party to it.
+		//  2. The CEO pin below prepended "cos" to EVERY channel, DMs
+		//     included. Measured before this fix:
+		//         app-builder__human members = [cos app-builder]
+		//         canAccess(cos, app-builder__human) = true
+		//     The blanket read the CEO/Librarian/App-Builder bypasses were
+		//     deliberately removed for (see broker_channel_access.go) was
+		//     handed straight back through the seed. The access check was
+		//     never wrong; its input was.
+		//
+		// So DMs keep exactly their two participants and skip the pin. The
+		// CEO still routes work and consults specialists -- by DMing them,
+		// not by sitting inside their conversations.
+		isDM := b.channels[i].Type == "dm" || IsDMSlug(b.channels[i].Slug)
 		filteredMembers := make([]string, 0, len(b.channels[i].Members))
 		for _, slug := range uniqueSlugs(b.channels[i].Members) {
-			if b.findMemberLocked(slug) != nil {
+			if isHumanMessageSender(slug) || b.findMemberLocked(slug) != nil {
 				filteredMembers = append(filteredMembers, slug)
 			}
 		}
-		// The CEO pin only applies when a ceo member actually exists — since
+		// The CEO pin only applies when a cos member actually exists — since
 		// the packs/CEO removal an office may have no CEO at all, and pinning
 		// the slug into channel membership renders a ghost participant.
 		channelSeed := filteredMembers
-		if b.findMemberLocked("ceo") != nil {
-			channelSeed = append([]string{"ceo"}, filteredMembers...)
+		if !isDM && b.findMemberLocked("cos") != nil {
+			channelSeed = append([]string{"cos"}, filteredMembers...)
 		}
 		b.channels[i].Members = uniqueSlugs(channelSeed)
 		filteredDisabled := make([]string, 0, len(b.channels[i].Disabled))
 		for _, slug := range uniqueSlugs(b.channels[i].Disabled) {
-			if slug == "ceo" {
+			if slug == "cos" {
 				continue
 			}
 			if b.findMemberLocked(slug) != nil && containsString(b.channels[i].Members, slug) {
@@ -319,10 +476,42 @@ func (b *Broker) normalizeLoadedStateLocked() {
 			b.incidents[i].Count = 1
 		}
 	}
-	for i := range b.tasks {
-		if strings.TrimSpace(b.tasks[i].Channel) == "" {
-			b.tasks[i].Channel = "general"
+	// #general kill switch, load-path gate. preferredTaskChannelLocked can now
+	// legitimately give a task NO channel (an unowned intake task has no
+	// conversation home yet), and this backfill would have rewritten every one
+	// of them to "general" on the next Load — quietly undoing the resolver and
+	// making "empty" a state that cannot survive a restart. Gated rather than
+	// removed so the backfill still heals genuinely channel-less legacy tasks
+	// while the shared room exists.
+	if generalChannelEnabled() {
+		for i := range b.tasks {
+			if strings.TrimSpace(b.tasks[i].Channel) == "" {
+				b.tasks[i].Channel = GeneralChannelSlug
+			}
 		}
+	}
+	// Heal task channels missing their own task's owner. A workspace seeded
+	// before the App Builder was registered minted its first build channel
+	// with no bot member, so every streamed build post bounced with
+	// "channel access denied" (2026-08-16 fresh-workspace QA). The owner is
+	// only added when it is a registered member now.
+	ownerByChannel := make(map[string]string, len(b.tasks))
+	for i := range b.tasks {
+		if owner := normalizeActorSlug(b.tasks[i].Owner); owner != "" {
+			ownerByChannel[normalizeChannelSlug(b.tasks[i].Channel)] = owner
+		}
+	}
+	for i := range b.channels {
+		if strings.TrimSpace(b.channels[i].TaskID) == "" {
+			continue
+		}
+		owner := ownerByChannel[b.channels[i].Slug]
+		if owner == "" || owner == "cos" || isHumanMessageSender(owner) ||
+			b.findMemberLocked(owner) == nil ||
+			containsString(b.channels[i].Members, owner) {
+			continue
+		}
+		b.channels[i].Members = uniqueSlugs(append(b.channels[i].Members, owner))
 	}
 	for i := range b.requests {
 		if strings.TrimSpace(b.requests[i].Channel) == "" {

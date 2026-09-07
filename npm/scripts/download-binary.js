@@ -1,8 +1,8 @@
 "use strict";
 
-// Downloads the wuphf binary that matches the current package version
+// Downloads the gawkbot binary that matches the current package version
 // from the corresponding GitHub release and extracts it into bin/.
-// GoReleaser archive name: wuphf_<version>_<os>_<arch>.tar.gz
+// GoReleaser archive name: gawkbot_<version>_<os>_<arch>.tar.gz
 // where <version> is the tag without the leading 'v'.
 //
 // ---------------------------------------------------------------------------
@@ -16,7 +16,7 @@
 //     <sha256-hex>  <archive-filename>
 //
 // Verification flow:
-//   1. Download the per-platform archive (wuphf_<ver>_<os>_<arch>.tar.gz).
+//   1. Download the per-platform archive (gawkbot_<ver>_<os>_<arch>.tar.gz).
 //   2. Download checksums.txt from the same release.
 //   3. Compute SHA256 of the downloaded archive locally.
 //   4. Compare against the hash listed for that archive in checksums.txt.
@@ -24,7 +24,7 @@
 //      listed in it: delete the archive and abort with a non-zero exit.
 //
 // This guards against release-asset tampering: even if a compromised release
-// token replaces the tarball, the mismatch causes `npm install wuphf` to fail
+// token replaces the tarball, the mismatch causes `npm install gawkbot` to fail
 // loudly rather than silently install a backdoored binary.
 //
 // To regenerate checksums.txt, run `goreleaser release` (or `goreleaser
@@ -38,7 +38,7 @@ const os = require("node:os");
 const crypto = require("node:crypto");
 const { execFileSync } = require("node:child_process");
 
-const REPO = "nex-crm/wuphf";
+const REPO = "najmuzzaman-mohammad/gawkbot";
 const CHECKSUMS_FILENAME = "checksums.txt";
 
 function detectPlatform() {
@@ -50,12 +50,12 @@ function detectPlatform() {
 
   if (!osMap[platform]) {
     throw new Error(
-      `Unsupported platform: ${platform}. wuphf supports darwin, linux, and windows.`,
+      `Unsupported platform: ${platform}. gawkbot supports darwin, linux, and windows.`,
     );
   }
   if (!archMap[arch]) {
     throw new Error(
-      `Unsupported architecture: ${arch}. wuphf supports x64 (amd64) and arm64.`,
+      `Unsupported architecture: ${arch}. gawkbot supports x64 (amd64) and arm64.`,
     );
   }
   return { os: osMap[platform], arch: archMap[arch] };
@@ -77,12 +77,12 @@ function archiveExtension() {
 
 function archiveName(version) {
   const { os: goOs, arch: goArch } = detectPlatform();
-  return `wuphf_${version}_${goOs}_${goArch}.${archiveExtension()}`;
+  return `gawkbot_${version}_${goOs}_${goArch}.${archiveExtension()}`;
 }
 
 // Go names Windows binaries with a .exe suffix; the rest get the bare name.
 function binaryFilename() {
-  return process.platform === "win32" ? "wuphf.exe" : "wuphf";
+  return process.platform === "win32" ? "gawkbot.exe" : "gawkbot";
 }
 
 function releaseAssetUrl(version, filename) {
@@ -138,7 +138,7 @@ function expectedHashFor(checksumsText, filename) {
 async function verifyArchive({ version, archivePath, archiveBasename, silent }) {
   const checksumsUrl = releaseAssetUrl(version, CHECKSUMS_FILENAME);
   if (!silent) {
-    process.stderr.write(`wuphf: verifying ${archiveBasename} against ${CHECKSUMS_FILENAME}\n`);
+    process.stderr.write(`gawkbot: verifying ${archiveBasename} against ${CHECKSUMS_FILENAME}\n`);
   }
 
   let checksumsText;

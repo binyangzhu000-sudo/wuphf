@@ -72,7 +72,7 @@ describe("messageMarkdown — XSS hardening", () => {
     }
   });
 
-  it("does not render raw HTML <script> tags from agent text", () => {
+  it("does not render raw HTML <script> tags from bot text", () => {
     const { container } = renderChat("before <script>alert(1)</script> after");
     expect(container.querySelector("script")).toBeNull();
     expect(container.textContent).toContain("alert(1)");
@@ -234,11 +234,11 @@ describe("messageMarkdown — @mentions render as chips", () => {
   });
 
   it("supports multiple mentions in one message", () => {
-    const { container } = renderChat("@pm and @ceo please review");
+    const { container } = renderChat("@pm and @cos please review");
     const chips = container.querySelectorAll(".mention");
     expect(chips.length).toBe(2);
     expect(chips[0].textContent).toBe("@pm");
-    expect(chips[1].textContent).toBe("@ceo");
+    expect(chips[1].textContent).toBe("@cos");
   });
 
   it("does not chip an @-address in an email body", () => {
@@ -246,5 +246,81 @@ describe("messageMarkdown — @mentions render as chips", () => {
     // immediately before @ so it should NOT be turned into a chip.
     const { container } = renderChat("send to user@example.com");
     expect(container.querySelector(".mention")).toBeNull();
+  });
+});
+
+describe("messageMarkdown — task references", () => {
+  // These render with NO QueryClientProvider above them. That is the point:
+  // the task-ref renderer reads titles out of the query cache, and a missing
+  // provider must degrade to showing the raw id, never throw.
+  it("linkifies an uppercase-prefix task id", () => {
+    const { container } = renderChat("shipping DUNDE-72 today");
+    const link = container.querySelector(".msg-task-link");
+    expect(link).not.toBeNull();
+    expect(link?.textContent).toBe("DUNDE-72");
+    expect(link?.getAttribute("data-task-id")).toBe("DUNDE-72");
+  });
+
+  it("linkifies the legacy lowercase task-N form", () => {
+    const { container } = renderChat("see task-12 for context");
+    const link = container.querySelector(".msg-task-link");
+    expect(link).not.toBeNull();
+    expect(link?.textContent).toBe("task-12");
+  });
+
+  it("does NOT linkify an ordinary lowercase hyphenated word", () => {
+    // Regression: the pattern carried the /i flag, so the uppercase-prefix
+    // branch matched lowercase prose and "request-75" rendered as a task
+    // link that clicked through to nothing.
+    const { container } = renderChat("closing request-75 as duplicate");
+    expect(container.querySelector(".msg-task-link")).toBeNull();
+    expect(container.textContent).toContain("request-75");
+  });
+
+  it("does not linkify a lowercase word inside a longer sentence", () => {
+    const { container } = renderChat(
+      "the invoice-2024 and the ticket-9 both landed",
+    );
+    expect(container.querySelector(".msg-task-link")).toBeNull();
+  });
+
+  it("does not linkify a suffix match like subtask-12", () => {
+    const { container } = renderChat("subtask-12 is nested");
+    expect(container.querySelector(".msg-task-link")).toBeNull();
+  });
+
+  it("renders the button rather than a navigable anchor", () => {
+    // A task reference must never be an <a href> — clicking it opens the
+    // task modal in place, it does not navigate.
+    const { container } = renderChat("DUNDE-72 is ready");
+    const link = container.querySelector(".msg-task-link");
+    expect(link?.tagName.toLowerCase()).toBe("button");
+    expect(container.querySelector("a")).toBeNull();
+  });
+});
+
+describe("app references", () => {
+  it("turns an app id into a pill that opens the app", () => {
+    // A bot quoting "app_9f3c1d2e" in prose is unreadable and unclickable
+    // bare. The pill resolves the name and links to the app.
+    const { container } = renderChat("Shipped it in app_9f3c1d2e.");
+    const pill = container.querySelector(".msg-app-link");
+    expect(pill).not.toBeNull();
+    expect(pill?.getAttribute("data-app-id")).toBe("app_9f3c1d2e");
+  });
+
+  it("leaves an app id inside a path alone", () => {
+    // Boundary handling, same as task refs: a path segment is not a reference.
+    const { container } = renderChat("see /apps/app_9f3c1d2e/data");
+    expect(container.querySelector(".msg-app-link")).toBeNull();
+  });
+
+  it("renders a task ref and an app ref in the same sentence", () => {
+    // The app pass runs over what the TASK pass left behind. Running the two
+    // passes over the original string independently loses whichever ran
+    // second, which is the bug this pins.
+    const { container } = renderChat("DUNDE-5 shipped as app_9f3c1d2e today");
+    expect(container.querySelector(".msg-task-link")).not.toBeNull();
+    expect(container.querySelector(".msg-app-link")).not.toBeNull();
   });
 });

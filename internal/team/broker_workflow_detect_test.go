@@ -7,18 +7,18 @@ import (
 )
 
 // seedRecurringShape writes manifests so the deterministic miner yields a
-// candidate for taskID: the same multi-tool shape run by `agent` across taskID
+// candidate for taskID: the same multi-tool shape run by `bot` across taskID
 // plus `priors` sibling tasks. With >= appWorkflowRecurrenceFloor total runs the
 // read-only shape surfaces. Requires WUPHF_RUNTIME_HOME to be set so
 // EventSinkPath resolves to the test's temp dir.
-func seedRecurringShape(t *testing.T, agent, taskID string, priors []string, tools ...string) {
+func seedRecurringShape(t *testing.T, bot, taskID string, priors []string, tools ...string) {
 	t.Helper()
 	path := EventSinkPath()
 	if path == "" {
 		t.Fatal("EventSinkPath empty — set WUPHF_RUNTIME_HOME before seeding")
 	}
 	for _, id := range append(append([]string{}, priors...), taskID) {
-		if err := appendTurnManifest(path, manifestFor(id, agent, tools...)); err != nil {
+		if err := appendTurnManifest(path, manifestFor(id, bot, tools...)); err != nil {
 			t.Fatalf("seed manifest: %v", err)
 		}
 	}
@@ -26,7 +26,7 @@ func seedRecurringShape(t *testing.T, agent, taskID string, priors []string, too
 
 // TestDetectWorkflowAppRaisesProposal is the core of the post-task discovery
 // rewrite: gated on the deterministic miner (the shape must have actually
-// recurred), the BROKER (not an agent) judges the completed task and raises a
+// recurred), the BROKER (not a bot) judges the completed task and raises a
 // real, non-blocking propose_app card — so there is no "next turn" deferral and
 // no phantom card. Idempotent: a second pass dedupes onto the same card.
 func TestDetectWorkflowAppRaisesProposal(t *testing.T) {
@@ -39,13 +39,13 @@ func TestDetectWorkflowAppRaisesProposal(t *testing.T) {
 	})
 
 	b := newTestBroker(t)
-	b.tasks = append(b.tasks, teamTask{ID: "OFFICE-1", Owner: "ceo", Channel: "task-1", Title: "Score leads", status: "done"})
+	b.tasks = append(b.tasks, teamTask{ID: "OFFICE-1", Owner: "cos", Channel: "task-1", Title: "Score leads", status: "done"})
 	b.messages = append(b.messages,
 		channelMessage{From: "you", Channel: "task-1", Content: "Score these 3 leads against our ICP — I run this every Monday."},
-		channelMessage{From: "ceo", Channel: "task-1", Content: "Scored: Acme 7/10, BetaLabs 3/10, Gamma 4/10."},
+		channelMessage{From: "cos", Channel: "task-1", Content: "Scored: Acme 7/10, BetaLabs 3/10, Gamma 4/10."},
 	)
-	// The shape recurred: OFFICE-1 plus a prior run by the same agent.
-	seedRecurringShape(t, "ceo", "OFFICE-1", []string{"OFFICE-0"}, "crm_fetch_leads", "score_leads")
+	// The shape recurred: OFFICE-1 plus a prior run by the same bot.
+	seedRecurringShape(t, "cos", "OFFICE-1", []string{"OFFICE-0"}, "crm_fetch_leads", "score_leads")
 
 	b.detectWorkflowAppForTask("OFFICE-1")
 
@@ -95,9 +95,9 @@ func TestDetectWorkflowAppSkipsWhenNotWorth(t *testing.T) {
 		return `{"worth_building":false,"reason":"better as unattended automation"}`, nil
 	})
 	b := newTestBroker(t)
-	b.tasks = append(b.tasks, teamTask{ID: "OFFICE-2", Owner: "ceo", Channel: "task-2", Title: "Recurring", status: "done"})
+	b.tasks = append(b.tasks, teamTask{ID: "OFFICE-2", Owner: "cos", Channel: "task-2", Title: "Recurring", status: "done"})
 	b.messages = append(b.messages, channelMessage{From: "you", Channel: "task-2", Content: "run this again"})
-	seedRecurringShape(t, "ceo", "OFFICE-2", []string{"OFFICE-1b"}, "crm_fetch_leads", "score_leads")
+	seedRecurringShape(t, "cos", "OFFICE-2", []string{"OFFICE-1b"}, "crm_fetch_leads", "score_leads")
 
 	b.detectWorkflowAppForTask("OFFICE-2")
 	if !judged {
@@ -122,10 +122,10 @@ func TestDetectWorkflowAppSkipsWithoutRecurrenceEvidence(t *testing.T) {
 		return `{"worth_building":true,"name":"x","description":"y"}`, nil
 	})
 	b := newTestBroker(t)
-	b.tasks = append(b.tasks, teamTask{ID: "OFFICE-9", Owner: "ceo", Channel: "task-9", Title: "One-off", status: "done"})
+	b.tasks = append(b.tasks, teamTask{ID: "OFFICE-9", Owner: "cos", Channel: "task-9", Title: "One-off", status: "done"})
 	b.messages = append(b.messages, channelMessage{From: "you", Channel: "task-9", Content: "do this odd one-time thing"})
 	// A single non-outcome run: below the recurrence floor, so no candidate.
-	seedRecurringShape(t, "ceo", "OFFICE-9", nil, "crm_fetch_leads", "score_leads")
+	seedRecurringShape(t, "cos", "OFFICE-9", nil, "crm_fetch_leads", "score_leads")
 
 	b.detectWorkflowAppForTask("OFFICE-9")
 	if called {
@@ -156,12 +156,12 @@ func TestDetectInlineWorkflowAppRaisesProposal(t *testing.T) {
 	// Two task-less inline turns with the same work shape (pseudo-tasks).
 	path := EventSinkPath()
 	for _, id := range []string{inlineTurnScopePrefix + "a", inlineTurnScopePrefix + "b"} {
-		if err := appendTurnManifest(path, manifestFor(id, "ceo", "crm_fetch_leads", "score_leads")); err != nil {
+		if err := appendTurnManifest(path, manifestFor(id, "cos", "crm_fetch_leads", "score_leads")); err != nil {
 			t.Fatalf("seed inline manifest: %v", err)
 		}
 	}
 
-	b.detectInlineWorkflowApp("ceo", "general")
+	b.detectInlineWorkflowApp("cos", "team")
 
 	var proposal *humanInterview
 	for i := range b.requests {
@@ -183,7 +183,7 @@ func TestDetectInlineWorkflowAppRaisesProposal(t *testing.T) {
 	// A second pass is bounded: a proposal is already on the board, so the judge
 	// is not consulted again.
 	before := judgeCalls
-	b.detectInlineWorkflowApp("ceo", "general")
+	b.detectInlineWorkflowApp("cos", "team")
 	if judgeCalls != before {
 		t.Errorf("judge re-consulted while a proposal was already pending (%d -> %d)", before, judgeCalls)
 	}
@@ -202,7 +202,7 @@ func TestDetectInlineWorkflowAppSkipsAlreadyProposedShape(t *testing.T) {
 	b := newTestBroker(t)
 	path := EventSinkPath()
 	for _, id := range []string{inlineTurnScopePrefix + "a", inlineTurnScopePrefix + "b"} {
-		if err := appendTurnManifest(path, manifestFor(id, "ceo", "crm_fetch_leads", "score_leads")); err != nil {
+		if err := appendTurnManifest(path, manifestFor(id, "cos", "crm_fetch_leads", "score_leads")); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -212,7 +212,7 @@ func TestDetectInlineWorkflowAppSkipsAlreadyProposedShape(t *testing.T) {
 		AppProposal: &appProposalSpec{Name: "Lead Scorer", Fingerprint: "crm_fetch_leads>score_leads"},
 	})
 
-	b.detectInlineWorkflowApp("ceo", "general")
+	b.detectInlineWorkflowApp("cos", "team")
 
 	if judgeCalls != 0 {
 		t.Errorf("an already-proposed shape must not be re-judged, judgeCalls=%d", judgeCalls)
@@ -229,17 +229,17 @@ func TestDetectInlineWorkflowAppSkipsAlreadyProposedShape(t *testing.T) {
 }
 
 // TestDetectionLaneIsolation: an inline pseudo-task must NOT merge into a real
-// task's cluster (which fuzzy+cross-agent would otherwise do) — that would
+// task's cluster (which fuzzy+cross-bot would otherwise do) — that would
 // inflate the task's recurrence count and mislabel it. Each lane sees only its
 // own manifests.
 func TestDetectionLaneIsolation(t *testing.T) {
 	t.Setenv("WUPHF_RUNTIME_HOME", t.TempDir())
 	path := EventSinkPath()
 	// One real task and one inline pseudo-task with the SAME read-only shape.
-	if err := appendTurnManifest(path, manifestFor("OFFICE-1", "ceo", "crm_fetch_leads", "score_leads")); err != nil {
+	if err := appendTurnManifest(path, manifestFor("OFFICE-1", "cos", "crm_fetch_leads", "score_leads")); err != nil {
 		t.Fatal(err)
 	}
-	if err := appendTurnManifest(path, manifestFor(inlineTurnScopePrefix+"a", "ceo", "crm_fetch_leads", "score_leads")); err != nil {
+	if err := appendTurnManifest(path, manifestFor(inlineTurnScopePrefix+"a", "cos", "crm_fetch_leads", "score_leads")); err != nil {
 		t.Fatal(err)
 	}
 	// Task lane: the real task is a single read-only run; the inline pseudo-task is

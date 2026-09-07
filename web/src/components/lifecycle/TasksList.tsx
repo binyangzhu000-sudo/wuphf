@@ -13,14 +13,15 @@
  * The Scheduled column is the one exception to the lifecycle grouping —
  * it is fed by routines (the scheduler), not by any lifecycle_state, so
  * each card there is a SchedulerJob that links to its routine detail.
- * Every other card opens the TaskDocument detail surface at /tasks/$taskId.
+ * Every other card opens the shared TaskModal in place; /tasks/$taskId
+ * stays reachable as a URL but is no longer where a click lands.
  */
 
 import { memo, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { getInboxItems } from "../../api/lifecycle";
-import type { OfficeStatsTasks } from "../../api/platform";
+import type { OfficeStats, OfficeStatsTasks } from "../../api/platform";
 import { getScheduler, type SchedulerJob } from "../../api/scheduler";
 import {
   getOfficeTasks,
@@ -28,6 +29,7 @@ import {
   taskToLifecycleState,
 } from "../../api/tasks";
 import { useOfficeStats } from "../../hooks/useOfficeStats";
+import { isNoticeRequest, needsYouCount } from "../../lib/needsYou";
 import { router } from "../../lib/router";
 import { formatTaskTitleForDisplay } from "../../lib/taskTitle";
 import {
@@ -86,15 +88,73 @@ function taskMatchesQuery(task: Task, needle: string): boolean {
   return hay.toLowerCase().includes(needle);
 }
 
+/**
+ * How long a stalled task has been quiet, as short human text ("23m", "2h").
+ * Returns undefined when the task is not stalled or the stamp is unparseable
+ * — a marker is only worth showing when it can say HOW long, since "quiet"
+ * without a duration tells the reader nothing they cannot already see.
+ *
+ * A negative delta (clock skew between broker and browser) is treated as not
+ * stalled rather than rendered as "quiet for -3m".
+ */
+export function quietForLabel(stalledSince?: string): string | undefined {
+  const stamp = stalledSince?.trim();
+  if (!stamp) return undefined;
+  const since = new Date(stamp).getTime();
+  if (Number.isNaN(since)) return undefined;
+  const minutes = Math.floor((Date.now() - since) / 60_000);
+  if (minutes < 1) return undefined;
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+/**
+ * "N unassigned" toggle in the board header.
+ *
+ * Ownerless work has no other home on this board: a card reads "Unassigned"
+ * one at a time, and nothing says how many there are without scanning every
+ * lane. That mattered less when the CEO routed every task and held the whole
+ * board in its head. Now that bots file their own work, nobody is watching
+ * for a task nobody picked up.
+ *
+ * Counted from the tasks the board already fetched, so this needs no field in
+ * /office/stats.
+ */
+function UnassignedChip({
+  count,
+  active,
+  onToggle,
+}: {
+  count: number;
+  active: boolean;
+  onToggle: () => void;
+}) {
+  if (count <= 0) return null;
+  return (
+    <button
+      type="button"
+      className="issues-unassigned-chip"
+      data-testid="issues-unassigned-chip"
+      aria-pressed={active}
+      onClick={onToggle}
+      title={active ? "Show all tasks" : "Show only tasks nobody owns"}
+    >
+      {count} unassigned
+    </button>
+  );
+}
+
 /** Per-stage hint copy shown under the column header. The `scheduled`
  *  column is fed by routines, not lifecycle_state, so its hint reflects
  *  that. */
 const STAGE_HINT: Record<LifecycleStage, string> = {
   scheduled: "Recurring scheduled tasks",
   backlog: "Parked or awaiting staffing",
-  in_progress: "Owner agent working — includes revising",
+  in_progress: "Owner bot working — includes revising",
   blocked: "Waiting on an upstream task, or owner stopped",
-  needs_human: "Decisions, agent questions, and reviews waiting on you",
+  needs_human: "Decisions, bot questions, and reviews waiting on you",
   done: "Landed",
   archive: "Filed away — archived or rejected",
 };
@@ -120,23 +180,30 @@ const TaskCard = memo(function TaskCard({
   // who owns it, and what they're doing right now. Only shown while running;
   // other states are conveyed by the state pill.
   const snapshot = useAppStore((s) =>
-    ownerSlug ? s.agentActivitySnapshots[ownerSlug] : undefined,
+    ownerSlug ? s.botActivitySnapshots[ownerSlug] : undefined,
   );
   const isRunning = activityDotForLifecycleState(state) === "running";
   const activity = isRunning ? snapshot?.activity?.trim() : undefined;
-
-  function navigate() {
-    void router.navigate({
-      to: "/tasks/$taskId",
-      params: { taskId: task.id },
-    });
-  }
+  // "Stuck" and "quiet" used to look identical on this board: a task whose
+  // owner hit an auth wall and one that is merely slow both rendered as a
+  // card in a lane. The broker has always known the difference — the
+  // silent-stall watchdog stamps stalled_since — but it only ever announced
+  // it as a chat post from "system", which is being retired, so the board is
+  // now the only place this can surface.
+  //
+  // Deliberately worded as "quiet", not "stuck": the watchdog detects absence
+  // of visible activity, which is not proof of failure. The card says what is
+  // observed and the title says what to do about it.
+  const stalledFor = quietForLabel(task.stalled_since);
+  // Opens the shared task modal in place rather than navigating to the
+  // chat-primary /tasks/$taskId surface. The route still works as a URL.
+  const openTaskModal = useAppStore((s) => s.openTaskModal);
 
   return (
     <button
       type="button"
       className={`issues-kanban-card${isSubtask ? " issues-kanban-card--subtask" : ""}`}
-      onClick={navigate}
+      onClick={() => openTaskModal(task.id)}
       data-testid={isSubtask ? "issue-subtask-row" : "issue-row"}
       aria-label={`${isSubtask ? "Sub-task" : "Task"}: ${formatTaskTitleForDisplay(
         task.title,
@@ -157,7 +224,18 @@ const TaskCard = memo(function TaskCard({
           </span>
         )}
       </div>
-      {activity ? (
+      {stalledFor ? (
+        <div
+          className="issues-kanban-card-stalled"
+          data-testid="issue-stalled"
+          title="No visible activity from the owner. It may still be working — open the task to check or restart it."
+        >
+          <span className="issues-kanban-card-stalled-dot" aria-hidden={true} />
+          <span className="issues-kanban-card-activity-text">
+            Quiet for {stalledFor}
+          </span>
+        </div>
+      ) : activity ? (
         <div className="issues-kanban-card-activity" title={activity}>
           <TaskStatusDot lifecycleState={state} />
           <span className="issues-kanban-card-activity-text">{activity}</span>
@@ -172,8 +250,8 @@ const TaskCard = memo(function TaskCard({
  * item. Sub-tasks nest directly beneath the parent card and stay in the
  * SAME lane as the parent — regardless of each child's own lifecycle stage —
  * so the board reads as a hierarchy ("these belong to that"). Each sub-task
- * runs in its own chat channel and links to its own detail surface; the
- * nesting is purely the visual tie back to the parent.
+ * opens its own task modal; the nesting is purely the visual tie back to the
+ * parent.
  */
 const TaskCardGroup = memo(function TaskCardGroup({
   task,
@@ -195,7 +273,7 @@ const TaskCardGroup = memo(function TaskCardGroup({
         >
           {subtasks.map((child) => (
             <li key={child.id}>
-              <TaskCard task={child} isSubtask />
+              <TaskCard task={child} isSubtask={true} />
             </li>
           ))}
         </ul>
@@ -273,7 +351,7 @@ function attentionSearchText(item: InboxItemRequest | InboxItemReview): string {
   return `${item.title ?? ""} ${item.review.sourceSlug ?? ""} ${item.review.targetPath ?? ""}`;
 }
 
-/** Card for a non-task attention item — a blocking agent request or a
+/** Card for a non-task attention item — a blocking bot request or a
  *  pending review — folded into the "Needs human input" lane when the
  *  standalone Inbox was consolidated into the board. Clicking a request
  *  opens the chat where its InterviewBar answers it; a review opens the
@@ -284,22 +362,18 @@ const AttentionItemCard = memo(function AttentionItemCard({
 }: {
   item: InboxItemRequest | InboxItemReview;
 }) {
+  const openTaskModal = useAppStore((s) => s.openTaskModal);
+
   function navigate() {
     if (item.kind === "request") {
-      const channel = item.channel?.trim();
-      if (channel) {
-        void router.navigate({
-          to: "/channels/$channelSlug",
-          params: { channelSlug: channel },
-        });
-        return;
-      }
+      // Deliberately no channel jump: a task is not a doorway to a room. The
+      // conversation lives in the office channel where the task was created,
+      // reachable from Channels in the sidebar. A request that carries its
+      // task opens that task's modal in place; one that doesn't falls back to
+      // the board.
       const issueId = item.request.issueId?.trim();
       if (issueId) {
-        void router.navigate({
-          to: "/tasks/$taskId",
-          params: { taskId: issueId },
-        });
+        openTaskModal(issueId);
         return;
       }
       void router.navigate({ to: "/tasks" });
@@ -390,8 +464,8 @@ function TasksEmptyState({ onOpenCreate }: { onOpenCreate: () => void }) {
       data-testid="issues-list-empty"
     >
       <p className="issues-empty-copy">
-        No tasks yet. File larger project work here, then cut it into agent
-        tasks.
+        No tasks yet. The team is watching this space, which is all they can do
+        until you file something.
       </p>
       <button
         type="button"
@@ -410,8 +484,15 @@ function TasksEmptyState({ onOpenCreate }: { onOpenCreate: () => void }) {
 interface TasksListProps {
   /** Used in tests to skip the fetch. */
   initialTasks?: Task[];
-  /** Used in tests to seed the shared stats counts without a broker. */
-  initialStats?: OfficeStatsTasks;
+  /**
+   * Used in tests to seed the shared stats counts without a broker.
+   *
+   * Carries the FULL payload rather than just the task buckets, because the
+   * Needs-human header is needsYouCount(stats) — a tasks-only seam would make
+   * the seeded path compute that header differently from production, which is
+   * the class of split this whole change exists to remove.
+   */
+  initialStats?: OfficeStats;
   /**
    * Used in tests to seed the folded attention items (blocking requests +
    * pending reviews) shown in the Needs-human lane without a broker poll.
@@ -482,6 +563,7 @@ export function TasksList({
   initialInboxItems,
 }: TasksListProps = {}) {
   const [query, setQuery] = useState("");
+  const [showUnassignedOnly, setShowUnassignedOnly] = useState(false);
   // Inline dialog replaces /tasks/new full-page form for the in-app path.
   // The route stays mounted as a fallback for direct URL navigation.
   const [createOpen, setCreateOpen] = useState(false);
@@ -544,7 +626,7 @@ export function TasksList({
   // the shell. Bucketing parity (stats ↔ the cards rendered below) is
   // pinned server-side by TestOfficeStats_MatchesListEndpoints.
   const statsResult = useOfficeStats();
-  const statsTasks = initialStats ?? statsResult.data?.tasks;
+  const stats = initialStats ?? statsResult.data;
 
   const allTasks = result.data?.tasks ?? [];
   const tasks = useMemo(() => allTasks.filter(isIssueTask), [allTasks]);
@@ -575,17 +657,25 @@ export function TasksList({
     );
   }, [schedulerResult.data]);
 
+  const unassignedCount = useMemo(
+    () => tasks.filter((t) => !t.owner?.trim()).length,
+    [tasks],
+  );
+
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) return tasks;
+    const byOwner = showUnassignedOnly
+      ? tasks.filter((t) => !t.owner?.trim())
+      : tasks;
+    if (!needle) return byOwner;
     // A parent surfaces when it matches OR any of its sub-tasks match, so a
     // search for a child's text still finds it (nested under its parent).
-    return tasks.filter((t) => {
+    return byOwner.filter((t) => {
       if (taskMatchesQuery(t, needle)) return true;
       const children = childrenByParent.get(t.id) ?? [];
       return children.some((child) => taskMatchesQuery(child, needle));
     });
-  }, [tasks, query, childrenByParent]);
+  }, [tasks, query, childrenByParent, showUnassignedOnly]);
 
   const filteredScheduled = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -595,16 +685,21 @@ export function TasksList({
     );
   }, [scheduledJobs, query]);
 
-  // Non-task attention items folded into the Needs-human lane: every
-  // request + review the unified inbox feed returns (the same set the
-  // inbox_attention badge counts among those two kinds).
+  // Non-task attention items folded into the Needs-human lane: requests and
+  // reviews from the unified inbox feed, EXCLUDING notices.
+  //
+  // A notice is news, not a decision — the delivery post already announced it
+  // in the channel the human is reading. Folding notices in here is what put a
+  // card in this lane while the header strip said "all quiet", because the
+  // strip never counted them. The lane shows what needs a human; nothing else.
   const attentionItems = useMemo<
     Array<InboxItemRequest | InboxItemReview>
   >(() => {
     const items = initialInboxItems ?? inboxResult.data?.items ?? [];
     return items.filter(
       (item): item is InboxItemRequest | InboxItemReview =>
-        item.kind === "request" || item.kind === "review",
+        (item.kind === "request" && !isNoticeRequest(item)) ||
+        item.kind === "review",
     );
   }, [initialInboxItems, inboxResult.data]);
 
@@ -652,7 +747,16 @@ export function TasksList({
     );
   }
 
-  if (tasks.length === 0) {
+  // The empty state claims nothing is waiting on you, so it may only render
+  // when that is actually true. Attention items — blocking requests and
+  // pending reviews — are counted by needsYouCount and folded into the
+  // Needs-human lane below, but they are NOT tasks. Gating this on task count
+  // alone printed "No tasks yet" underneath a "1 NEED YOU" header chip, a lit
+  // sidebar badge, and a desktop notification, with the request itself
+  // rendered nowhere at all (observed 2026-09-03: a blocking "Add Prospector
+  // to the team?" ask). Anything the header counts, the body must be able to
+  // show.
+  if (tasks.length === 0 && attentionItems.length === 0) {
     return (
       <>
         <TasksEmptyState onOpenCreate={() => setCreateOpen(true)} />
@@ -668,13 +772,20 @@ export function TasksList({
     // Folded request + review cards live only in the Needs-human lane, so
     // its header count is the decision-task count plus those extras.
     const extras = stage === "needs_human" ? filteredAttention.length : 0;
-    // Unfiltered board: lane header counts come from the shared stats
-    // payload (one source for every surface). While a search filter is
-    // active — or before the stats query resolves — the count reflects
-    // exactly the cards rendered below it.
-    if (!query.trim() && statsTasks) {
-      const fromStats = statsCountForStage(statsTasks, stage);
-      if (fromStats !== null) return fromStats + extras;
+    // Unfiltered board: the Needs-human header is the SHARED "needs you"
+    // count, so this lane, the runtime strip, and the sidebar badge can only
+    // ever print the same number. Every other lane reads its own bucket from
+    // the same stats payload. While a search filter is active — or before the
+    // stats query resolves — counts reflect exactly the cards rendered below.
+    // Stats counts describe the WHOLE board, so they are only correct while
+    // nothing is filtering it. With the search box or the unassigned filter
+    // active the header must count the cards actually rendered below it —
+    // otherwise the header and its own lane disagree, which is the drift this
+    // lane was just fixed for.
+    if (!(query.trim() || showUnassignedOnly) && stats) {
+      if (stage === "needs_human") return needsYouCount(stats);
+      const fromStats = statsCountForStage(stats.tasks, stage);
+      if (fromStats !== null) return fromStats;
     }
     return columns[stage].length + extras;
   }
@@ -691,6 +802,11 @@ export function TasksList({
           onChange={(e) => setQuery(e.target.value)}
           aria-label="Filter tasks"
           data-testid="issues-list-search"
+        />
+        <UnassignedChip
+          count={unassignedCount}
+          active={showUnassignedOnly}
+          onToggle={() => setShowUnassignedOnly((v) => !v)}
         />
         <button
           type="button"
@@ -756,6 +872,7 @@ export function TasksList({
                       <li
                         className="issues-kanban-column-empty"
                         aria-label={`No tasks in ${STAGE_LABELS[stage]}`}
+                        title="Watched closely. Still empty."
                       >
                         —
                       </li>

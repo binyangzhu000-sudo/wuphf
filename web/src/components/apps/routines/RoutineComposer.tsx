@@ -18,7 +18,7 @@ import {
 
 /**
  * Full-page composer for creating a routine. Every routine has an
- * owning agent (picked from office members) and a schedule built in
+ * owning bot (picked from office members) and a schedule built in
  * plain English — never raw cron.
  */
 export function RoutineComposer() {
@@ -47,12 +47,12 @@ export function RoutineComposer() {
   );
 
   // Seed the owner once members load. Prefer CEO if present; otherwise
-  // pick the first eligible agent so the user never sees an empty
+  // pick the first eligible bot so the user never sees an empty
   // dropdown next to a required field.
   useEffect(() => {
     if (ownerSlug || ownerCandidates.length === 0) return;
-    const ceo = ownerCandidates.find((m) => m.slug === "ceo");
-    setOwnerSlug((ceo ?? ownerCandidates[0]).slug);
+    const cos = ownerCandidates.find((m) => m.slug === "cos");
+    setOwnerSlug((cos ?? ownerCandidates[0]).slug);
   }, [ownerCandidates, ownerSlug]);
 
   const derivedSlug = useMemo(() => slugFromLabel(label), [label]);
@@ -139,8 +139,8 @@ export function RoutineComposer() {
             fontSize: "var(--text-sm)",
           }}
         >
-          Scheduled tasks fire on a schedule and run as a specific agent. Webhook and
-          context-change triggers are coming soon.
+          Scheduled tasks fire on a schedule and run as a specific agent.
+          Webhook and context-change triggers are coming soon.
         </p>
       </header>
 
@@ -168,7 +168,7 @@ export function RoutineComposer() {
           label="Slug"
           hint={
             slug.trim()
-              ? "URL identifier — must be unique within the office."
+              ? "URL identifier — must be unique within the team."
               : `Auto-derived from the title: ${derivedSlug || "(empty)"}`
           }
         >
@@ -185,7 +185,7 @@ export function RoutineComposer() {
 
         <FormField
           label="Owner"
-          hint="The agent that runs this scheduled task when it fires."
+          hint="The bot that runs this scheduled task when it fires."
         >
           <OwnerSelect
             value={ownerSlug}
@@ -201,7 +201,8 @@ export function RoutineComposer() {
                 marginTop: 4,
               }}
             >
-              No agents available. Add a teammate before creating a scheduled task.
+              No agents available. Add a teammate before creating a scheduled
+              task.
             </span>
           )}
         </FormField>
@@ -227,7 +228,7 @@ export function RoutineComposer() {
 
         <FormField
           label="Instructions"
-          hint="What the agent should do on each fire."
+          hint="What the bot should do on each fire."
         >
           <textarea
             className="input"
@@ -328,7 +329,7 @@ function OwnerSelect({ value, onChange, members, loading }: OwnerSelectProps) {
   if (loading) {
     return (
       <select className="input" disabled={true} value="" onChange={() => {}}>
-        <option value="">Loading agents…</option>
+        <option value="">Loading bots…</option>
       </select>
     );
   }
@@ -340,7 +341,7 @@ function OwnerSelect({ value, onChange, members, loading }: OwnerSelectProps) {
       data-testid="composer-owner"
       required={true}
     >
-      {members.length === 0 && <option value="">No agents available</option>}
+      {members.length === 0 && <option value="">No bots available</option>}
       {members.map((m) => (
         <option key={m.slug} value={m.slug}>
           {ownerLabel(m)}
@@ -359,7 +360,7 @@ function ownerLabel(m: OfficeMember): string {
 /**
  * Filter office members down to viable routine owners. Drops the human
  * seat (you can't assign a routine to yourself) and any built-in slots
- * that aren't agents.
+ * that aren't bots.
  */
 function filterOwnerCandidates(members: OfficeMember[]): OfficeMember[] {
   return members.filter((m) => {

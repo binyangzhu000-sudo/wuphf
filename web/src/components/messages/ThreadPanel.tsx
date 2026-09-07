@@ -77,7 +77,12 @@ export function ThreadPanel() {
   // would silently route replies to the URL's current channel (or
   // "general") whenever the panel outlived the originating route.
   const activeThreadId = activeThread?.id ?? null;
-  const currentChannel = activeThread?.channelSlug ?? "general";
+  // "" when the thread carries no channel — never "general". The comment
+  // above already warns that falling back to "general" silently routes
+  // replies to the wrong room, and then the old `?? "general"` on this line
+  // did precisely that whenever channelSlug was absent or empty. The reply
+  // composer below refuses to send without a channel instead.
+  const currentChannel = activeThread?.channelSlug?.trim() ?? "";
   const [text, setText] = useState("");
   const [caret, setCaret] = useState(0);
   const [acItems, setAcItems] = useState<AutocompleteItem[]>([]);
@@ -121,7 +126,7 @@ export function ThreadPanel() {
   }, [messages, activeThreadId]);
 
   // Auto-scroll to the bottom when a new reply arrives. Anchoring at the
-  // bottom means the composer is always in context and new agent replies
+  // bottom means the composer is always in context and new bot replies
   // land where your eye already is.
   useEffect(() => {
     if (messagesRef.current) {
@@ -197,13 +202,23 @@ export function ThreadPanel() {
 
   const sendThreadMessage = useCallback(
     (content: string) => {
+      // A thread with no channel has nowhere to post. Refusing loudly beats
+      // the old behaviour, where the reply went to #general and the human
+      // watched it appear and assumed it had landed in the thread.
+      if (!currentChannel) {
+        showNotice(
+          "This thread has no channel, so the reply has nowhere to go.",
+          "error",
+        );
+        return;
+      }
       sendReply.mutate({
         content,
         tagged: extractTaggedMentions(content, knownSlugs),
         target: replyTarget,
       });
     },
-    [sendReply, knownSlugs, replyTarget],
+    [sendReply, knownSlugs, replyTarget, currentChannel],
   );
 
   const clearParentChannelMessages = useCallback(() => {

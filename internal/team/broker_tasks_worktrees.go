@@ -81,7 +81,7 @@ func rejectFalseLocalWorktreeBlock(task *teamTask, reason string) error {
 //     path (see laneForTurn), so two worktree turns run in parallel only when
 //     their worktrees differ and serialize the moment they share a tree.
 //   - office / live_external: no shared worktree; concurrent turns are the same
-//     concurrency the system already runs across different agents (broker
+//     concurrency the system already runs across different bots (broker
 //     mediates shared state). If two external actions must be ordered, the
 //     caller declares a dependency.
 //
@@ -105,8 +105,8 @@ func (b *Broker) syncTaskWorktreeLocked(task *teamTask) error {
 	if task == nil {
 		return nil
 	}
-	// Automatically assign local_worktree mode when a coding agent claims a task.
-	if task.ExecutionMode == "" && codingAgentSlugs[strings.TrimSpace(task.Owner)] {
+	// Automatically assign local_worktree mode when a coding bot claims a task.
+	if task.ExecutionMode == "" && codingBotSlugs[strings.TrimSpace(task.Owner)] {
 		switch strings.TrimSpace(task.status) {
 		case "", "open", "done":
 			// not yet in-progress; leave mode unset
@@ -245,21 +245,65 @@ func (b *Broker) queueTaskBehindActiveOwnerLaneLocked(task *teamTask) {
 }
 
 // preferredTaskChannelLocked resolves the channel slug for a task.
-// If the caller supplied an explicit non-empty channel it is returned
-// as-is (after normalisation).  An empty / whitespace-only request
-// falls back to "general".
+//
+// An explicit non-empty request wins and is returned normalised. Otherwise the
+// task's home is, in order:
+//
+//  1. the OWNER's home channel,
+//  2. the CREATOR's home channel,
+//  3. EMPTY.
+//
+// Empty is a legal outcome, not a failure. An unowned intake task genuinely
+// has no conversation home yet, and the Tasks surface renders a task without
+// one. Callers MUST therefore treat "" as "no channel" and skip their
+// findChannelLocked / canAccessChannelLocked checks — passing "" to
+// findChannelLocked would normalise it straight back to "general"
+// (normalizeChannelSlug's lobby fallback) and silently re-create exactly the
+// leak this change exists to close.
+//
+// Both steps go through homeChannelForLocked, which is the seam: while
+// #general is enabled it answers "general" for ANY actor, including an empty
+// one, so today's behaviour is unchanged. Once general is switched off the
+// same two calls resolve to real 1:1 DMs and the chain falls through to empty.
+//
+// Landing this BEFORE the flip is the whole point. Every task conversation
+// currently lives in #general — shouldMintPerTaskChannel returns false
+// unconditionally, so nothing mints a per-task room — and without this
+// resolver they would all orphan the moment the switch goes off.
 //
 // The old behaviour of scanning recent execution channels and routing
-// business-objective tasks there has been removed.  Each new
-// business-objective task now gets its own dedicated channel (minted
-// by createPerTaskChannelLocked in the individual create paths); this
-// function is now purely a slug normaliser.
-func (b *Broker) preferredTaskChannelLocked(requestedChannel, _, _, _, _ string) string {
-	channel := normalizeChannelSlug(requestedChannel)
-	if channel == "" {
-		return "general"
+// business-objective tasks there was removed earlier; this function is the
+// single place that decides a task's home.
+func (b *Broker) preferredTaskChannelLocked(requestedChannel, createdBy, owner, _, _ string) string {
+	// TrimSpace, not normalizeChannelSlug, for the emptiness test:
+	// normalizeChannelSlug("") returns "general", so normalising first would
+	// make the no-channel case indistinguishable from an explicit #general.
+	if raw := strings.TrimSpace(requestedChannel); raw != "" {
+		return b.reHomeTaskOutOfHumanDMLocked(normalizeChannelSlug(raw), owner)
 	}
-	return channel
+	// The owner's DM, but only if the CREATOR may post in it. A DM has exactly
+	// two participants, so a task one bot opens for another would otherwise
+	// resolve to a private conversation the creator cannot write to, and the
+	// caller's own access check would then reject the whole plan with 403. The
+	// human passes every check, so a human-planned task still lands on its
+	// owner.
+	if slug, err := b.homeChannelForLocked(owner); err == nil && slug != "" &&
+		b.canAccessChannelLocked(createdBy, slug) {
+		return slug
+	}
+	// The creator cannot post in the owner's DM: an agent opening a task for
+	// another agent. The old fallback was the CREATOR's own DM, which parked
+	// the owner's entire working thread inside the human's private
+	// conversation with the creator (observed: the Chief of Staff's task for
+	// the Designer living in #cos__human). The creator⇄owner pair DM is the
+	// right room — both can post, and the consult markers keep it observable.
+	if pair := b.botPairDMForLocked(createdBy, owner); pair != "" {
+		return pair
+	}
+	if slug, err := b.homeChannelForLocked(createdBy); err == nil && slug != "" {
+		return slug
+	}
+	return ""
 }
 
 // shouldMintPerTaskChannel reports whether a newly created task
@@ -275,7 +319,7 @@ func (b *Broker) preferredTaskChannelLocked(requestedChannel, _, _, _, _ string)
 //
 // A sub-issue (ParentIssueID!="") that clears those two guards mints its OWN
 // task-<childID> channel, separate from the parent. The channel handed to a
-// sub-issue create is the creating agent's current conversation — almost
+// sub-issue create is the creating bot's current conversation — almost
 // always the parent task's channel — so we mint regardless of whether it
 // resolved to "general". Without this, every child posts its working chatter
 // into the parent's chat and the two tasks share one timeline. A sub-issue
@@ -284,7 +328,7 @@ func (b *Broker) preferredTaskChannelLocked(requestedChannel, _, _, _, _ string)
 //
 // A top-level task that clears those guards mints when the resolved channel
 // is "general" OR is another task's per-task channel
-// (incomingChannelOwnedByAnotherTask). The creating agent's conversation is
+// (incomingChannelOwnedByAnotherTask). The creating bot's conversation is
 // usually inside some existing task's chat, so a new top-level Issue created
 // from there arrives carrying that task's channel; without this it would
 // silently share the other task's timeline (every new Issue piling into the
@@ -297,25 +341,26 @@ func (b *Broker) preferredTaskChannelLocked(requestedChannel, _, _, _, _ string)
 // title lacked execution keywords ("Draft Q3 outbound sequence") stayed in
 // #general — so the heuristic was dropped (2026-06-03). The function is still
 // used elsewhere (notifications / pipeline), just not as a channel gate.
-func shouldMintPerTaskChannel(channel string, incomingChannelOwnedByAnotherTask bool, task *teamTask) bool {
-	if task == nil {
-		return false
-	}
-	if task.System {
-		return false
-	}
-	if strings.TrimSpace(task.PipelineID) == "incident" {
-		return false
-	}
-	if strings.TrimSpace(task.ParentIssueID) != "" {
-		return true
-	}
-	if normalizeChannelSlug(channel) == "general" {
-		return true
-	}
-	if incomingChannelOwnedByAnotherTask {
-		return true
-	}
+// shouldMintPerTaskChannel reports whether a task gets its own chat channel.
+//
+// It always returns false: the office is one room. Tasks are created from
+// #general and every conversation about them stays in #general, where the whole
+// roster is present. Per-task channels fragmented that — a task channel is
+// seeded with the owner (plus Librarian), so @-mentioning any other teammate in
+// it addressed someone who was not in the room. Observed 2026-08-22: a human
+// asked "@designer do you like this?" inside task-dunde-2, whose only member was
+// app-builder; Designer answered 31s later somewhere else while App Builder
+// relayed the question in prose. The human saw a relay instead of an answer.
+//
+// Tasks themselves are unchanged: they still exist with title, description,
+// owner, and status, and the Tasks surface still lists and manages them. Only
+// the dedicated per-task room is gone.
+//
+// Kept as a function (rather than deleting the four call sites) so the decision
+// stays in one place and the callers keep their "no channel minted -> the task
+// stays in the channel it was created from" fallback, which is exactly the
+// wanted behaviour.
+func shouldMintPerTaskChannel(string, bool, *teamTask) bool {
 	return false
 }
 
@@ -347,10 +392,10 @@ func (b *Broker) createPerTaskChannelLocked(taskID, title, owner, actor string) 
 	// createChannelLocked validates every entry against findMemberLocked
 	// and returns an error for unknown slugs.
 	members := make([]string, 0, 2)
-	if o := normalizeActorSlug(owner); o != "" && o != "ceo" && b.findMemberLocked(o) != nil {
+	if o := normalizeActorSlug(owner); o != "" && o != "cos" && b.findMemberLocked(o) != nil {
 		members = append(members, o)
 	}
-	// Actor may be "human", "you", "system", "ceo", or a specialist
+	// Actor may be "human", "you", "system", "cos", or a specialist
 	// slug.  Trusted senders are not in the members list so skip them;
 	// createChannelLocked will return an error for unknown slugs.
 	actorNorm := normalizeActorSlug(actor)
@@ -361,7 +406,7 @@ func (b *Broker) createPerTaskChannelLocked(taskID, title, owner, actor string) 
 			break
 		}
 	}
-	if !isAlreadyMember && actorNorm != "" && actorNorm != "ceo" &&
+	if !isAlreadyMember && actorNorm != "" && actorNorm != "cos" &&
 		!isHumanMessageSender(actorNorm) && actorNorm != "system" &&
 		actorNorm != "nex" && b.findMemberLocked(actorNorm) != nil {
 		members = append(members, actorNorm)

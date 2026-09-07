@@ -132,7 +132,7 @@ func TestPaneLifecycle_HasLiveSession(t *testing.T) {
 
 func TestPaneLifecycle_ListTeamPanesParsesOutput(t *testing.T) {
 	fake := newFakeTmuxRunner()
-	fake.outputs["list-panes"] = []byte("0 channel\n1 ceo\n2 fe\n")
+	fake.outputs["list-panes"] = []byte("0 channel\n1 cos\n2 fe\n")
 	setTmuxRunnerForTest(t, fake)
 
 	got, err := newPaneLifecycle("wuphf-team").ListTeamPanes()
@@ -189,15 +189,15 @@ func TestPaneLifecycle_ChannelPaneStatusTrimsOutput(t *testing.T) {
 
 func TestPaneLifecycle_CapturePaneContentBuildsTarget(t *testing.T) {
 	fake := newFakeTmuxRunner()
-	fake.outputs["capture-pane"] = []byte("agent ready\n")
+	fake.outputs["capture-pane"] = []byte("bot ready\n")
 	setTmuxRunnerForTest(t, fake)
 
 	got, err := newPaneLifecycle("wuphf-team").CapturePaneContent(2)
 	if err != nil {
 		t.Fatalf("CapturePaneContent err = %v", err)
 	}
-	if got != "agent ready\n" {
-		t.Fatalf("CapturePaneContent = %q, want %q", got, "agent ready\n")
+	if got != "bot ready\n" {
+		t.Fatalf("CapturePaneContent = %q, want %q", got, "bot ready\n")
 	}
 	calls := fake.callsFor("capture-pane")
 	if len(calls) != 1 {

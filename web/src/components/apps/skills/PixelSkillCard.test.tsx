@@ -188,7 +188,7 @@ describe("<PixelSkillCard>", () => {
     render(
       <PixelSkillCard
         skill={makeSkill({
-          created_by: "ceo",
+          created_by: "cos",
           created_at: "2026-04-01T10:00:00Z",
           updated_at: "2026-05-07T10:00:00Z",
           source: "wiki:grill-me",
@@ -203,7 +203,7 @@ describe("<PixelSkillCard>", () => {
     expect(back.textContent).toContain("Active");
     expect(back.textContent).toContain("Owners");
     expect(back.textContent).toContain("Created by");
-    expect(back.textContent).toContain("@ceo");
+    expect(back.textContent).toContain("@cos");
     expect(back.textContent).toContain("Source");
     expect(back.textContent).toContain("wiki:grill-me");
   });
@@ -218,7 +218,7 @@ describe("<PixelSkillCard>", () => {
     expect(screen.getByRole("button", { name: "Disable" })).toBeInTheDocument();
   });
 
-  it("shows lead-routable when no owner agents are scoped", () => {
+  it("shows lead-routable when no owner bots are scoped", () => {
     render(<PixelSkillCard skill={makeSkill({ owner_agents: [] })} />);
     // Front-face stat strip uses 'Lead-routable'; the back face also lists
     // 'Lead-routable' as the Owners value, so we expect at least one match.

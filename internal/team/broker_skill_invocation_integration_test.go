@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nex-crm/wuphf/internal/agent"
+	"github.com/nex-crm/wuphf/internal/bot"
 )
 
 func TestBrokerSkillInvocationE2E_PersistsAcrossReload(t *testing.T) {
@@ -36,7 +36,7 @@ func TestBrokerSkillInvocationE2E_PersistsAcrossReload(t *testing.T) {
 		channel    = "general"
 	)
 
-	b.SeedDefaultSkills([]agent.PackSkillSpec{{
+	b.SeedDefaultSkills([]bot.PackSkillSpec{{
 		Name:        skillName,
 		Title:       skillTitle,
 		Description: "Systematic debugging with root cause analysis.",
@@ -154,8 +154,14 @@ func TestBrokerSkillInvocationE2E_PersistsAcrossReload(t *testing.T) {
 	}
 	defer b2.Stop()
 
+	// No ?channel filter. SeedDefaultSkills sets no Channel at all — a default
+	// skill is workspace-wide, not room-scoped — so filtering by "general" only
+	// ever matched it because normalizeChannelSlug("") laundered the skill's
+	// empty channel into the lobby. handleGetSkills documents an absent
+	// ?channel as "no filter, list every skill", which is the honest query for
+	// a skill that belongs to no room.
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
-		"http://"+b2.Addr()+"/skills?channel="+channel, nil)
+		"http://"+b2.Addr()+"/skills", nil)
 	if err != nil {
 		t.Fatalf("build skills request: %v", err)
 	}

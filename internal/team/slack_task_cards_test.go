@@ -21,7 +21,7 @@ func seedCardTask(b *Broker, id string, state LifecycleState) {
 		ID:             id,
 		Channel:        "slack-general",
 		Title:          "Ship the pricing page",
-		Owner:          "ceo",
+		Owner:          "cos",
 		LifecycleState: state,
 	})
 }
@@ -114,7 +114,7 @@ func TestSlackTaskCardNeverCardsInactiveOrUnbridgedTasks(t *testing.T) {
 	// Active work in a channel with no Slack surface gets no card either.
 	b.mu.Lock()
 	b.tasks = append(b.tasks, teamTask{
-		ID: "OFFICE-3", Channel: "general", Title: "internal", Owner: "ceo",
+		ID: "OFFICE-3", Channel: "team", Title: "internal", Owner: "cos",
 		LifecycleState: LifecycleStateRunning,
 	})
 	b.mu.Unlock()
@@ -159,7 +159,7 @@ func TestSlackTaskCardRegistryPersistsToDisk(t *testing.T) {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	b := NewBrokerAt(path)
+	b := newBrokerWithTeamRoom(path)
 	rec, ok := b.SlackTaskCard("OFFICE-5")
 	if !ok || rec.Timestamp != "1700.1" || !rec.Pinned {
 		t.Fatalf("card registry did not survive a state reload: %+v ok=%v", rec, ok)
@@ -172,7 +172,7 @@ func TestSlackOutboundTaskMessageHasNoFootnote(t *testing.T) {
 	tr, b := newTestSlackTransport(t, "C0123", newFakeSlackAPI())
 	b.SetWebURL("http://127.0.0.1:7905")
 	out, ok := tr.FormatOutbound(channelMessage{
-		From: "ceo", Channel: "slack-general",
+		From: "cos", Channel: "slack-general",
 		Content: "Numbers are in: $488.04/yr.", SourceTaskID: "OFFICE-41",
 	})
 	if !ok {

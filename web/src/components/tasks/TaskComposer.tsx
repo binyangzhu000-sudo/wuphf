@@ -2,7 +2,7 @@
  * TaskComposer — the new-task home composer.
  *
  * This is the app's landing surface: a single centered chatbox where a human
- * describes an outcome, picks who owns it and how it runs (owner agent /
+ * describes an outcome, picks who owns it and how it runs (owner bot /
  * provider / model / reasoning effort), and chooses how to start it — now, on
  * the backlog, or as a recurring routine.
  *
@@ -11,7 +11,7 @@
  * offers only the levels that runtime applies at dispatch (see effortCatalog).
  *
  * The provider/model/effort are sent ON THE TASK — the model is a property of
- * the task, not the agent, so nothing here mutates an agent's binding. Dispatch
+ * the task, not the bot, so nothing here mutates a bot's binding. Dispatch
  * prefers the task's runtime over the owner's (soft-default) binding.
  *
  * Every task is assigned: the owner chip defaults to the CEO (the team lead)
@@ -51,7 +51,14 @@ import { HOME_COMPOSER_DRAFT_CHANNEL, useAppStore } from "../../stores/app";
 
 type CreateMode = "start" | "backlog" | "routine";
 
-const DEFAULT_CHANNEL = "general";
+// A new task belongs in its OWNER's DM, not a shared room. Resolved from the
+// owner at submit time rather than hardcoded, so the composer keeps working
+// when #general is retired.
+function defaultChannelForOwner(owner: string): string {
+  const slug = owner.trim().toLowerCase();
+  if (!slug || slug === AUTO_OWNER) return "";
+  return slug > "human" ? `human__${slug}` : `${slug}__human`;
+}
 
 // "auto" owner sentinel — the CEO picks the real specialist (the floor
 // assignment; every task is assigned). Mirrors isAutoOwner on the Go side.
@@ -118,14 +125,14 @@ export function TaskComposer() {
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const submitLockRef = useRef(false);
 
-  // The configured team lead (default "ceo") is the composer's default owner.
+  // The configured team lead (default "cos") is the composer's default owner.
   const leadSlug = resolveLeadSlug(configQuery.data?.team_lead_slug, members);
   const ownerSlug = ownerChoice ?? leadSlug;
 
   // The selected owner's stored binding seeds the chips as a starting point.
   // "auto" (and any owner without a binding) seeds from the global default
   // runtime. Whatever the user picks is sent ON THE TASK — it never mutates the
-  // agent's binding (the model is a property of the task, not the agent).
+  // bot's binding (the model is a property of the task, not the bot).
   const ownerMember = members.find((m) => m.slug === ownerSlug);
   const ownerBinding = bindingFromMember(ownerMember?.provider);
   const ownerKind = runtimeKindFromMember(ownerMember?.provider, llmKinds);
@@ -184,7 +191,7 @@ export function TaskComposer() {
   }
 
   // createAndRoute creates the task and hands the user off. The task carries
-  // its own provider/model/effort, so nothing here mutates an agent binding.
+  // its own provider/model/effort, so nothing here mutates a bot binding.
   //   Start now → dispatch the owner (a real owner runs; Auto → CEO triages).
   //   Backlog   → park=true: assigned but parked in the backlog until started.
   async function createAndRoute(mode: "start" | "backlog", owner: string) {
@@ -205,7 +212,7 @@ export function TaskComposer() {
             park: mode === "backlog",
           },
         ],
-        { channel: DEFAULT_CHANNEL, createdBy: "human" },
+        { channel: defaultChannelForOwner(owner), createdBy: "human" },
       );
       const created = response.tasks?.[0];
       void queryClient.invalidateQueries({ queryKey: ["issues"] });
@@ -262,8 +269,8 @@ export function TaskComposer() {
 
   const isAuto = ownerSlug === AUTO_OWNER;
   const ownerLabel = isAuto
-    ? "Auto — CEO picks the specialist"
-    : ownerMember?.name || ownerSlug || "CEO";
+    ? "Auto — Chief of Staff picks the specialist"
+    : ownerMember?.name || ownerSlug || "Chief of Staff";
   const runtimeLabel = model.trim() || "runtime default";
 
   return (
@@ -271,8 +278,8 @@ export function TaskComposer() {
       <div className="task-composer">
         <h1 className="task-composer-title">What do you want to get done?</h1>
         <p className="task-composer-subtitle">
-          Describe the outcome. The team starts on it immediately — you review
-          the delivered work.
+          Describe the outcome. The team starts immediately, and watches each
+          other do it — you review the delivered work.
         </p>
         <form className="task-composer-form" onSubmit={handleSubmit}>
           <textarea
@@ -297,17 +304,17 @@ export function TaskComposer() {
                 {/* The roster may still be loading; keep the default lead
                     selectable so the select never falls back to Auto. */}
                 {members.some((m) => m.slug === leadSlug) ? null : (
-                  <option value={leadSlug}>CEO</option>
+                  <option value={leadSlug}>Chief of Staff</option>
                 )}
                 {members.map((m) => (
                   <option key={m.slug} value={m.slug}>
                     {m.name || m.slug}
                   </option>
                 ))}
-                {/* Auto stays an explicit opt-in: the CEO picks the best
+                {/* Auto stays an explicit opt-in: the Chief of Staff picks the best
                     specialist. It is no longer the default — an ownerless
                     first task read as "parked" to new users. */}
-                <option value={AUTO_OWNER}>Auto — CEO picks</option>
+                <option value={AUTO_OWNER}>Auto — Chief of Staff picks</option>
               </select>
             </label>
 
@@ -399,7 +406,7 @@ export function TaskComposer() {
               disabled={submitting}
               title={
                 isAuto
-                  ? "Create and have the CEO assign + start it now"
+                  ? "Create and have the Chief of Staff assign + start it now"
                   : `Assign @${ownerSlug} and start now`
               }
               data-testid="task-composer-start"

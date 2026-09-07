@@ -15,7 +15,7 @@
 //     by strict-mode parameter shadowing + a code scan (import/eval rejected).
 //     TODO(security): a permissioned runtime for full authority stripping.
 //
-// SEND-GATE (CQ1, default deny): gated capabilities (`crm.assign`, `nex.send`,
+// SEND-GATE (CQ1, default deny): gated capabilities (`nex.send`,
 // `nex.browser`) halt the run with status="needs_approval" unless the run carries
 // approved=true — the FE renders the human approval card in the chat.
 
@@ -23,7 +23,7 @@ import { buildCapabilities, GATED_CAPABILITIES } from "./capabilities.js";
 import { withRunSignal } from "./runContext.js";
 import type { Tool, ToolCallGate } from "./wire.js";
 
-/** One callable capability (e.g. crm.deals). Args/return are untyped on purpose:
+/** One callable capability (e.g. data.list). Args/return are untyped on purpose:
  * tool code is agent-authored JS, not a typed consumer. */
 export type CapabilityFn = (...args: unknown[]) => unknown;
 
@@ -46,7 +46,16 @@ export type ToolRunResult =
 	| { status: "needs_approval"; gate: ToolCallGate; actions: string[] }
 	| { status: "error"; detail: string; actions: string[] };
 
-const DEFAULT_TIMEOUT_MS = 5000;
+// Outer hard-kill for a whole tool run. It must exceed the time a tool spends
+// AWAITING its capabilities, not just its CPU work: a tool that calls nex.ai.*
+// (each capability call independently bounded at DEFAULT_CAP_TIMEOUT_MS = 60s)
+// can legitimately spend tens of seconds waiting on a real model. The old 5s
+// default silently killed every AI-using tool at 5s the moment runtime nex.ai.*
+// became real (2026-08-18) — it was only ever survivable while nex.ai.* was the
+// instant simulation. 120s covers a couple of sequential real model calls; hosts
+// running heavier tools raise it via TOOL_CALL_TIMEOUT_MS. The runaway-sync-loop
+// guard still fires — just at 120s on an isolated worker thread, not 5s.
+const DEFAULT_TIMEOUT_MS = 120_000;
 
 // Capabilities that mutate the outside world (or seize the operator's browser)
 // halt for the approval card unless the run is approved. The allow-list lives
@@ -107,7 +116,6 @@ function labelOf(v: unknown): string {
 
 /** Human-readable gate copy for the approval card ("This will <detail>."). */
 function gateDetail(path: string, args: unknown[]): string {
-	if (path === "crm.assign") return `assign ${labelOf(args[0])} to ${labelOf(args[1])}`;
 	if (path === "nex.send") return `send ${labelOf(args[1])} to ${labelOf(args[0])}`;
 	if (path === "nex.browser") return `control your browser to ${labelOf(args[0])}`;
 	return `run ${path}`;
@@ -195,7 +203,7 @@ export async function runTool(tool: Tool, args: Record<string, string> = {}, opt
 
 	const fnName = /(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)/.exec(tool.code)?.[1];
 	if (!fnName) {
-		return { status: "error", detail: "tool code must declare a named function", actions: ctx.actions };
+		return { status: "error", detail: "this tool has a problem in how it was built — ask Nex to rebuild it", actions: ctx.actions };
 	}
 
 	const caps = hostCaps(opts.capabilities ?? buildCapabilities(), ctx);
@@ -231,7 +239,7 @@ export async function runTool(tool: Tool, args: Record<string, string> = {}, opt
 		};
 		// The HARD KILL: a sync infinite loop in tool code dies here, at the
 		// deadline — worker.terminate() stops the thread, not just the waiting.
-		const timer = setTimeout(() => finish({ status: "error", detail: `tool timed out after ${timeoutMs}ms`, actions: ctx.actions }), timeoutMs);
+		const timer = setTimeout(() => finish({ status: "error", detail: "this took too long, so the run was stopped — try again, or ask for something smaller", actions: ctx.actions }), timeoutMs);
 
 		worker.onmessage = (ev: MessageEvent) => {
 			const msg = ev.data as WorkerMsg;
@@ -259,7 +267,7 @@ export async function runTool(tool: Tool, args: Record<string, string> = {}, opt
 			}
 		};
 		worker.onerror = (ev: ErrorEvent) => {
-			finish({ status: "error", detail: ev.message || "tool worker crashed", actions: ctx.actions });
+			finish({ status: "error", detail: ev.message || "the run stopped unexpectedly — nothing was sent; try again", actions: ctx.actions });
 		};
 
 		worker.postMessage({

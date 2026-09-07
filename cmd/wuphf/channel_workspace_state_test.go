@@ -9,28 +9,26 @@ import (
 
 func TestBuildOfficeIntroLinesUsesWorkspaceState(t *testing.T) {
 	// Pin memory backend to none — this test asserts the "local-only
-	// runtime" card. Under the new default, --no-nex alone lands on the
-	// markdown wiki (not local-only), so we opt in to local-only
-	// explicitly.
-	t.Setenv("WUPHF_NO_NEX", "1")
+	// runtime" card, and the shipping default is the markdown wiki, so we opt
+	// in to local-only explicitly.
 	t.Setenv("WUPHF_MEMORY_BACKEND", "none")
 	m := newChannelModel(false)
 	m.brokerConnected = true
-	m.members = []channelui.Member{{Slug: "ceo", Name: "CEO"}, {Slug: "pm", Name: "Product Manager"}}
+	m.members = []channelui.Member{{Slug: "cos", Name: "CEO"}, {Slug: "pm", Name: "Product Manager"}}
 	m.tasks = []channelui.Task{{ID: "task-1", Title: "Ship launch", Status: "in_progress", Owner: "pm"}}
-	m.requests = []channelui.Interview{{ID: "req-1", Kind: "approval", Status: "pending", Title: "Approve launch copy", Question: "Approve launch copy?", From: "ceo"}}
+	m.requests = []channelui.Interview{{ID: "req-1", Kind: "approval", Status: "pending", Title: "Approve launch copy", Question: "Approve launch copy?", From: "cos"}}
 
 	lines := m.buildOfficeIntroLines(96)
 	plain := stripANSI(joinRenderedLines(lines))
 
-	if !strings.Contains(plain, "Welcome to The WUPHF Office.") {
-		t.Fatalf("expected office welcome copy, got %q", plain)
+	if !strings.Contains(plain, "Welcome to gawkbot.") {
+		t.Fatalf("expected welcome copy, got %q", plain)
 	}
 	if !strings.Contains(plain, "Local-only runtime") {
 		t.Fatalf("expected local-only readiness card, got %q", plain)
 	}
-	if !strings.Contains(plain, "Restart without --no-nex or select --memory-backend gbrain when you want external context.") {
-		t.Fatalf("expected switcher guidance, got %q", plain)
+	if !strings.Contains(plain, "Set --memory-backend gbrain or --memory-backend markdown to enable organizational context.") {
+		t.Fatalf("expected memory-backend guidance, got %q", plain)
 	}
 }
 
@@ -44,7 +42,7 @@ func TestBuildOfficeIntroLinesShowsOfflinePreviewGuidance(t *testing.T) {
 	if !strings.Contains(plain, "Offline preview") {
 		t.Fatalf("expected offline preview messaging, got %q", plain)
 	}
-	if !strings.Contains(plain, "Launch WUPHF to attach the live office, or run /doctor to inspect runtime readiness.") {
+	if !strings.Contains(plain, "Launch gawkbot to attach the live team, or run /doctor to inspect runtime readiness.") {
 		t.Fatalf("expected doctor guidance, got %q", plain)
 	}
 }
@@ -52,15 +50,15 @@ func TestBuildOfficeIntroLinesShowsOfflinePreviewGuidance(t *testing.T) {
 func TestBuildDirectIntroLinesPreservesDirectSessionResetLanguage(t *testing.T) {
 	m := newChannelModel(false)
 	m.sessionMode = "1o1"
-	m.oneOnOneAgent = "be"
+	m.oneOnOneBot = "be"
 
 	lines := m.buildDirectIntroLines(96)
 	plain := stripANSI(joinRenderedLines(lines))
 
-	if !strings.Contains(plain, "Direct session reset. Agent pane reloaded in place.") {
+	if !strings.Contains(plain, "Direct session reset. Bot pane reloaded in place.") {
 		t.Fatalf("expected direct-session reset copy, got %q", plain)
 	}
-	if !strings.Contains(plain, "Use /switcher to jump back to the office.") {
+	if !strings.Contains(plain, "Use /switcher to jump back to the team.") {
 		t.Fatalf("expected switcher guidance in direct intro, got %q", plain)
 	}
 }
@@ -70,9 +68,9 @@ func TestCurrentHeaderMetaUsesWorkspaceStateForOfficeMessages(t *testing.T) {
 	m.activeApp = channelui.OfficeAppMessages
 	m.activeChannel = "launch"
 	m.brokerConnected = true
-	m.members = []channelui.Member{{Slug: "ceo", Name: "CEO"}, {Slug: "pm", Name: "Product Manager"}}
+	m.members = []channelui.Member{{Slug: "cos", Name: "CEO"}, {Slug: "pm", Name: "Product Manager"}}
 	m.tasks = []channelui.Task{{ID: "task-1", Title: "Ship launch", Status: "in_progress", Owner: "pm"}}
-	m.requests = []channelui.Interview{{ID: "req-1", Kind: "approval", Status: "pending", Title: "Approve launch copy", Question: "Approve launch copy?", From: "ceo", Blocking: true}}
+	m.requests = []channelui.Interview{{ID: "req-1", Kind: "approval", Status: "pending", Title: "Approve launch copy", Question: "Approve launch copy?", From: "cos", Blocking: true}}
 
 	meta := stripANSI(m.currentHeaderMeta())
 	if !strings.Contains(meta, "2 teammates") {
@@ -86,7 +84,6 @@ func TestCurrentHeaderMetaUsesWorkspaceStateForOfficeMessages(t *testing.T) {
 func TestCurrentWorkspaceUIStatePromotesDoctorWarningsIntoReadiness(t *testing.T) {
 	// Same pin as TestBuildOfficeIntroLinesUsesWorkspaceState — the
 	// readiness card asserted here is the "Local-only" variant.
-	t.Setenv("WUPHF_NO_NEX", "1")
 	t.Setenv("WUPHF_MEMORY_BACKEND", "none")
 	m := newChannelModel(false)
 	m.brokerConnected = true

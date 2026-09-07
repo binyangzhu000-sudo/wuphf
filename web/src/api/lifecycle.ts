@@ -119,12 +119,12 @@ function normalizeInboxItem(item: InboxItem): InboxItem {
 }
 
 /**
- * Phase 3: per-agent thread inbox. Groups InboxItems by the agent
+ * Phase 3: per-bot thread inbox. Groups InboxItems by the bot
  * who owns/sent/submitted them and enriches each thread with recent
- * message activity from the agent's DM channel.
+ * message activity from the bot's DM channel.
  *
  * Composes on top of /inbox/items — items are the same shape, just
- * grouped + decorated with the agent + preview line + DM channel.
+ * grouped + decorated with the bot + preview line + DM channel.
  */
 export async function getInboxThreads(): Promise<InboxThreadsResponse> {
   const raw = await get<InboxThreadsResponse>("/inbox/threads");
@@ -271,7 +271,7 @@ export async function postDecision(
     return Promise.resolve({ taskId, action, status: "recorded-mock" });
   }
   // created_by: "human" self-attributes this decision as the human's. The
-  // local UI shares the broker token with agents, so the broker cannot tell
+  // local UI shares the broker token with bots, so the broker cannot tell
   // them apart by auth; this explicit signal is what clears the Plan-mode
   // human-only approval gate (mirrors the team_task created_by field).
   const body: { action: DecisionAction; comment?: string; created_by: string } =
@@ -293,7 +293,7 @@ export async function postDecision(
  *
  * Reject runs through the task mutation endpoint (POST /tasks with
  * action=reject) rather than /tasks/{id}/decision so the lifecycle
- * transition uses the same code path as the agent-side reject path.
+ * transition uses the same code path as the bot-side reject path.
  */
 export async function postTaskReject(
   taskId: string,
@@ -314,10 +314,14 @@ export async function postTaskReject(
     });
   }
   return trackOn(
+    // No `channel`: a reject addresses an EXISTING task by id, and the task
+    // already knows where it lives. This used to send the literal "general",
+    // which stopped existing when the shared room was retired and turned every
+    // reject into "channel not found". The broker resolves the task's own
+    // channel for non-create actions.
     post(`/tasks`, {
       action: "reject",
       id: taskId,
-      channel: "general",
       details: trimmed,
       created_by: "human",
     }),
@@ -328,7 +332,7 @@ export async function postTaskReject(
 
 /**
  * POST a manual Resume on a blocked task. Clears the
- * blocked state and re-queues the owner agent's lane, so the
+ * blocked state and re-queues the owner bot's lane, so the
  * task picks up where it left off. Mirrors the watchdog's resume path
  * but exposes the action to humans from the inbox card.
  *

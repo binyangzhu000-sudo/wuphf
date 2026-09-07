@@ -2,7 +2,7 @@ package team
 
 // broker_task_followup_test.go — post-done message routing (done-integrity
 // fix family; ICP-eval v2 [01:48]/[01:58]: "make the tagline punchier" on a
-// delivered task got no agent reply and no file edit for 22 minutes):
+// delivered task got no bot reply and no file edit for 22 minutes):
 //
 //  1. A HUMAN message in a delivered task's channel stamps the note AND
 //     appends the task_followup wake action for the owner. #general and
@@ -17,7 +17,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nex-crm/wuphf/internal/agent"
+	"github.com/nex-crm/wuphf/internal/bot"
 )
 
 // newFollowUpTestBroker seeds a broker with a delivered (done) task owned by
@@ -26,13 +26,13 @@ func newFollowUpTestBroker(t *testing.T) *Broker {
 	t.Helper()
 	b := newTestBroker(t)
 	b.members = []officeMember{
-		{Slug: "ceo", Name: "CEO", BuiltIn: true},
+		{Slug: "cos", Name: "CEO", BuiltIn: true},
 		{Slug: "eng", Name: "Engineer"},
 		{Slug: "fe", Name: "Frontend"},
 	}
 	b.channels = []teamChannel{
-		{Slug: "general", Name: "general", Members: []string{"human", "ceo", "eng", "fe"}},
-		{Slug: "task-done-1", Name: "Ship the landing page", Members: []string{"human", "ceo", "eng"}},
+		{Slug: "general", Name: "general", Members: []string{"human", "cos", "eng", "fe"}},
+		{Slug: "task-done-1", Name: "Ship the landing page", Members: []string{"human", "cos", "eng"}},
 	}
 	b.tasks = []teamTask{
 		{
@@ -85,12 +85,12 @@ func TestTaskFollowUp_GeneralAndArchivedAndAgentPostsExcluded(t *testing.T) {
 	if task := b.TaskByID("task-done-general"); task.HumanNotePending != nil {
 		t.Errorf("done task in #general must not be follow-up marked; got %+v", task.HumanNotePending)
 	}
-	// Agent posts never mark; archived tasks never mark.
-	if _, err := b.PostMessage("ceo", "task-done-1", "Nice work on this one.", nil, ""); err != nil {
-		t.Fatalf("agent post: %v", err)
+	// Bot posts never mark; archived tasks never mark.
+	if _, err := b.PostMessage("cos", "task-done-1", "Nice work on this one.", nil, ""); err != nil {
+		t.Fatalf("bot post: %v", err)
 	}
 	if task := b.TaskByID("task-done-1"); task.HumanNotePending != nil {
-		t.Errorf("agent posts must never mark a follow-up note; got %+v", task.HumanNotePending)
+		t.Errorf("bot posts must never mark a follow-up note; got %+v", task.HumanNotePending)
 	}
 	if _, err := b.PostMessage("you", "task-done-1", "One more tweak please.", nil, ""); err != nil {
 		t.Fatalf("human post: %v", err)
@@ -141,10 +141,10 @@ func TestTaskFollowUp_PacketLeadsWithFollowUpBlock(t *testing.T) {
 func TestTaskFollowUp_TargetsRouteToOwner(t *testing.T) {
 	t.Parallel()
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "eng", Name: "Engineer"},
 			},
 		},
@@ -171,7 +171,7 @@ func TestTaskFollowUp_TargetsRouteToOwner(t *testing.T) {
 	immediate, _ = l.taskNotificationTargets(officeActionLog{
 		Kind: taskFollowUpActionKind, Actor: "human", Channel: "task-done-1", RelatedID: "task-done-1",
 	}, task)
-	if len(immediate) != 1 || immediate[0].Slug != "ceo" {
+	if len(immediate) != 1 || immediate[0].Slug != "cos" {
 		t.Fatalf("ownerless follow-up must fall back to the lead; got %+v", immediate)
 	}
 }

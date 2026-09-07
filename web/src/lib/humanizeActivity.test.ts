@@ -14,9 +14,7 @@ import {
 
 describe("humanizeLifecycleState", () => {
   it("maps every known enum to a plain label", () => {
-    expect(humanizeLifecycleState("blocked")).toBe(
-      "Blocked",
-    );
+    expect(humanizeLifecycleState("blocked")).toBe("Blocked");
     expect(humanizeLifecycleState("queued_behind_owner")).toBe(
       "Queued behind owner",
     );
@@ -50,9 +48,9 @@ describe("humanizeLifecycleState", () => {
 
 describe("humanizeStateTokens", () => {
   it("replaces embedded enum tokens in prose", () => {
-    expect(
-      humanizeStateTokens("running → queued_behind_owner [deps]"),
-    ).toBe("running → Queued behind owner [deps]");
+    expect(humanizeStateTokens("running → queued_behind_owner [deps]")).toBe(
+      "running → Queued behind owner [deps]",
+    );
   });
 
   it("leaves plain-word state tokens like 'blocked' untouched in prose", () => {
@@ -112,5 +110,32 @@ describe("humanizeTurnOutcome", () => {
     expect(humanizeTurnOutcome("moved to queued_behind_owner")).toBe(
       "moved to Queued behind owner",
     );
+  });
+});
+
+// Strings the agent runner leaks between tool calls (human eval,
+// 2026-09-03): every one of these showed up under an agent's name.
+describe("looksLikeRawToolPayload — runner exhaust", () => {
+  it.each([
+    "(Bash completed with no output)",
+    "<persisted-output> Output too large (936.8KB). Saved to disk.",
+    "No matching deferred tools found",
+    "1 // Package onboarding manages the first-run wizard",
+    "/Users/someone/Documents/nex/wuphf/web/src/App.tsx",
+    "App.css App.tsx assets index.css main.tsx",
+    "running mcp__wuphf-office__register_app",
+  ])("collapses %j", (raw) => {
+    expect(looksLikeRawToolPayload(raw)).toBe(true);
+    expect(humanizeActivity(raw)).toBe("Working…");
+  });
+
+  it.each([
+    "reviewing work packet",
+    "drafting the two-line description",
+    "waiting for work",
+    "Build passed. Publishing the app now.",
+  ])("passes prose through: %j", (prose) => {
+    expect(looksLikeRawToolPayload(prose)).toBe(false);
+    expect(humanizeActivity(prose)).toBe(prose);
   });
 });

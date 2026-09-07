@@ -11,7 +11,7 @@ function navigateToApp(appId: string): void {
 
 /** Routing prefix for `/ask`: mirrors TUI cmdAsk which always goes to the lead. */
 export function askPrefix(leadSlug: string | undefined): string {
-  const slug = (leadSlug || "ceo").trim().toLowerCase() || "ceo";
+  const slug = (leadSlug || "cos").trim().toLowerCase() || "cos";
   return `@${slug} `;
 }
 
@@ -20,7 +20,7 @@ export function unknownSlashCommandMessage(command: string): string {
   return `Unknown command: ${name}. Try /help.`;
 }
 
-/** Pick the team-lead slug: configured first, else first built-in agent, else 'ceo'. */
+/** Pick the team-lead slug: configured first, else first built-in bot, else 'cos'. */
 export function resolveLeadSlug(
   configured: string | undefined,
   members: { slug?: string; built_in?: boolean }[],
@@ -31,7 +31,7 @@ export function resolveLeadSlug(
     (m) => m.built_in && m.slug && m.slug !== "human" && m.slug !== "you",
   );
   if (builtin?.slug) return builtin.slug;
-  return "ceo";
+  return "cos";
 }
 
 export interface SlashHandlers {
@@ -170,31 +170,29 @@ export function handleSlashCommand(
         .catch(() => showNotice("Failed to switch mode", "error"));
       return true;
     case "/pause":
-      post("/signals", { kind: "pause", summary: "Human paused all agents" })
-        .then(() => showNotice("All agents paused", "success"))
+      post("/signals", { kind: "pause", summary: "Human paused all bots" })
+        .then(() => showNotice("All bots paused", "success"))
         .catch((e: Error) => showNotice(`Pause failed: ${e.message}`, "error"));
       return true;
     case "/resume":
-      post("/signals", { kind: "resume", summary: "Human resumed agents" })
-        .then(() => showNotice("Agents resumed", "success"))
+      post("/signals", { kind: "resume", summary: "Human resumed bots" })
+        .then(() => showNotice("Bots resumed", "success"))
         .catch((e: Error) =>
           showNotice(`Resume failed: ${e.message}`, "error"),
         );
       return true;
     case "/reset":
       confirm({
-        title: "Reset the office?",
+        title: "Reset the team?",
         message:
-          "Clears channels back to #general and drops in-memory state. Persisted tasks and requests stay on the broker.",
+          "Clears conversations and drops in-memory state. Persisted tasks and requests stay on the broker.",
         confirmLabel: "Reset",
         danger: true,
         onConfirm: () =>
           post("/reset", {})
             .then(() => {
-              void router.navigate({
-                to: "/channels/$channelSlug",
-                params: { channelSlug: "general" },
-              });
+              // Home, not the retired #general.
+              void router.navigate({ to: "/" });
               showNotice("Office reset", "success");
             })
             .catch((e: Error) =>
@@ -204,7 +202,7 @@ export function handleSlashCommand(
       return true;
     case "/1o1": {
       if (!args) {
-        showNotice("Usage: /1o1 <agent-slug>", "info");
+        showNotice("Usage: /1o1 <bot-slug>", "info");
         return true;
       }
       const slug = args.trim().toLowerCase();
@@ -215,7 +213,7 @@ export function handleSlashCommand(
             params: { agentSlug: slug },
           });
         })
-        .catch(() => showNotice(`Agent not found: ${args.trim()}`, "error"));
+        .catch(() => showNotice(`Bot not found: ${args.trim()}`, "error"));
       return true;
     }
     case "/task": {

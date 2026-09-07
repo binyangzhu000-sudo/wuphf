@@ -112,8 +112,8 @@ func (m channelModel) handleChannelResetDoneMsg(msg channelResetDoneMsg) (channe
 	if normalized := team.NormalizeSessionMode(msg.sessionMode); normalized != "" {
 		m.sessionMode = normalized
 	}
-	if strings.TrimSpace(msg.oneOnOneAgent) != "" || m.sessionMode == team.SessionModeOneOnOne {
-		m.oneOnOneAgent = team.NormalizeOneOnOneAgent(msg.oneOnOneAgent)
+	if strings.TrimSpace(msg.oneOnOneBot) != "" || m.sessionMode == team.SessionModeOneOnOne {
+		m.oneOnOneBot = team.NormalizeOneOnOneBot(msg.oneOnOneBot)
 	}
 	m.messages = nil
 	m.members = nil
@@ -178,11 +178,11 @@ func (m channelModel) handleChannelDMCreatedMsg(msg channelDMCreatedMsg) (channe
 	m.focus = focusMain
 	m.lastID = ""
 	m.messages = nil
-	agentDisplay := msg.agentSlug
+	botDisplay := msg.botSlug
 	if msg.name != "" {
-		agentDisplay = msg.name
+		botDisplay = msg.name
 	}
-	m.notice = fmt.Sprintf("DM with %s — Ctrl+D to return to #general", agentDisplay)
+	m.notice = fmt.Sprintf("DM with %s — Ctrl+D to return to #general", botDisplay)
 	return m, tea.Batch(pollBroker("", m.activeChannel), pollMembers(m.activeChannel))
 }
 
@@ -202,20 +202,6 @@ func (m channelModel) handleChannelInitDoneMsg(msg channelInitDoneMsg) (channelM
 	return m, nil
 }
 
-func (m channelModel) handleChannelIntegrationDoneMsg(msg channelIntegrationDoneMsg) (channelModel, tea.Cmd) {
-	m.posting = false
-	m.picker.SetActive(false)
-	m.pickerMode = channelPickerNone
-	if msg.err != nil {
-		m.notice = "Integration failed: " + msg.err.Error()
-	} else if msg.url != "" {
-		m.notice = fmt.Sprintf("%s connected. Browser opened at %s", msg.label, msg.url)
-	} else {
-		m.notice = fmt.Sprintf("%s connected.", msg.label)
-	}
-	return m, nil
-}
-
 func (m channelModel) handleChannelDoctorDoneMsg(msg channelDoctorDoneMsg) (channelModel, tea.Cmd) {
 	if msg.err != nil {
 		m.notice = "Doctor failed: " + msg.err.Error()
@@ -231,7 +217,7 @@ func (m channelModel) handleChannelDoctorDoneMsg(msg channelDoctorDoneMsg) (chan
 func (m channelModel) handleChannelMemberDraftDoneMsg(msg channelMemberDraftDoneMsg) (channelModel, tea.Cmd) {
 	m.posting = false
 	if msg.err != nil {
-		m.notice = "Agent update failed: " + msg.err.Error()
+		m.notice = "Bot update failed: " + msg.err.Error()
 		return m, nil
 	}
 	m.notice = msg.notice

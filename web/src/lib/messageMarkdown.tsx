@@ -1,5 +1,5 @@
 /**
- * Markdown pipeline for chat-bubble agent messages.
+ * Markdown pipeline for chat-bubble bot messages.
  *
  * Mirrors the wiki pipeline (wikiMarkdownConfig.tsx) but with a chat-tuned
  * plugin set and CSS class mapping that preserves the legacy formatTrusted
@@ -29,9 +29,33 @@ import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { PluggableList } from "unified";
 
+import { AppRefLink } from "./AppRefLink";
+import { TaskRefLink } from "./TaskRefLink";
+
 // Mirrors the broker-side mention pattern in internal/team/broker.go.
 // Keep in sync with web/src/lib/mentions.tsx.
 const MENTION_RE = /(?:^|[^a-zA-Z0-9_])@([a-z0-9][a-z0-9-]{1,29})\b/g;
+
+// Task references in prose ("DUNDE-72", "task-14") become buttons that open
+// the shared task modal, so a message about a task is one click from the task
+// itself instead of an id the reader has to go hunt for. Matches the two id
+// shapes the broker mints: a company-derived prefix (NEX-1, DUNDE-72) and the
+// legacy task-N form.
+//
+// CASE-SENSITIVE, deliberately. The pattern used to carry the /i flag, which
+// made the uppercase-prefix branch match ordinary lowercase prose: "request-75"
+// in a sentence was linkified as a task and clicked through to nothing. The
+// broker only ever mints UPPERCASE prefixes and the lowercase literal "task-",
+// so dropping /i is the whole fix — each branch now spells its own case.
+const TASK_REF_RE =
+  /(?:^|[^A-Za-z0-9_/-])((?:[A-Z][A-Z0-9]{1,11}-\d+|task-\d+))\b/g;
+
+// App references. Bot-built apps carry an `app_<hex>` id, and bots quote
+// them in prose ("shipped it in app_9f3c1d2e"). Bare, that is unreadable and
+// unclickable; AppRefLink resolves it to the app's name and opens it.
+// Mirrors TASK_REF_RE's boundary handling so an id inside a path or an
+// existing link is left alone.
+const APP_REF_RE = /(?:^|[^A-Za-z0-9_/-])(app_[0-9a-fA-F]{4,32})\b/g;
 
 // Defense-in-depth allowlist applied to anchor href values. ReactMarkdown's
 // defaultUrlTransform already strips javascript:, vbscript:, and data:
@@ -87,9 +111,11 @@ export function mentionRemarkPlugin() {
           )
             continue;
           const { value } = child as MdTextNode;
-          if (!value.includes("@")) continue;
+          const hasMention = value.includes("@");
+          const hasTaskRef = /[A-Za-z]-?\d/.test(value);
+          if (!(hasMention || hasTaskRef)) continue;
 
-          const replacements = buildMentionReplacements(value);
+          const replacements = buildInlineReplacements(value);
           if (replacements.length === 0) continue;
           children.splice(i, 1, ...replacements);
           i += replacements.length - 1;
@@ -97,6 +123,107 @@ export function mentionRemarkPlugin() {
       });
     };
   };
+}
+
+// buildInlineReplacements runs the mention pass, then linkifies task ids in
+// whatever plain text is left. Order matters: a mention chip must never be
+// re-scanned as a task ref, and a task ref inside an existing link is skipped
+// because only `text` nodes reach this function.
+function buildInlineReplacements(value: string): MdAnyNode[] {
+  const mentionParts = buildMentionReplacements(value);
+  const parts =
+    mentionParts.length > 0
+      ? mentionParts
+      : [{ type: "text", value } as MdAnyNode];
+  const out: MdAnyNode[] = [];
+  let linkified = false;
+  for (const part of parts) {
+    if (
+      part.type !== "text" ||
+      typeof (part as MdTextNode).value !== "string"
+    ) {
+      out.push(part);
+      continue;
+    }
+    const taskParts = buildTaskRefReplacements((part as MdTextNode).value);
+    if (taskParts.length > 0) {
+      linkified = true;
+      // An app id can sit in the text either side of a task ref, so the app
+      // pass runs over whatever text the task pass left behind rather than
+      // over the original string.
+      for (const tp of taskParts) {
+        if (tp.type !== "text") {
+          out.push(tp);
+          continue;
+        }
+        const appParts = buildAppRefReplacements((tp as MdTextNode).value);
+        if (appParts.length === 0) out.push(tp);
+        else out.push(...appParts);
+      }
+      continue;
+    }
+    const appOnly = buildAppRefReplacements((part as MdTextNode).value);
+    if (appOnly.length === 0) {
+      out.push(part);
+      continue;
+    }
+    linkified = true;
+    out.push(...appOnly);
+  }
+  if (mentionParts.length === 0 && !linkified) return [];
+  return out;
+}
+
+function buildAppRefReplacements(value: string): MdAnyNode[] {
+  const matches = [...value.matchAll(APP_REF_RE)];
+  if (matches.length === 0) return [];
+  const out: MdAnyNode[] = [];
+  let cursor = 0;
+  for (const m of matches) {
+    const id = m[1];
+    if (!id) continue;
+    const start = value.indexOf(id, m.index ?? 0);
+    if (start === -1) continue;
+    if (start > cursor)
+      out.push({ type: "text", value: value.slice(cursor, start) });
+    out.push({
+      type: "link",
+      url: "#",
+      children: [{ type: "text", value: id }],
+      data: { hProperties: { "data-wuphf-app": "true", "data-app-id": id } },
+    });
+    cursor = start + id.length;
+  }
+  if (cursor === 0) return [];
+  if (cursor < value.length)
+    out.push({ type: "text", value: value.slice(cursor) });
+  return out;
+}
+
+function buildTaskRefReplacements(value: string): MdAnyNode[] {
+  const matches = [...value.matchAll(TASK_REF_RE)];
+  if (matches.length === 0) return [];
+  const out: MdAnyNode[] = [];
+  let cursor = 0;
+  for (const m of matches) {
+    const id = m[1];
+    if (!id) continue;
+    const start = value.indexOf(id, m.index ?? 0);
+    if (start === -1) continue;
+    if (start > cursor)
+      out.push({ type: "text", value: value.slice(cursor, start) });
+    out.push({
+      type: "link",
+      url: "#",
+      children: [{ type: "text", value: id }],
+      data: { hProperties: { "data-wuphf-task": "true", "data-task-id": id } },
+    });
+    cursor = start + id.length;
+  }
+  if (cursor === 0) return [];
+  if (cursor < value.length)
+    out.push({ type: "text", value: value.slice(cursor) });
+  return out;
 }
 
 function buildMentionReplacements(value: string): MdAnyNode[] {
@@ -201,6 +328,18 @@ export const messageMarkdownComponents: Partial<Components> = {
     if (record["data-wuphf-mention"] === "true") {
       // Mention chip — never a navigable link.
       return <span className="mention">{children}</span>;
+    }
+    if (record["data-wuphf-app"] === "true") {
+      // App reference — a pill that opens the app.
+      const appId = String(record["data-app-id"] ?? "").trim();
+      return <AppRefLink appId={appId}>{children}</AppRefLink>;
+    }
+    if (record["data-wuphf-task"] === "true") {
+      // Task reference — opens the shared task modal in place. It must NOT
+      // navigate: /tasks/$taskId is a chat-primary surface, and a task is no
+      // longer a doorway to a room.
+      const taskId = String(record["data-task-id"] ?? "").trim();
+      return <TaskRefLink taskId={taskId}>{children}</TaskRefLink>;
     }
     const safe = isSafeHref(href) ? href : undefined;
     // Only external schemes pop a new tab. Fragment links (`#section`) and

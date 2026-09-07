@@ -2,7 +2,7 @@ package teammcp
 
 // routine_tools_test.go — live-layer regression tests for team_routine
 // (Wave D / D1). Every test runs the real MCP handler against a real
-// broker over HTTP — the exact path a live agent turn takes.
+// broker over HTTP — the exact path a live bot turn takes.
 
 import (
 	"context"
@@ -80,7 +80,7 @@ func TestHandleTeamRoutine_RegistersPersistentSchedulerJob(t *testing.T) {
 		Channel:  "general",
 		Owner:    "eng",
 		Prompt:   "Pull renewals within 60 days and post a risk summary.",
-		MySlug:   "ceo",
+		MySlug:   "cos",
 	})
 	if err != nil {
 		t.Fatalf("handleTeamRoutine: %v", err)
@@ -115,7 +115,7 @@ func TestHandleTeamRoutine_ConfirmationIsTruthful(t *testing.T) {
 		Purpose:  "Weekly Monday 9am renewal risk summary to #general",
 		Schedule: "0 9 * * 1",
 		Channel:  "general",
-		MySlug:   "ceo",
+		MySlug:   "cos",
 	})
 	if err != nil {
 		t.Fatalf("handleTeamRoutine: %v", err)
@@ -138,8 +138,8 @@ func TestHandleTeamRoutine_ConfirmationIsTruthful(t *testing.T) {
 }
 
 // TestHandleTeamRoutine_SecondAgentDedupes pins the v3 two-jobs-for-one-ask
-// fix at the tool layer: a second agent registering the same purpose +
-// schedule updates the first agent's routine instead of minting another.
+// fix at the tool layer: a second bot registering the same purpose +
+// schedule updates the first bot's routine instead of minting another.
 func TestHandleTeamRoutine_SecondAgentDedupes(t *testing.T) {
 	h := startRoutineBroker(t)
 
@@ -148,7 +148,7 @@ func TestHandleTeamRoutine_SecondAgentDedupes(t *testing.T) {
 		Schedule: "0 9 * * 1",
 		Channel:  "general",
 		Owner:    "analyst",
-		MySlug:   "ceo",
+		MySlug:   "cos",
 	}); err != nil || res.IsError {
 		t.Fatalf("first registration failed: err=%v res=%s", err, toolErrorText(res))
 	}
@@ -173,7 +173,7 @@ func TestHandleTeamRoutine_SecondAgentDedupes(t *testing.T) {
 		}
 	}
 	if count != 1 {
-		t.Fatalf("expected exactly 1 standing automation after both agents registered, got %d", count)
+		t.Fatalf("expected exactly 1 standing automation after both bots registered, got %d", count)
 	}
 }
 
@@ -217,7 +217,7 @@ func TestHandleTeamRoutine_RejectsBadSchedule(t *testing.T) {
 	res, _, err := handleTeamRoutine(context.Background(), nil, TeamRoutineArgs{
 		Purpose:  "Weekly summary",
 		Schedule: "whenever feels right",
-		MySlug:   "ceo",
+		MySlug:   "cos",
 	})
 	if err != nil {
 		t.Fatalf("handleTeamRoutine: %v", err)

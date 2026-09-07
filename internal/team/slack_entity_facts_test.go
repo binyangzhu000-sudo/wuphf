@@ -1,7 +1,7 @@
 package team
 
 // slack_entity_facts_test.go covers the entity-wiki pass: humans and bots in
-// bridged channels plus office/foreign agents land as people facts and
+// bridged channels plus office/foreign bots land as people facts and
 // regenerate team/people/<slug>.md articles; the pass is idempotent (dedup
 // makes the second run silent — no new facts, no article churn).
 
@@ -45,7 +45,7 @@ func newEntitySyncFixture(t *testing.T) (*SlackTransport, *Broker, *Repo, *fakeS
 	b.entityGraph = NewEntityGraph(worker)
 	b.mu.Lock()
 	b.members = append(b.members,
-		officeMember{Slug: "ceo", Name: "CEO", Role: "Coordinator", Provider: provider.ProviderBinding{Kind: "codex"}},
+		officeMember{Slug: "cos", Name: "CEO", Role: "Coordinator", Provider: provider.ProviderBinding{Kind: "codex"}},
 		officeMember{Slug: "hermes", Name: "Hermes", Provider: provider.ProviderBinding{
 			Kind:  "slack",
 			Slack: &provider.SlackProviderBinding{UserID: "U3HERMES"},
@@ -85,31 +85,31 @@ func TestSlackEntityFactSyncBuildsPeopleArticles(t *testing.T) {
 		}
 	}
 
-	// Foreign agent: roster identity (under its OFFICE slug) + presence.
+	// Foreign bot: roster identity (under its OFFICE slug) + presence.
 	hermes := readEntityArticle(t, repo, "hermes")
-	for _, want := range []string{"foreign Slack agent", "U3HERMES", "office channel"} {
+	for _, want := range []string{"foreign Slack bot", "U3HERMES", "office channel"} {
 		if !strings.Contains(hermes, want) {
 			t.Errorf("hermes article missing %q:\n%s", want, hermes)
 		}
 	}
 
-	// Office agent: role + runtime.
-	ceo := readEntityArticle(t, repo, "ceo")
-	for _, want := range []string{"office agent", "Coordinator", "codex runtime"} {
-		if !strings.Contains(ceo, want) {
-			t.Errorf("ceo article missing %q:\n%s", want, ceo)
+	// Team bot: role + runtime.
+	cos := readEntityArticle(t, repo, "cos")
+	for _, want := range []string{"team bot", "Coordinator", "codex runtime"} {
+		if !strings.Contains(cos, want) {
+			t.Errorf("cos article missing %q:\n%s", want, cos)
 		}
 	}
 
 	// Unregistered stray bot is still observed.
 	stray := readEntityArticle(t, repo, "some-vendor-bot")
-	if !strings.Contains(stray, "not registered as an office agent") {
+	if !strings.Contains(stray, "not registered as a team bot") {
 		t.Errorf("stray bot article missing unregistered note:\n%s", stray)
 	}
 
 	// The office's own bot user is the observer, not an entity.
 	if _, err := os.Stat(filepath.Join(repo.Root(), "team", "people", "ubot.md")); err == nil {
-		t.Error("the office bot must not get an entity article")
+		t.Error("the team bot must not get an entity article")
 	}
 }
 

@@ -6,9 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -33,7 +30,7 @@ func ensureBrokerMembers(t *testing.T, ctx context.Context, slugs ...string) {
 			"slug":       slug,
 			"name":       name,
 			"role":       name,
-			"created_by": "ceo",
+			"created_by": "cos",
 		}, nil)
 		if err != nil && !strings.Contains(err.Error(), "member already exists") {
 			t.Fatalf("ensure broker member %s: %v", slug, err)
@@ -161,7 +158,7 @@ func TestSuppressBroadcastReasonAllowsOwnedTaskReply(t *testing.T) {
 		"Shipping the signup work now.",
 		"msg-1",
 		[]brokerMessage{
-			{ID: "msg-1", From: "ceo", Content: "Frontend, take the signup flow."},
+			{ID: "msg-1", From: "cos", Content: "Frontend, take the signup flow."},
 		},
 		[]brokerTaskSummary{
 			{ID: "task-1", Owner: "fe", Status: "in_progress", ThreadID: "msg-1", Title: "Own signup flow"},
@@ -179,11 +176,11 @@ func TestSuppressBroadcastReasonBlocksAfterUntargetedCEOReply(t *testing.T) {
 		"msg-1",
 		[]brokerMessage{
 			{ID: "msg-1", From: "you", Content: "What should we do here?"},
-			{ID: "msg-2", From: "ceo", Content: "PM owns this. Let's keep scope tight.", ReplyTo: "msg-1"},
+			{ID: "msg-2", From: "cos", Content: "PM owns this. Let's keep scope tight.", ReplyTo: "msg-1"},
 		},
 		nil,
 	)
-	// CEO reply no longer suppresses specialists — agents collaborate, CEO takes final call
+	// CEO reply no longer suppresses specialists — bots collaborate, CEO takes final call
 	if reason != "" {
 		t.Fatalf("expected CEO reply to NOT block specialist, got %q", reason)
 	}
@@ -208,9 +205,9 @@ func TestSuppressBroadcastReasonAllowsOperatorFollowUpInActiveTaskThread(t *test
 }
 
 // TestSuppressBroadcastReasonAllowsMarketingCompetitorPricing verifies that a
-// marketing agent can broadcast about "competitor pricing" without being suppressed.
+// marketing bot can broadcast about "competitor pricing" without being suppressed.
 // Before the fix, "pricing" was a sales-only keyword so "competitor pricing findings"
-// classified as "sales" domain and a marketing agent got blocked ("outside your domain").
+// classified as "sales" domain and a marketing bot got blocked ("outside your domain").
 func TestSuppressBroadcastReasonAllowsMarketingCompetitorPricing(t *testing.T) {
 	reason := suppressBroadcastReason(
 		"marketing",
@@ -225,7 +222,7 @@ func TestSuppressBroadcastReasonAllowsMarketingCompetitorPricing(t *testing.T) {
 }
 
 // TestSuppressBroadcastReasonBlocksFEOnPureBackend ensures the suppression still
-// fires for genuine hard domain mismatches (FE agent talking about DB schemas).
+// fires for genuine hard domain mismatches (FE bot talking about DB schemas).
 func TestSuppressBroadcastReasonBlocksFEOnPureBackend(t *testing.T) {
 	reason := suppressBroadcastReason(
 		"fe",
@@ -235,7 +232,7 @@ func TestSuppressBroadcastReasonBlocksFEOnPureBackend(t *testing.T) {
 		nil,
 	)
 	if reason == "" {
-		t.Error("FE agent should be suppressed for pure backend/database content")
+		t.Error("FE bot should be suppressed for pure backend/database content")
 	}
 }
 
@@ -319,7 +316,7 @@ func TestHandleTeamMemberCreateTriggersReconfigure(t *testing.T) {
 		Slug:   "growthops",
 		Name:   "Growth Ops",
 		Role:   "Growth Ops",
-		MySlug: "ceo",
+		MySlug: "cos",
 	}); err != nil {
 		t.Fatalf("handleTeamMember: %v", err)
 	}
@@ -338,8 +335,25 @@ func TestHandleTeamMemberCreateTriggersReconfigure(t *testing.T) {
 	}
 }
 
-func TestHandleTeamChannelCreateTriggersReconfigure(t *testing.T) {
+// TestHandleTeamChannelCreateIsRefusedAndDoesNotReconfigure is the INVERSION
+// of "create triggers reconfigure".
+//
+// Named channels are retired: conversations happen in a DM with one bot, and
+// the broker answers POST /channels with 409. So the team_channel tool cannot
+// mint a room any more, and the two things this pins are what must follow from
+// that. The bot is told WHY, in the retirement's own words rather than a bare
+// failure — and reconfigureOfficeSession does NOT fire, because respawning
+// every interactive pane after a create that created nothing is churn charged
+// to the user for no change.
+//
+// Inverted rather than deleted: an unconditional reconfigure on a failed tool
+// call is a real regression shape, and this is where it would show up.
+func TestHandleTeamChannelCreateIsRefusedAndDoesNotReconfigure(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	// WUPHF_UNSAFE=1 bypasses the human-approval gate (covered by its own tests
+	// in channel_approval_test.go) so the call reaches the broker and the
+	// refusal below is the RETIREMENT, not the approval card.
+	t.Setenv("WUPHF_UNSAFE", "1")
 	ctx := context.Background()
 	b := newTestBroker(t)
 	if err := b.StartOnPort(0); err != nil {
@@ -359,51 +373,31 @@ func TestHandleTeamChannelCreateTriggersReconfigure(t *testing.T) {
 	}
 	defer func() { reconfigureOfficeSessionFn = prev }()
 
-	if _, _, err := handleTeamChannel(ctx, nil, TeamChannelArgs{
+	result, _, err := handleTeamChannel(ctx, nil, TeamChannelArgs{
 		Action:      "create",
 		Channel:     "launch",
 		Name:        "launch",
 		Description: "Launch execution channel",
 		Members:     []string{"pm", "fe"},
-		MySlug:      "ceo",
-	}); err != nil {
+		MySlug:      "cos",
+	})
+	if err != nil {
 		t.Fatalf("handleTeamChannel: %v", err)
 	}
-	if called != 1 {
-		t.Fatalf("expected one reconfigure call, got %d", called)
+	if result == nil || !result.IsError {
+		t.Fatalf("expected a tool error while named channels are retired, got %+v", result)
 	}
-
-	req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s/channels", b.Addr()), nil)
-	req.Header.Set("Authorization", "Bearer "+b.Token())
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("fetch channels: %v", err)
+	if got := textFromResult(t, result); !strings.Contains(got, "named channels are retired") {
+		t.Fatalf("the refusal must say why and what to do instead, got %q", got)
 	}
-	defer resp.Body.Close()
-
-	var result struct {
-		Channels []struct {
-			Slug        string   `json:"slug"`
-			Description string   `json:"description"`
-			Members     []string `json:"members"`
-		} `json:"channels"`
+	if called != 0 {
+		t.Fatalf("a refused create reconfigured the office %d time(s); nothing changed", called)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		t.Fatalf("decode channels: %v", err)
-	}
-
-	found := false
-	for _, ch := range result.Channels {
-		if ch.Slug == "launch" {
-			found = true
-			if ch.Description != "Launch execution channel" {
-				t.Fatalf("expected description to persist, got %+v", ch)
-			}
-			break
-		}
-	}
-	if !found {
-		t.Fatal("expected created channel to persist")
+	// Nothing was created. Checked against broker state rather than GET
+	// /channels: that listing now withholds ordinary named rooms, so it would
+	// answer "no launch channel" whether or not one exists.
+	if team.HasChannelForTest(b, "launch") {
+		t.Fatal("a refused create still minted the channel")
 	}
 }
 
@@ -425,7 +419,7 @@ func TestHandleTeamChannelCreateRequiresExplicitSlug(t *testing.T) {
 		Name:        "launch",
 		Description: "Launch execution channel",
 		Members:     []string{"pm", "fe"},
-		MySlug:      "ceo",
+		MySlug:      "cos",
 	})
 	if err != nil {
 		t.Fatalf("handleTeamChannel returned unexpected error: %v", err)
@@ -437,31 +431,22 @@ func TestHandleTeamChannelCreateRequiresExplicitSlug(t *testing.T) {
 		t.Fatalf("expected explicit slug message, got %q", got)
 	}
 
-	req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s/channels", b.Addr()), nil)
-	req.Header.Set("Authorization", "Bearer "+b.Token())
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("fetch channels: %v", err)
+	// And it created nothing. This used to read GET /channels and assert the
+	// fixture's "general" was still the only room; that listing now withholds
+	// ordinary named rooms, so it answers [] regardless and would have passed
+	// even if a channel HAD been minted. Ask broker state instead.
+	if team.HasChannelForTest(b, "launch") {
+		t.Fatal("a slug-less create minted a channel anyway")
 	}
-	defer resp.Body.Close()
-
-	var channelsResult struct {
-		Channels []struct {
-			Slug string `json:"slug"`
-		} `json:"channels"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&channelsResult); err != nil {
-		t.Fatalf("decode channels: %v", err)
-	}
-	if len(channelsResult.Channels) != 1 || channelsResult.Channels[0].Slug != "general" {
-		t.Fatalf("expected only general channel to remain, got %+v", channelsResult.Channels)
+	if !team.HasChannelForTest(b, "general") {
+		t.Fatal("the fixture room was disturbed by a refused create")
 	}
 }
 
 func TestHandleHumanMessageUsesDirectSessionLabelInOneOnOneMode(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("WUPHF_ONE_ON_ONE", "1")
-	t.Setenv("WUPHF_AGENT_SLUG", "ceo")
+	t.Setenv("WUPHF_AGENT_SLUG", "cos")
 
 	b := newTestBroker(t)
 	if err := b.StartOnPort(0); err != nil {
@@ -563,190 +548,10 @@ func TestHandleTeamMemoryWriteHintsPromotionForDurableNote(t *testing.T) {
 	}
 }
 
-func TestHandleTeamMemoryQueryAutoIncludesSharedNexMemory(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("WUPHF_MEMORY_BACKEND", "nex")
-	t.Setenv("WUPHF_API_KEY", "nex-test-key")
-	t.Setenv("WUPHF_NO_NEX", "")
-
-	var askedQuery string
-	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/developers/v1/context/ask":
-			askedQuery = r.URL.Path
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"answer":"Shared launch history from Nex."}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer apiServer.Close()
-	t.Setenv("WUPHF_DEV_URL", apiServer.URL)
-
-	binDir := t.TempDir()
-	nexMCP := filepath.Join(binDir, "nex-mcp")
-	if err := os.WriteFile(nexMCP, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatalf("create fake nex-mcp: %v", err)
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	b := newTestBroker(t)
-	if err := b.StartOnPort(0); err != nil {
-		t.Fatalf("start broker: %v", err)
-	}
-	defer b.Stop()
-
-	t.Setenv("WUPHF_TEAM_BROKER_URL", "http://"+b.Addr())
-	t.Setenv("WUPHF_BROKER_TOKEN", b.Token())
-
-	if _, _, err := handleTeamMemoryWrite(context.Background(), nil, TeamMemoryWriteArgs{
-		Key:        "launch-brief",
-		Title:      "Launch brief",
-		Content:    "Private note for the PM.",
-		Visibility: "private",
-		MySlug:     "pm",
-	}); err != nil {
-		t.Fatalf("handleTeamMemoryWrite: %v", err)
-	}
-
-	result, _, err := handleTeamMemoryQuery(context.Background(), nil, TeamMemoryQueryArgs{
-		Query:  "launch",
-		Scope:  "auto",
-		MySlug: "pm",
-	})
-	if err != nil {
-		t.Fatalf("handleTeamMemoryQuery: %v", err)
-	}
-	text := textFromResult(t, result)
-	if askedQuery == "" {
-		t.Fatal("expected shared Nex query to be called")
-	}
-	if !strings.Contains(text, "Private memory:") || !strings.Contains(text, "Shared memory:") || !strings.Contains(text, "Shared launch history from Nex.") {
-		t.Fatalf("expected both private and shared memory hits, got %q", text)
-	}
-}
-
-func TestHandleTeamMemoryPromoteWritesSharedNexMemory(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("WUPHF_MEMORY_BACKEND", "nex")
-	t.Setenv("WUPHF_API_KEY", "nex-test-key")
-	t.Setenv("WUPHF_NO_NEX", "")
-
-	var postedBody string
-	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/developers/v1/context/text":
-			body := new(bytes.Buffer)
-			_, _ = body.ReadFrom(r.Body)
-			postedBody = body.String()
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"ok":true}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer apiServer.Close()
-	t.Setenv("WUPHF_DEV_URL", apiServer.URL)
-
-	binDir := t.TempDir()
-	nexMCP := filepath.Join(binDir, "nex-mcp")
-	if err := os.WriteFile(nexMCP, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatalf("create fake nex-mcp: %v", err)
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	b := newTestBroker(t)
-	if err := b.StartOnPort(0); err != nil {
-		t.Fatalf("start broker: %v", err)
-	}
-	defer b.Stop()
-
-	t.Setenv("WUPHF_TEAM_BROKER_URL", "http://"+b.Addr())
-	t.Setenv("WUPHF_BROKER_TOKEN", b.Token())
-
-	if _, _, err := handleTeamMemoryWrite(context.Background(), nil, TeamMemoryWriteArgs{
-		Key:        "launch-brief",
-		Title:      "Launch brief",
-		Content:    "Approved final launch positioning for Customer Alpha.",
-		Visibility: "private",
-		MySlug:     "pm",
-	}); err != nil {
-		t.Fatalf("handleTeamMemoryWrite: %v", err)
-	}
-
-	result, _, err := handleTeamMemoryPromote(context.Background(), nil, TeamMemoryPromoteArgs{
-		Key:    "launch-brief",
-		MySlug: "pm",
-	})
-	if err != nil {
-		t.Fatalf("handleTeamMemoryPromote: %v", err)
-	}
-	text := textFromResult(t, result)
-	if !strings.Contains(text, "Promoted private note launch-brief") {
-		t.Fatalf("expected promote confirmation, got %q", text)
-	}
-	if !strings.Contains(postedBody, "Launch brief") || !strings.Contains(postedBody, "Approved final launch positioning") {
-		t.Fatalf("expected promoted content in Nex write, got %q", postedBody)
-	}
-}
-
-func TestHandleTeamMemoryQuerySharedSuggestsRoutingHint(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("WUPHF_MEMORY_BACKEND", "nex")
-	t.Setenv("WUPHF_API_KEY", "nex-test-key")
-	t.Setenv("WUPHF_NO_NEX", "")
-
-	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/developers/v1/context/ask":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"answer":"Author: @pm\nApproved final launch positioning for Customer Alpha."}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer apiServer.Close()
-	t.Setenv("WUPHF_DEV_URL", apiServer.URL)
-
-	binDir := t.TempDir()
-	nexMCP := filepath.Join(binDir, "nex-mcp")
-	if err := os.WriteFile(nexMCP, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatalf("create fake nex-mcp: %v", err)
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	b := newTestBroker(t)
-	if err := b.StartOnPort(0); err != nil {
-		t.Fatalf("start broker: %v", err)
-	}
-	defer b.Stop()
-
-	t.Setenv("WUPHF_TEAM_BROKER_URL", "http://"+b.Addr())
-	t.Setenv("WUPHF_BROKER_TOKEN", b.Token())
-	ctx := context.Background()
-	ensureBrokerMembers(t, ctx, "pm", "fe")
-
-	result, _, err := handleTeamMemoryQuery(ctx, nil, TeamMemoryQueryArgs{
-		Query:  "launch positioning",
-		Scope:  "shared",
-		MySlug: "fe",
-	})
-	if err != nil {
-		t.Fatalf("handleTeamMemoryQuery: %v", err)
-	}
-	text := textFromResult(t, result)
-	if !strings.Contains(text, "Shared Nex memory:") {
-		t.Fatalf("expected shared-memory section, got %q", text)
-	}
-	if !strings.Contains(text, "Routing hints:") || !strings.Contains(text, "@pm") {
-		t.Fatalf("expected routing hint toward @pm, got %q", text)
-	}
-}
-
 func TestHandleTeamPollOneOnOneHighlightsLatestHumanRequest(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("WUPHF_ONE_ON_ONE", "1")
-	t.Setenv("WUPHF_AGENT_SLUG", "ceo")
+	t.Setenv("WUPHF_AGENT_SLUG", "cos")
 
 	b := newTestBroker(t)
 	if err := b.StartOnPort(0); err != nil {
@@ -757,17 +562,21 @@ func TestHandleTeamPollOneOnOneHighlightsLatestHumanRequest(t *testing.T) {
 	t.Setenv("WUPHF_TEAM_BROKER_URL", "http://"+b.Addr())
 	t.Setenv("WUPHF_BROKER_TOKEN", b.Token())
 
+	// The CEO's own DM, which is where a one-on-one conversation actually
+	// lives now. These used to seed "general" and rely on resolveChannel
+	// defaulting there; that default is retired.
+	ceoDM := team.DMSlugFor("cos")
 	for _, msg := range []map[string]any{
-		{"channel": "general", "from": "you", "content": "Old unrelated ask."},
-		{"channel": "general", "from": "ceo", "content": "Acknowledged."},
-		{"channel": "general", "from": "you", "content": "Newest request wins."},
+		{"channel": ceoDM, "from": "you", "content": "Old unrelated ask."},
+		{"channel": ceoDM, "from": "cos", "content": "Acknowledged."},
+		{"channel": ceoDM, "from": "you", "content": "Newest request wins."},
 	} {
 		if err := brokerPostJSON(context.Background(), "/messages", msg, nil); err != nil {
 			t.Fatalf("post message: %v", err)
 		}
 	}
 
-	result, _, err := handleTeamPoll(context.Background(), nil, TeamPollArgs{MySlug: "ceo"})
+	result, _, err := handleTeamPoll(context.Background(), nil, TeamPollArgs{MySlug: "cos"})
 	if err != nil {
 		t.Fatalf("handleTeamPoll: %v", err)
 	}
@@ -803,7 +612,7 @@ func TestHandleTeamPollScopesMessagesForNonCEO(t *testing.T) {
 	for _, msg := range []map[string]any{
 		{"channel": "general", "from": "you", "content": "Human wants a quick update."},
 		{"channel": "general", "from": "pm", "content": "Unrelated PM planning note."},
-		{"channel": "general", "from": "ceo", "content": "Frontend, tighten the CTA copy.", "tagged": []string{"fe"}},
+		{"channel": "general", "from": "cos", "content": "Frontend, tighten the CTA copy.", "tagged": []string{"fe"}},
 		{"channel": "general", "from": "fe", "content": "I am on the CTA copy now."},
 	} {
 		if err := brokerPostJSON(ctx, "/messages", msg, nil); err != nil {
@@ -883,7 +692,7 @@ func TestHandleTeamTaskStatusReportsWorktreeIsolation(t *testing.T) {
 		"channel":         "general",
 		"title":           "Implement worktree task",
 		"owner":           "fe",
-		"created_by":      "ceo",
+		"created_by":      "cos",
 		"execution_mode":  "local_worktree",
 		"worktree_path":   "/tmp/wuphf-task-42",
 		"worktree_branch": "task/42",
@@ -984,7 +793,7 @@ func TestHandleTeamTaskReturnsWorktreeGuidance(t *testing.T) {
 		"channel":         "general",
 		"title":           "Implement worktree task",
 		"owner":           "fe",
-		"created_by":      "ceo",
+		"created_by":      "cos",
 		"execution_mode":  "local_worktree",
 		"worktree_path":   "/tmp/wuphf-task-99",
 		"worktree_branch": "task/99",
@@ -1051,13 +860,13 @@ func TestHandleTeamTaskCreateDefaultsOwnerToCaller(t *testing.T) {
 
 	// Slice 7: specialists can't create Issues directly — only CEO
 	// (or human). Test the "default owner to caller" semantic with
-	// MySlug="ceo" since ceo is the lead and allowed to create.
+	// MySlug="cos" since cos is the lead and allowed to create.
 	result, _, err := handleTeamTask(ctx, nil, TeamTaskArgs{
 		Action:  "create",
 		Channel: "general",
 		Title:   "Investigate webhook retries",
-		Details: "The agent detected this as follow-up implementation work.",
-		MySlug:  "ceo",
+		Details: "The bot detected this as follow-up implementation work.",
+		MySlug:  "cos",
 	})
 	if err != nil {
 		t.Fatalf("handleTeamTask: %v", err)
@@ -1066,12 +875,12 @@ func TestHandleTeamTaskCreateDefaultsOwnerToCaller(t *testing.T) {
 	// Creation is the authorization: an owner-set Issue (the default
 	// task_type via RULE ZERO override) lands running / in_progress
 	// immediately — no Approve & Start ceremony.
-	// Slice 7: MySlug must be ceo (only lead can create); owner
-	// defaults to the caller, so the assertion reads "@ceo".
+	// Slice 7: MySlug must be cos (only lead can create); owner
+	// defaults to the caller, so the assertion reads "@cos".
 	// Task IDs follow the workspace prefix (Linear-style, default OFFICE).
 	// We assert the message shape without pinning the exact prefix so the
 	// test survives prefix-from-company-name resolution.
-	if !strings.Contains(text, "Task ") || !strings.Contains(text, "is now in_progress @ceo") {
+	if !strings.Contains(text, "Task ") || !strings.Contains(text, "is now in_progress @cos") {
 		t.Fatalf("expected self-owned running (in_progress) task result, got %q", text)
 	}
 
@@ -1093,7 +902,7 @@ func TestHandleTeamTaskCreateDefaultsOwnerToCaller(t *testing.T) {
 	if task.Title != "Investigate webhook retries" {
 		t.Fatalf("expected created task present across channels, got %+v", tasks.Tasks)
 	}
-	if task.Owner != "ceo" || task.CreatedBy != "ceo" || task.Status != "in_progress" {
+	if task.Owner != "cos" || task.CreatedBy != "cos" || task.Status != "in_progress" {
 		t.Fatalf("expected caller-owned running (status=in_progress) task, got %+v", task)
 	}
 
@@ -1102,13 +911,13 @@ func TestHandleTeamTaskCreateDefaultsOwnerToCaller(t *testing.T) {
 		Channel: "general",
 		Title:   "Whitespace owner fallback",
 		Owner:   "   ",
-		MySlug:  "ceo",
+		MySlug:  "cos",
 	})
 	if err != nil {
 		t.Fatalf("handleTeamTask whitespace owner: %v", err)
 	}
 	text = textFromResult(t, result)
-	if !strings.Contains(text, "is now in_progress @ceo") {
+	if !strings.Contains(text, "is now in_progress @cos") {
 		t.Fatalf("expected whitespace-owner task to be caller-owned (running), got %q", text)
 	}
 
@@ -1121,7 +930,7 @@ func TestHandleTeamTaskCreateDefaultsOwnerToCaller(t *testing.T) {
 			continue
 		}
 		foundWhitespace = true
-		if task.Owner != "ceo" || task.CreatedBy != "ceo" || task.Status != "in_progress" {
+		if task.Owner != "cos" || task.CreatedBy != "cos" || task.Status != "in_progress" {
 			t.Fatalf("expected trimmed-empty owner to default to caller (running), got %+v", task)
 		}
 	}
@@ -1132,7 +941,6 @@ func TestHandleTeamTaskCreateDefaultsOwnerToCaller(t *testing.T) {
 
 func TestHandleTeamRuntimeStateIncludesRecoveryAndCapabilities(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("WUPHF_NO_NEX", "1")
 	ctx := context.Background()
 
 	b := newTestBroker(t)
@@ -1155,7 +963,7 @@ func TestHandleTeamRuntimeStateIncludesRecoveryAndCapabilities(t *testing.T) {
 		"channel":         "general",
 		"title":           "Ship release candidate",
 		"owner":           "fe",
-		"created_by":      "ceo",
+		"created_by":      "cos",
 		"execution_mode":  "local_worktree",
 		"worktree_path":   "/tmp/wuphf-task-77",
 		"worktree_branch": "task/77",
@@ -1177,7 +985,7 @@ func TestHandleTeamRuntimeStateIncludesRecoveryAndCapabilities(t *testing.T) {
 
 	if err := brokerPostJSON(ctx, "/messages", map[string]any{
 		"channel": taskChannel,
-		"from":    "ceo",
+		"from":    "cos",
 		"content": "Need your approval before shipping.",
 	}, nil); err != nil {
 		t.Fatalf("post message: %v", err)
@@ -1186,7 +994,7 @@ func TestHandleTeamRuntimeStateIncludesRecoveryAndCapabilities(t *testing.T) {
 	if err := brokerPostJSON(ctx, "/requests", map[string]any{
 		"kind":     "approval",
 		"channel":  taskChannel,
-		"from":     "ceo",
+		"from":     "cos",
 		"title":    "Approve release",
 		"question": "Should we ship the release candidate?",
 		"blocking": true,
@@ -1213,12 +1021,12 @@ func TestHandleTeamRuntimeStateIncludesRecoveryAndCapabilities(t *testing.T) {
 		// you" notice is gone with the start-approval ceremony: created
 		// tasks land running, so no awaiting-start request is raised.
 		"Pending human requests: 1",
-		"Current focus: Approve release from @ceo.",
+		"Current focus: Approve release from @cos.",
 		"working_directory ",
 		"Runtime capabilities:",
-		// With --no-nex + no explicit memory-backend, we now fall through to
-		// the markdown wiki (no external deps) instead of silently running
-		// with no memory backend at all. The capability label follows the
+		// With no explicit memory-backend, we fall through to the markdown
+		// wiki (no external deps) instead of silently running with no memory
+		// backend at all. The capability label follows the
 		// active-backend naming convention (`<Backend> memory`) and the
 		// detail describes where the wiki lives.
 		"Markdown wiki memory [ready]: Markdown-backed team wiki at ~/.wuphf/wiki is configured.",
@@ -1265,7 +1073,7 @@ func TestHandleTeamRequestDefaultsApprovalOptions(t *testing.T) {
 		Kind:     "approval",
 		Channel:  "general",
 		Question: "Ship this?",
-		MySlug:   "ceo",
+		MySlug:   "cos",
 	}); err != nil {
 		t.Fatalf("handleTeamRequest: %v", err)
 	}
@@ -1295,7 +1103,7 @@ func TestHandleTeamRequestDefaultsApprovalOptions(t *testing.T) {
 	}
 }
 
-func TestHandleTeamPollUsesAgentScopedTranscript(t *testing.T) {
+func TestHandleTeamPollUsesBotScopedTranscript(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	ctx := context.Background()
 
@@ -1312,7 +1120,7 @@ func TestHandleTeamPollUsesAgentScopedTranscript(t *testing.T) {
 	for _, msg := range []map[string]any{
 		{"channel": "general", "from": "you", "content": "Frontend, should we ship this?", "tagged": []string{"fe"}},
 		{"channel": "general", "from": "pm", "content": "Unrelated roadmap chatter."},
-		{"channel": "general", "from": "ceo", "content": "Keep scope tight and focus on signup."},
+		{"channel": "general", "from": "cos", "content": "Keep scope tight and focus on signup."},
 		{"channel": "general", "from": "fe", "content": "I can take the signup work."},
 	} {
 		if err := brokerPostJSON(ctx, "/messages", msg, nil); err != nil {
@@ -1350,19 +1158,19 @@ func TestHandleTeamBroadcastDefaultsToLatestTaggedChannelAndThread(t *testing.T)
 	t.Setenv("WUPHF_BROKER_TOKEN", b.Token())
 	ensureBrokerMembers(t, ctx, "pm", "fe")
 
-	if err := brokerPostJSON(ctx, "/channels", map[string]any{
-		"action":      "create",
-		"slug":        "launch",
-		"name":        "Launch",
-		"description": "Launch work",
-		"members":     []string{"fe", "pm"},
-		"created_by":  "ceo",
-	}, nil); err != nil {
-		t.Fatalf("create channel: %v", err)
-	}
+	// The launch room comes from the fixture as a BRIDGED room, not from POST
+	// /channels: named-channel create is retired and answers 409, a DM holds
+	// only two participants so the CEO could not tag @fe inside one, and a
+	// plain named room is withheld from GET /channels — which is the listing
+	// this tool's channel inference reads, so the room would exist and the
+	// routing would still resolve elsewhere. A bridged room is the shared
+	// surface that survives the retirement. What this test is about is
+	// unchanged: which room a reply defaults to when the bot was tagged in
+	// one.
+	team.SeedBridgedRoomForTest(b, "launch", "fe", "pm")
 	if err := brokerPostJSON(ctx, "/messages", map[string]any{
 		"channel": "launch",
-		"from":    "ceo",
+		"from":    "cos",
 		"content": "Frontend, tighten the launch CTA in this thread.",
 		"tagged":  []string{"fe"},
 	}, nil); err != nil {
@@ -1411,19 +1219,19 @@ func TestHandleTeamPollDefaultsToLatestTaggedChannel(t *testing.T) {
 	t.Setenv("WUPHF_BROKER_TOKEN", b.Token())
 	ensureBrokerMembers(t, ctx, "pm", "fe")
 
-	if err := brokerPostJSON(ctx, "/channels", map[string]any{
-		"action":      "create",
-		"slug":        "launch",
-		"name":        "Launch",
-		"description": "Launch work",
-		"members":     []string{"fe", "pm"},
-		"created_by":  "ceo",
-	}, nil); err != nil {
-		t.Fatalf("create channel: %v", err)
-	}
+	// The launch room comes from the fixture as a BRIDGED room, not from POST
+	// /channels: named-channel create is retired and answers 409, a DM holds
+	// only two participants so the CEO could not tag @fe inside one, and a
+	// plain named room is withheld from GET /channels — which is the listing
+	// this tool's channel inference reads, so the room would exist and the
+	// routing would still resolve elsewhere. A bridged room is the shared
+	// surface that survives the retirement. What this test is about is
+	// unchanged: which room a reply defaults to when the bot was tagged in
+	// one.
+	team.SeedBridgedRoomForTest(b, "launch", "fe", "pm")
 	if err := brokerPostJSON(ctx, "/messages", map[string]any{
 		"channel": "launch",
-		"from":    "ceo",
+		"from":    "cos",
 		"content": "Frontend, review the launch thread.",
 		"tagged":  []string{"fe"},
 	}, nil); err != nil {
@@ -1457,16 +1265,16 @@ func TestHandleTeamTaskUsesTaskChannelWhenIDGiven(t *testing.T) {
 	t.Setenv("WUPHF_BROKER_TOKEN", b.Token())
 	ensureBrokerMembers(t, ctx, "pm", "fe")
 
-	if err := brokerPostJSON(ctx, "/channels", map[string]any{
-		"action":      "create",
-		"slug":        "launch",
-		"name":        "Launch",
-		"description": "Launch work",
-		"members":     []string{"fe", "pm"},
-		"created_by":  "ceo",
-	}, nil); err != nil {
-		t.Fatalf("create channel: %v", err)
-	}
+	// The launch room comes from the fixture as a BRIDGED room, not from POST
+	// /channels: named-channel create is retired and answers 409, a DM holds
+	// only two participants so the CEO could not tag @fe inside one, and a
+	// plain named room is withheld from GET /channels — which is the listing
+	// this tool's channel inference reads, so the room would exist and the
+	// routing would still resolve elsewhere. A bridged room is the shared
+	// surface that survives the retirement. What this test is about is
+	// unchanged: which room a reply defaults to when the bot was tagged in
+	// one.
+	team.SeedBridgedRoomForTest(b, "launch", "fe", "pm")
 
 	var created struct {
 		Task struct {
@@ -1478,7 +1286,7 @@ func TestHandleTeamTaskUsesTaskChannelWhenIDGiven(t *testing.T) {
 		"channel":    "launch",
 		"title":      "Review launch CTA",
 		"owner":      "fe",
-		"created_by": "ceo",
+		"created_by": "cos",
 		"thread_id":  "msg-launch",
 	}, &created); err != nil {
 		t.Fatalf("create task: %v", err)
@@ -1516,8 +1324,9 @@ func TestHandleHumanMessageDefaultsToDirectReplyThreadInOneOnOneMode(t *testing.
 		t.Fatalf("set session mode: %v", err)
 	}
 
+	// The direct session's own DM, not the retired shared room.
 	if err := brokerPostJSON(ctx, "/messages", map[string]any{
-		"channel": "general",
+		"channel": team.DMSlugFor("pm"),
 		"from":    "you",
 		"content": "Can you send me the latest product answer?",
 	}, nil); err != nil {
@@ -1556,10 +1365,10 @@ func TestHandleTeamInboxAndOutboxExposeOwnedTranscriptSlices(t *testing.T) {
 
 	if err := brokerPostJSON(ctx, "/messages", map[string]any{
 		"channel": "general",
-		"from":    "ceo",
+		"from":    "cos",
 		"content": "Frontend, take the signup thread.",
 	}, nil); err != nil {
-		t.Fatalf("post ceo message: %v", err)
+		t.Fatalf("post cos message: %v", err)
 	}
 	if err := brokerPostJSON(ctx, "/messages", map[string]any{
 		"channel":  "general",
@@ -1640,9 +1449,9 @@ func TestDetectUntaggedMentions(t *testing.T) {
 		t.Fatalf("expected engineering flagged, got %v", got)
 	}
 
-	// Known non-agent @-references → not flagged
-	nonAgents := []string{"you", "human", "nex", "team", "everyone"}
-	for _, na := range nonAgents {
+	// Known non-bot @-references → not flagged
+	nonBots := []string{"you", "human", "nex", "team", "everyone"}
+	for _, na := range nonBots {
 		content := fmt.Sprintf("@%s please reply", na)
 		if found := detectUntaggedMentions(content, nil); len(found) != 0 {
 			t.Fatalf("@%s should not be flagged, got %v", na, found)
@@ -1650,7 +1459,7 @@ func TestDetectUntaggedMentions(t *testing.T) {
 	}
 
 	// Multiple @-mentions, one tagged → only untagged one flagged
-	got = detectUntaggedMentions("@ceo @marketing please coordinate", []string{"ceo"})
+	got = detectUntaggedMentions("@cos @marketing please coordinate", []string{"cos"})
 	if len(got) != 1 || got[0] != "marketing" {
 		t.Fatalf("expected only marketing untagged, got %v", got)
 	}
@@ -1679,10 +1488,10 @@ func TestHandleTeamPlanCreatesDependentBlockedTasks(t *testing.T) {
 
 	result, _, err := handleTeamPlan(context.Background(), nil, TeamPlanArgs{
 		Channel: "general",
-		MySlug:  "ceo",
+		MySlug:  "cos",
 		Tasks: []struct {
 			Title         string   `json:"title" jsonschema:"Task title"`
-			Assignee      string   `json:"assignee" jsonschema:"Agent slug to own this task"`
+			Assignee      string   `json:"assignee" jsonschema:"Bot slug to own this task"`
 			Details       string   `json:"details,omitempty" jsonschema:"Optional task details"`
 			TaskType      string   `json:"task_type,omitempty" jsonschema:"Optional task type such as research, feature, launch, follow_up, bugfix, or incident"`
 			ExecutionMode string   `json:"execution_mode,omitempty" jsonschema:"Optional execution mode such as office or local_worktree"`
@@ -1736,10 +1545,10 @@ func TestHandleTeamPlanPreservesTaskMetadata(t *testing.T) {
 
 	_, _, err := handleTeamPlan(context.Background(), nil, TeamPlanArgs{
 		Channel: "general",
-		MySlug:  "ceo",
+		MySlug:  "cos",
 		Tasks: []struct {
 			Title         string   `json:"title" jsonschema:"Task title"`
-			Assignee      string   `json:"assignee" jsonschema:"Agent slug to own this task"`
+			Assignee      string   `json:"assignee" jsonschema:"Bot slug to own this task"`
 			Details       string   `json:"details,omitempty" jsonschema:"Optional task details"`
 			TaskType      string   `json:"task_type,omitempty" jsonschema:"Optional task type such as research, feature, launch, follow_up, bugfix, or incident"`
 			ExecutionMode string   `json:"execution_mode,omitempty" jsonschema:"Optional execution mode such as office or local_worktree"`
@@ -1792,7 +1601,7 @@ func TestHandleTeamTaskCreatePreservesTaskMetadata(t *testing.T) {
 		Owner:         "eng",
 		TaskType:      "feature",
 		ExecutionMode: "local_worktree",
-		MySlug:        "ceo",
+		MySlug:        "cos",
 	})
 	if err != nil {
 		t.Fatalf("handleTeamTask: %v", err)

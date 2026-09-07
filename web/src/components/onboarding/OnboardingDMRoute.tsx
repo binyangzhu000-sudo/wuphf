@@ -9,9 +9,9 @@
  *
  * The spec hard-rule (docs/specs/onboarding-into-office.md "Eng review
  * decisions"):
- *   "Frontend reuses DMView for the CEO chat. A small OnboardingDMRoute
+ *   "Frontend reuses DMView for the Chief of Staff chat. A small OnboardingDMRoute
  *    wrapper provides the preview-overlay context and points DMView at
- *    the CEO DM channel."
+ *    the Chief of Staff DM channel."
  *
  * No new chat shell, no new composer, no duplicated SSE/scroll/optimistic-post
  * code. CEO DM inherits all of that from DMView.
@@ -49,8 +49,8 @@ export const OnboardingDMContextProvider = OnboardingDMContext.Provider;
 
 // ── CEO DM channel slug ────────────────────────────────────────────────────
 
-/** The agent slug for the CEO (matches existing broker configuration). */
-const CEO_AGENT_SLUG = "ceo";
+/** The bot slug for the CEO (matches existing broker configuration). */
+const CEO_AGENT_SLUG = "cos";
 
 /** The broker stores DMs as canonical pair-sorted slugs. */
 const CEO_ONBOARDING_CHANNEL = directChannelSlug(CEO_AGENT_SLUG);

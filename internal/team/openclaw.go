@@ -26,7 +26,7 @@ type openclawClient interface {
 	SessionsSend(ctx context.Context, key, message, idempotencyKey string) (*openclaw.SessionsSendResult, error)
 	SessionsMessagesSubscribe(ctx context.Context, key string) error
 	SessionsMessagesUnsubscribe(ctx context.Context, key string) error
-	SessionsCreate(ctx context.Context, agentID, label string) (string, error)
+	SessionsCreate(ctx context.Context, botID, label string) (string, error)
 	Events() <-chan openclaw.ClientEvent
 	Close() error
 }
@@ -84,7 +84,7 @@ type OpenclawBridge struct {
 // HasSlug reports whether the given slug is bound to a bridged OpenClaw
 // session. Used by the launcher's mention dispatcher to decide whether to
 // route a tagged message through the bridge instead of (or in addition to)
-// the normal agent-spawn path.
+// the normal bot-spawn path.
 func (b *OpenclawBridge) HasSlug(slug string) bool {
 	if b == nil {
 		return false
@@ -133,7 +133,7 @@ func (b *OpenclawBridge) AttachSlug(slug, sessionKey string) {
 	}
 	go func() {
 		if err := client.SessionsMessagesSubscribe(bridgeCtx, sessionKey); err != nil && bridgeCtx.Err() == nil {
-			b.postSystemMessage(fmt.Sprintf("subscribe @%s failed: %v", slug, err))
+			b.postSystemMessage(slug, fmt.Sprintf("subscribe @%s failed: %v", slug, err))
 		}
 	}()
 }
@@ -209,7 +209,7 @@ func (b *OpenclawBridge) DetachSlug(slug string) {
 	}
 	go func() {
 		if err := client.SessionsMessagesUnsubscribe(bridgeCtx, sessionKey); err != nil && bridgeCtx.Err() == nil {
-			b.postSystemMessage(fmt.Sprintf("unsubscribe @%s failed: %v", slug, err))
+			b.postSystemMessage(slug, fmt.Sprintf("unsubscribe @%s failed: %v", slug, err))
 		}
 	}()
 }
@@ -233,7 +233,7 @@ func (b *OpenclawBridge) notifyHostDetached(ctx context.Context, slug, sessionKe
 		ctx = context.Background()
 	}
 	if err := host.DetachParticipant(ctx, openclawAdapterName, sessionKey); err != nil && ctx.Err() == nil {
-		b.postSystemMessage(fmt.Sprintf("detach @%s: %v", slug, err))
+		b.postSystemMessage(slug, fmt.Sprintf("detach @%s: %v", slug, err))
 	}
 }
 
@@ -307,9 +307,9 @@ func (b *OpenclawBridge) DetachSession(ctx context.Context, slug, sessionKey str
 }
 
 // CreateSession calls sessions.create on the gateway and returns the new key.
-// Used by handleOfficeMembers when a user hires a new openclaw agent without
+// Used by handleOfficeMembers when a user hires a new openclaw bot without
 // supplying an existing session key (the "auto-create" path).
-func (b *OpenclawBridge) CreateSession(ctx context.Context, agentID, label string) (string, error) {
+func (b *OpenclawBridge) CreateSession(ctx context.Context, botID, label string) (string, error) {
 	if b == nil {
 		return "", fmt.Errorf("openclaw: nil bridge")
 	}
@@ -317,7 +317,7 @@ func (b *OpenclawBridge) CreateSession(ctx context.Context, agentID, label strin
 	if client == nil {
 		return "", fmt.Errorf("openclaw: no active client")
 	}
-	return client.SessionsCreate(ctx, agentID, label)
+	return client.SessionsCreate(ctx, botID, label)
 }
 
 // SnapshotBindings returns a copy of the current slug→sessionKey mapping.
@@ -412,7 +412,7 @@ func (b *OpenclawBridge) supervise() {
 		}
 		if b.breaker != nil && b.breaker.Open() {
 			if !b.noticedOffline {
-				b.postSystemMessage("openclaw gateway offline")
+				b.postSystemMessage("", "openclaw gateway offline")
 				b.noticedOffline = true
 			}
 			select {
@@ -528,7 +528,7 @@ func (b *OpenclawBridge) runOnce() error {
 // echoes of what we just sent, and forwarding them would double-post.
 //
 // sessions.changed events with reason=ended post a system notice so humans
-// know the agent shut down that conversation.
+// know the bot shut down that conversation.
 func (b *OpenclawBridge) handleClientEvent(evt openclaw.ClientEvent) {
 	// lookupSlug grabs the slug for a session key under RLock so we never
 	// hold b.mu while calling broker methods (which take their own mu).
@@ -547,7 +547,7 @@ func (b *OpenclawBridge) handleClientEvent(evt openclaw.ClientEvent) {
 		if !ok {
 			return // not a bridged session, ignore
 		}
-		// Skip user/system echoes — only publish agent replies.
+		// Skip user/system echoes — only publish bot replies.
 		if evt.SessionMessage.Role != "" && evt.SessionMessage.Role != "assistant" {
 			return
 		}
@@ -556,14 +556,18 @@ func (b *OpenclawBridge) handleClientEvent(evt openclaw.ClientEvent) {
 			channel := b.lastChannelByKey[evt.SessionMessage.SessionKey]
 			b.mu.RUnlock()
 			if channel == "" {
-				channel = "general"
+				// The bridged bot's own DM. This is its REPLY to the human;
+				// addressed to the retired "general" it is rejected outright
+				// by PostInboundSurfaceMessage with "channel not found", so
+				// the answer never arrives.
+				channel = DMSlugFor(slug)
 			}
 			b.postBridgeMessage(slug, channel, evt.SessionMessage.SessionKey, text)
 		}
 	case openclaw.EventKindChanged:
 		if evt.SessionsChanged != nil && evt.SessionsChanged.Reason == "ended" {
 			if slug, ok := lookupSlug(evt.SessionsChanged.SessionKey); ok {
-				b.postSystemMessage(fmt.Sprintf("openclaw agent %q is no longer active", slug))
+				b.postSystemMessage(slug, fmt.Sprintf("openclaw bot %q is no longer active", slug))
 			}
 		}
 	case openclaw.EventKindGap:
@@ -574,7 +578,7 @@ func (b *OpenclawBridge) handleClientEvent(evt openclaw.ClientEvent) {
 			return
 		}
 		if slug, ok := lookupSlug(evt.Gap.SessionKey); ok {
-			b.postSystemMessage(fmt.Sprintf("missed %d message(s) from @%s — daemon event gap", evt.Gap.ToSeq-evt.Gap.FromSeq-1, slug))
+			b.postSystemMessage(slug, fmt.Sprintf("missed %d message(s) from @%s — daemon event gap", evt.Gap.ToSeq-evt.Gap.FromSeq-1, slug))
 		}
 	case openclaw.EventKindClose:
 		// Handled by supervise loop via events-channel close.
@@ -593,7 +597,7 @@ func (b *OpenclawBridge) retryDelaysList() []time.Duration {
 // SetRetryDelaysForTest is only used by tests.
 func (b *OpenclawBridge) SetRetryDelaysForTest(d []time.Duration) { b.retryDelays = d }
 
-// OnOfficeMessage sends a human-authored message to the OpenClaw agent
+// OnOfficeMessage sends a human-authored message to the OpenClaw bot
 // identified by slug. The channel argument is where the reply should land
 // (e.g. "general" for @mentions, a DM slug like "human__pm-bot" for DMs).
 // Retries on transient errors with a SINGLE reused idempotency key so the
@@ -609,7 +613,10 @@ func (b *OpenclawBridge) OnOfficeMessage(ctx context.Context, slug, channel, mes
 		return fmt.Errorf("openclaw: unknown bridged slug %q", slug)
 	}
 	if channel == "" {
-		channel = "general"
+		// The bridged bot's DM: this value is also stored as the
+		// reply-routing key below, so a dead room here breaks the reply path
+		// as well as this message.
+		channel = DMSlugFor(slug)
 	}
 	b.mu.Lock()
 	if b.lastChannelByKey == nil {
@@ -645,17 +652,17 @@ func (b *OpenclawBridge) OnOfficeMessage(ctx context.Context, slug, channel, mes
 			return ctx.Err()
 		}
 	}
-	b.postSystemMessage(fmt.Sprintf("failed to reach @%s: %v", slug, lastErr))
+	b.postSystemMessage(slug, fmt.Sprintf("failed to reach @%s: %v", slug, lastErr))
 	return lastErr
 }
 
-// postBridgeMessage posts a bridged-agent chat message into the given channel.
+// postBridgeMessage posts a bridged-bot chat message into the given channel.
 // Prefers the transport.Host contract (set by Run) so the host owns the
 // per-transport worker boundary; falls back to the direct broker entrypoint
 // when the bridge is being driven via Start (probes, integration tests).
 func (b *OpenclawBridge) postBridgeMessage(slug, channel, sessionKey, text string) {
 	if channel == "" {
-		channel = "general"
+		channel = DMSlugFor(slug)
 	}
 	b.mu.RLock()
 	ctx := b.ctx
@@ -674,7 +681,7 @@ func (b *OpenclawBridge) postBridgeMessage(slug, channel, sessionKey, text strin
 		}
 		if err := host.UpsertParticipant(ctx, participant, binding); err != nil {
 			if ctx != nil && ctx.Err() == nil {
-				b.postSystemMessage(fmt.Sprintf("upsert @%s: %v", slug, err))
+				b.postSystemMessage(slug, fmt.Sprintf("upsert @%s: %v", slug, err))
 			}
 			return
 		}
@@ -683,7 +690,7 @@ func (b *OpenclawBridge) postBridgeMessage(slug, channel, sessionKey, text strin
 			Binding:     binding,
 			Text:        text,
 		}); err != nil && ctx != nil && ctx.Err() == nil {
-			b.postSystemMessage(fmt.Sprintf("inbound from @%s: %v", slug, err))
+			b.postSystemMessage(slug, fmt.Sprintf("inbound from @%s: %v", slug, err))
 		}
 		return
 	}
@@ -695,12 +702,37 @@ func (b *OpenclawBridge) postBridgeMessage(slug, channel, sessionKey, text strin
 	}
 }
 
-// postSystemMessage posts a `system`-authored notice into #general.
-func (b *OpenclawBridge) postSystemMessage(text string) {
+// postSystemMessage posts a `system`-authored bridge notice into the DM of the
+// bot it is about.
+//
+// It used to post every notice into #general with no way to say who it
+// concerned. These are the only surface for bridge failures ("failed to reach
+// @X"), so after the retirement they went to a room with no readers and the
+// human simply never learned the bridge was broken.
+//
+// `slug` is the bot the notice is about, and "" is legal: a couple of these
+// are office-wide ("gateway offline") and belong to no single bot. Those go
+// to the office LEAD's DM — the human's main contact — rather than being
+// dropped. The whole reason these notices exist is that the bridge has failed,
+// so losing them is the one outcome worse than putting them in an imperfect
+// place, and the lead's DM is a conversation the human actually reads.
+//
+// Exactly one destination either way, which keeps the once-per-episode dedupe
+// contract (TestSuperviseOfflineNoticeDeduped) intact. Only when there is no
+// lead either is the notice dropped, with a greppable line.
+func (b *OpenclawBridge) postSystemMessage(slug, text string) {
 	if b.broker == nil {
 		return
 	}
-	b.broker.PostSystemMessage("general", "[openclaw] "+text, "openclaw")
+	channel := DMSlugFor(strings.TrimSpace(slug))
+	if channel == "" {
+		channel = DMSlugFor(b.broker.OfficeLeadSlug())
+	}
+	if channel == "" {
+		log.Printf("[openclaw] dropped system notice (no bot and no lead to address it to): %s", text)
+		return
+	}
+	b.broker.PostSystemMessage(channel, "[openclaw] "+text, "openclaw")
 }
 
 // recordHealthSuccess updates the cached health snapshot after a successful

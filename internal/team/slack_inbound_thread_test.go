@@ -2,7 +2,7 @@ package team
 
 // slack_inbound_thread_test.go covers the inbound half of one-task-one-thread:
 // a Slack reply whose thread_ts matches a task's root card is folded into that
-// task (ReplyTo + SourceTaskID), so a non-owner foreign agent's reply stays
+// task (ReplyTo + SourceTaskID), so a non-owner foreign bot's reply stays
 // scoped to the task instead of leaking into shared channel context.
 
 import (
@@ -12,23 +12,23 @@ import (
 
 func TestInboundThreadReplyFoldsIntoTask(t *testing.T) {
 	b := newTestBroker(t)
-	ensureTestMemberAccess(b, "slack-office", "ceo", "CEO")
+	ensureTestMemberAccess(b, "slack-office", "cos", "CEO")
 	b.mu.Lock()
 	b.channels = append(b.channels, teamChannel{
-		Slug: "slack-office", Name: "slack-office", Members: []string{"ceo"},
+		Slug: "slack-office", Name: "slack-office", Members: []string{"cos"},
 		Surface: &channelSurface{Provider: "slack", RemoteID: "C0123"},
 	})
 	// A task with an internal thread root + a Slack root card at ts "171.5".
 	b.tasks = append(b.tasks, teamTask{
 		ID: "OFFICE-7", Channel: "slack-office", Title: "Compare plans",
-		Owner: "ceo", ThreadID: "msg-root-internal", LifecycleState: LifecycleStateRunning,
+		Owner: "cos", ThreadID: "msg-root-internal", LifecycleState: LifecycleStateRunning,
 	})
 	b.slackTaskCards = map[string]slackTaskCardRecord{
 		"OFFICE-7": {ChannelID: "C0123", Timestamp: "171.5", State: "running"},
 	}
 	b.mu.Unlock()
 
-	// hermes (a foreign agent, NOT the task owner) replies inside the task's
+	// hermes (a foreign bot, NOT the task owner) replies inside the task's
 	// thread (thread_ts = the root card ts).
 	msg, err := b.PostInboundSurfaceMessageInThread("hermes", "slack-office", "Plan B totals $5,220", "slack", "171.5")
 	if err != nil {
@@ -44,13 +44,13 @@ func TestInboundThreadReplyFoldsIntoTask(t *testing.T) {
 
 func TestInboundOutsideThreadIsNotTaskScoped(t *testing.T) {
 	b := newTestBroker(t)
-	ensureTestMemberAccess(b, "slack-office", "ceo", "CEO")
+	ensureTestMemberAccess(b, "slack-office", "cos", "CEO")
 	b.mu.Lock()
 	b.channels = append(b.channels, teamChannel{
-		Slug: "slack-office", Name: "slack-office", Members: []string{"ceo"},
+		Slug: "slack-office", Name: "slack-office", Members: []string{"cos"},
 		Surface: &channelSurface{Provider: "slack", RemoteID: "C0123"},
 	})
-	b.tasks = append(b.tasks, teamTask{ID: "OFFICE-7", Channel: "slack-office", Owner: "ceo", ThreadID: "msg-root-internal"})
+	b.tasks = append(b.tasks, teamTask{ID: "OFFICE-7", Channel: "slack-office", Owner: "cos", ThreadID: "msg-root-internal"})
 	b.slackTaskCards = map[string]slackTaskCardRecord{"OFFICE-7": {ChannelID: "C0123", Timestamp: "171.5"}}
 	b.mu.Unlock()
 
@@ -75,9 +75,9 @@ func TestSlackOutboundNeverImpersonatesHuman(t *testing.T) {
 			t.Fatalf("human-authored message (from=%q) must not relay to Slack", from)
 		}
 	}
-	// Agent messages still relay.
-	if _, ok := tr.FormatOutbound(channelMessage{From: "ceo", Channel: "slack-general", Content: "on it"}); !ok {
-		t.Fatal("agent message should still relay to Slack")
+	// Bot messages still relay.
+	if _, ok := tr.FormatOutbound(channelMessage{From: "cos", Channel: "slack-general", Content: "on it"}); !ok {
+		t.Fatal("bot message should still relay to Slack")
 	}
 }
 
@@ -85,7 +85,7 @@ func TestSlackConventionNoteThreadAndQuoteRules(t *testing.T) {
 	b := newTestBroker(t)
 	b.mu.Lock()
 	b.channels = append(b.channels, teamChannel{
-		Slug: "slack-office", Name: "slack-office", Members: []string{"ceo"},
+		Slug: "slack-office", Name: "slack-office", Members: []string{"cos"},
 		Surface: &channelSurface{Provider: "slack", RemoteID: "C0123"},
 	})
 	b.mu.Unlock()

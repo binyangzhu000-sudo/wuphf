@@ -17,7 +17,7 @@ import (
 func TestFormatOutboundCarriesSourceTaskID(t *testing.T) {
 	tr, _ := newTestSlackTransport(t, "C0123", newFakeSlackAPI())
 	out, ok := tr.FormatOutbound(channelMessage{
-		From: "ceo", Channel: "slack-general", Content: "delegating", SourceTaskID: "OFFICE-7",
+		From: "cos", Channel: "slack-general", Content: "delegating", SourceTaskID: "OFFICE-7",
 	})
 	if !ok {
 		t.Fatal("expected outbound to format")
@@ -34,7 +34,7 @@ func TestSendThreadsTaskMessageUnderRootCard(t *testing.T) {
 	seedCardTask(b, "OFFICE-7", LifecycleStateRunning)
 
 	out, _ := tr.FormatOutbound(channelMessage{
-		From: "ceo", Channel: "slack-general", Content: "ask @hermes for the totals", SourceTaskID: "OFFICE-7",
+		From: "cos", Channel: "slack-general", Content: "ask @hermes for the totals", SourceTaskID: "OFFICE-7",
 	})
 	if err := tr.Send(context.Background(), out); err != nil {
 		t.Fatalf("Send: %v", err)
@@ -93,18 +93,18 @@ func TestEnsureTaskThreadRootIdempotentUnderConcurrency(t *testing.T) {
 
 func TestTaskRootCardRendersDefinition(t *testing.T) {
 	task := &teamTask{
-		ID: "OFFICE-7", Title: "Recommend the cheaper plan", Owner: "ceo",
+		ID: "OFFICE-7", Title: "Recommend the cheaper plan", Owner: "cos",
 		Definition: &TaskDefinition{
 			Goal:            "Pick the cheaper 3-year cloud plan",
 			Deliverables:    []TaskDeliverable{{Name: "recommendation", Format: "chat post"}},
-			SuccessCriteria: []string{"both agents independently agree on the totals"},
+			SuccessCriteria: []string{"both bots independently agree on the totals"},
 		},
 	}
 	blocks := buildSlackTaskCardBlocks(task, "running", "http://127.0.0.1:7905")
 	raw := blocksText(t, blocks)
 	for _, want := range []string{
 		"Pick the cheaper 3-year cloud plan", "recommendation (chat post)",
-		"both agents independently agree", "Open task in WUPHF", "lives in this thread",
+		"both bots independently agree", "Open task in WUPHF", "lives in this thread",
 	} {
 		if !strings.Contains(raw, want) {
 			t.Errorf("root card missing %q:\n%s", want, raw)
@@ -112,7 +112,7 @@ func TestTaskRootCardRendersDefinition(t *testing.T) {
 	}
 
 	// Falls back to Details when no Definition is set.
-	plain := &teamTask{ID: "OFFICE-8", Title: "x", Owner: "ceo", Details: "TESTING run — compare plans."}
+	plain := &teamTask{ID: "OFFICE-8", Title: "x", Owner: "cos", Details: "TESTING run — compare plans."}
 	if got := blocksText(t, buildSlackTaskCardBlocks(plain, "running", "")); !strings.Contains(got, "TESTING run") {
 		t.Errorf("no-definition card should show Details: %s", got)
 	}

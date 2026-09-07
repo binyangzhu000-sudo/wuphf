@@ -16,7 +16,7 @@ import "./styles/shadcn.css";
 import "./styles/global.css";
 import "./styles/layout.css";
 import "./styles/messages.css";
-import "./styles/agents.css";
+import "./styles/bots.css";
 import "./styles/search.css";
 import "./styles/command.css";
 import "./styles/wiki-shell.css";
@@ -32,6 +32,7 @@ import "./styles/office-tour-slides.css";
 import "./styles/onboarding-shell.css";
 import "./styles/operator.css";
 import "./styles/apps.css";
+import "./styles/computer.css";
 
 // Attach the root route's component at startup. Defining the component
 // inside `lib/router.ts` would create a circular import: RootRoute reads
@@ -115,5 +116,5 @@ try {
   showFatalError("React failed to mount", `${message}\n\n${stack}`);
   window.__wuphfBootDone?.();
   // eslint-disable-next-line no-console
-  console.error("[WUPHF boot]", err);
+  console.error("[gawkbot boot]", err);
 }

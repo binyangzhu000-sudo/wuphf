@@ -24,7 +24,7 @@ import (
 //   Phase 3: CRASH — PM bumps CEO, coffee spills, bell rings
 //   Phase 4: CEO grumpy face, coffee stain visible
 //   Phase 5: CEO forces a fake smile for the "camera"
-//   Phase 6: WUPHF title card
+//   Phase 6: gawkbot title card
 //   Phase 7: Transition to channel view
 
 const (
@@ -246,7 +246,7 @@ func (m splashModel) renderCast() string {
 		var spriteLines []string
 
 		switch {
-		case member.Slug == "ceo":
+		case member.Slug == "cos":
 			if ceoVariant != "normal" {
 				spriteLines = avatar.RenderCEOVariant(ceoVariant, m.frame)
 			} else {
@@ -489,7 +489,7 @@ func (m splashModel) renderNameLabel(slug, name string, slotW int) string {
 		padR = 0
 	}
 	label := strings.Repeat(" ", padL) + name + strings.Repeat(" ", padR)
-	color := channelui.AgentColor(slug)
+	color := channelui.BotColor(slug)
 	return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true).Render(label)
 }
 

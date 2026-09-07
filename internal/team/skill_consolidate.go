@@ -112,7 +112,7 @@ func (b *Broker) handleSkillConsolidate(w http.ResponseWriter, r *http.Request) 
 	if wikiErr != nil {
 		// Persisted state is correct but the on-disk markdown is stale.
 		// Operators must know consolidation half-succeeded so they can
-		// re-render rather than discovering drift on the next agent run.
+		// re-render rather than discovering drift on the next bot run.
 		slog.Warn("skill_consolidate: wiki write failed after persisted merge", "err", wikiErr)
 		http.Error(w,
 			"merge persisted but wiki write failed; team/skills/<slug>.md may be stale: "+wikiErr.Error(),
@@ -254,6 +254,10 @@ func (b *Broker) mergeSkillClusterLocked(targetName string, clusters []consolida
 			target.Content = mergeSkillContent(target.Content, memberContent, name)
 		}
 
+		// System skills are permanent; consolidation must not fold one away.
+		if sk.System {
+			continue
+		}
 		// Archive the member.
 		sk.Status = "archived"
 		sk.UpdatedAt = now

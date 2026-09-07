@@ -95,14 +95,36 @@ type QueryResult struct {
 	// Classifier output for sanity.
 	ClassifierClass      string
 	ClassifierConfidence float64
+	// Rank-sensitive metrics computed from the ORDERED got list against the
+	// binary-relevant expected set. recall@20 is saturated on this corpus
+	// (every query returns its full expected set inside top-20), so these are
+	// the metrics that actually move when fusion/rerank reorder the union.
+	// Defined only for in-scope queries (len(expected) > 0); OOS queries leave
+	// them at zero and are excluded from the macro-averages.
+	NDCG10     float64
+	RecallAt1  float64
+	RecallAt3  float64
+	RecallAt5  float64
+	RecallAt10 float64
+	MRR        float64
 }
 
 // Aggregate is the final scoreboard.
 type Aggregate struct {
-	TotalQueries       int
-	PassingQueries     int
-	MicroRecall        float64 // sum(intersection) / sum(|expected|)
-	PassRate           float64 // passingQueries / totalQueries
+	TotalQueries   int
+	PassingQueries int
+	MicroRecall    float64 // sum(intersection) / sum(|expected|)
+	PassRate       float64 // passingQueries / totalQueries
+	// Macro-averaged rank-sensitive metrics over in-scope queries only.
+	// These are the discriminating baselines for the RRF-fusion and
+	// cross-encoder-rerank changes; recall@20 / pass-rate are saturated.
+	ScoredQueries      int // in-scope queries (len(expected) > 0)
+	MeanNDCG10         float64
+	MeanRecallAt1      float64
+	MeanRecallAt3      float64
+	MeanRecallAt5      float64
+	MeanRecall10       float64
+	MeanMRR            float64
 	RetrievalP50Ms     float64
 	RetrievalP95Ms     float64
 	ClassifyP95Micros  int64
@@ -138,7 +160,28 @@ type Config struct {
 	Gate float64
 	// Out controls human-readable progress output. Nil silences progress.
 	Out io.Writer
+	// Backend selects the index implementation under test. "" or "sqlite"
+	// uses the SQLite + bleve pairing (the historical baseline); "gbrain"
+	// uses the gbrain-backed store. Both run against the same corpus and the
+	// same scoring, so the two runs are directly comparable.
+	Backend string
 }
+
+// Bench backend identifiers.
+const (
+	BackendSQLite = "sqlite"
+	// BackendGBrain is gbrain's RECOMMENDED one-page-per-entity shape.
+	BackendGBrain = "gbrain"
+	// BackendGBrainAtoms is the first implementation: one page per fact. Kept
+	// addressable so the two shapes stay directly comparable on one corpus.
+	BackendGBrainAtoms = "gbrain-atoms"
+	// BackendMemory is the in-memory fact store + text index. This is what
+	// PRODUCTION actually ran before this branch: broker_wiki_lifecycle called
+	// NewWikiIndex directly, and NewPersistentWikiIndex (sqlite+bleve) was
+	// reachable ONLY from this bench. Benchmarking against sqlite therefore
+	// measured a code path no user ever exercised; this is the real baseline.
+	BackendMemory = "memory"
+)
 
 // Defaults returns the canonical runtime knobs for the Week 0 bench.
 func Defaults() Config {
@@ -324,11 +367,35 @@ func Run(ctx context.Context, cfg Config) (*Aggregate, []QueryResult, error) {
 	_, _ = fmt.Fprintf(out, "materialised %d facts across %d artifacts into %s\n",
 		factCount, len(arts), tempRoot)
 
+	// Declared outside the switch: the footprint measurement below reads it,
+	// and it stays empty for gbrain (whose storage lives in the brain, not in
+	// a temp dir, so a local file-size probe is meaningless there).
 	indexDir := filepath.Join(tempRoot, ".index")
-	idx, err := team.NewPersistentWikiIndex(tempRoot, indexDir)
-	if err != nil {
-		return nil, nil, fmt.Errorf("new index: %w", err)
+
+	var idx *team.WikiIndex
+	switch cfg.Backend {
+	case BackendGBrain:
+		// The gbrain store writes into whatever brain GBRAIN_HOME points at,
+		// and the reconcile below is destructive within its namespaces. Point
+		// this at a scratch brain, never a personal one.
+		idx, err = team.NewGBrainEntityIndex(ctx, tempRoot)
+		if err != nil {
+			return nil, nil, fmt.Errorf("new gbrain entity index: %w", err)
+		}
+	case BackendGBrainAtoms:
+		idx, err = team.NewGBrainIndex(ctx, tempRoot)
+		if err != nil {
+			return nil, nil, fmt.Errorf("new gbrain atom index: %w", err)
+		}
+	case BackendMemory:
+		idx = team.NewWikiIndex(tempRoot)
+	default:
+		idx, err = team.NewPersistentWikiIndex(tempRoot, indexDir)
+		if err != nil {
+			return nil, nil, fmt.Errorf("new index: %w", err)
+		}
 	}
+	_, _ = fmt.Fprintf(out, "backend: %s\n", backendLabel(cfg.Backend))
 	defer func() { _ = idx.Close() }()
 
 	t0 := time.Now()
@@ -391,6 +458,12 @@ func Run(ctx context.Context, cfg Config) (*Aggregate, []QueryResult, error) {
 			ClassifyMicros:       classifyMicros,
 			ClassifierClass:      string(klass),
 			ClassifierConfidence: conf,
+			NDCG10:               scoreNDCG(q.ExpectedFactIDs, got, 10),
+			RecallAt1:            scoreRecallAtK(q.ExpectedFactIDs, got, 1),
+			RecallAt3:            scoreRecallAtK(q.ExpectedFactIDs, got, 3),
+			RecallAt5:            scoreRecallAtK(q.ExpectedFactIDs, got, 5),
+			RecallAt10:           scoreRecallAtK(q.ExpectedFactIDs, got, 10),
+			MRR:                  scoreMRR(q.ExpectedFactIDs, got),
 		}
 		results = append(results, res)
 		_ = qi
@@ -406,6 +479,7 @@ func Run(ctx context.Context, cfg Config) (*Aggregate, []QueryResult, error) {
 	}
 
 	var totalExpected, totalHit int
+	var sumNDCG, sumR1, sumR3, sumR5, sumR10, sumMRR float64
 	classBuckets := map[string]*ClassBreakdown{}
 	for _, r := range results {
 		if r.Passed {
@@ -415,6 +489,17 @@ func Run(ctx context.Context, cfg Config) (*Aggregate, []QueryResult, error) {
 		}
 		totalExpected += len(r.Query.ExpectedFactIDs)
 		totalHit += r.Intersection
+		// Rank-sensitive metrics are only meaningful where there are relevant
+		// docs to rank; OOS queries (no expected facts) are excluded.
+		if len(r.Query.ExpectedFactIDs) > 0 {
+			agg.ScoredQueries++
+			sumNDCG += r.NDCG10
+			sumR1 += r.RecallAt1
+			sumR3 += r.RecallAt3
+			sumR5 += r.RecallAt5
+			sumR10 += r.RecallAt10
+			sumMRR += r.MRR
+		}
 
 		cb, ok := classBuckets[r.Query.QueryClass]
 		if !ok {
@@ -455,13 +540,25 @@ func Run(ctx context.Context, cfg Config) (*Aggregate, []QueryResult, error) {
 	} else {
 		agg.MicroRecall = 1.0
 	}
+	if agg.ScoredQueries > 0 {
+		n := float64(agg.ScoredQueries)
+		agg.MeanNDCG10 = sumNDCG / n
+		agg.MeanRecallAt1 = sumR1 / n
+		agg.MeanRecallAt3 = sumR3 / n
+		agg.MeanRecallAt5 = sumR5 / n
+		agg.MeanRecall10 = sumR10 / n
+		agg.MeanMRR = sumMRR / n
+	}
 	agg.RetrievalP50Ms = percentile(allLatencyMs, 0.50)
 	agg.RetrievalP95Ms = percentile(allLatencyMs, 0.95)
 	agg.ClassifyP95Micros = percentileInt(allClassifyMicros, 0.95)
 
-	// Index footprint.
-	agg.IndexBytesSQLite = fileSize(filepath.Join(indexDir, "wiki.sqlite"))
-	agg.IndexBytesBleve = dirSize(filepath.Join(indexDir, "bleve"))
+	// Index footprint. Only meaningful for the SQLite + bleve pairing; the
+	// gbrain store keeps its data in the brain, so both stay zero there.
+	if cfg.Backend == BackendSQLite || cfg.Backend == "" {
+		agg.IndexBytesSQLite = fileSize(filepath.Join(indexDir, "wiki.sqlite"))
+		agg.IndexBytesBleve = dirSize(filepath.Join(indexDir, "bleve"))
+	}
 
 	return agg, results, nil
 }
@@ -594,6 +691,19 @@ func FormatReport(agg *Aggregate, results []QueryResult) string {
 	fmt.Fprintf(&b, "  SQLite size              : %d bytes\n", agg.IndexBytesSQLite)
 	fmt.Fprintf(&b, "  Bleve size               : %d bytes\n\n", agg.IndexBytesBleve)
 
+	// Rank-sensitive retrieval quality — the discriminating baseline for
+	// fusion/rerank changes. recall@20 above is saturated on this corpus;
+	// these macro-averages (in-scope queries only) are what a reranker swap
+	// must actually move. Observability layer, OFFICE-671.
+	fmt.Fprintf(&b, "Rank-sensitive retrieval quality (macro avg, %d in-scope queries)\n", agg.ScoredQueries)
+	fmt.Fprintf(&b, "----------------------------------------------------------------\n")
+	fmt.Fprintf(&b, "  nDCG@10                  : %.4f\n", agg.MeanNDCG10)
+	fmt.Fprintf(&b, "  recall@1                 : %.4f\n", agg.MeanRecallAt1)
+	fmt.Fprintf(&b, "  recall@3                 : %.4f\n", agg.MeanRecallAt3)
+	fmt.Fprintf(&b, "  recall@5                 : %.4f\n", agg.MeanRecallAt5)
+	fmt.Fprintf(&b, "  recall@10                : %.4f\n", agg.MeanRecall10)
+	fmt.Fprintf(&b, "  MRR                      : %.4f\n\n", agg.MeanMRR)
+
 	fmt.Fprintf(&b, "Per-class breakdown\n-------------------\n")
 	classes := make([]string, 0, len(agg.PerClass))
 	for k := range agg.PerClass {
@@ -648,4 +758,18 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n-1] + "…"
+}
+
+// backendLabel renders the configured backend for the report header.
+func backendLabel(backend string) string {
+	switch backend {
+	case BackendGBrain:
+		return BackendGBrain + " (one page per entity, recommended shape)"
+	case BackendGBrainAtoms:
+		return BackendGBrainAtoms + " (one page per fact)"
+	case BackendMemory:
+		return BackendMemory + " (in-memory — what production actually ran)"
+	default:
+		return BackendSQLite
+	}
 }

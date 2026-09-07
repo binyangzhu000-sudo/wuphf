@@ -67,19 +67,19 @@ func benchmarkViewportModel(messageCount int) channelModel {
 		Owner:         "fe",
 		ExecutionMode: "local_worktree",
 		WorktreePath:  "/tmp/wuphf-task-bench-1",
-		CreatedBy:     "ceo",
+		CreatedBy:     "cos",
 		CreatedAt:     time.Date(2026, 4, 8, 9, 0, 0, 0, time.UTC).Format(time.RFC3339),
 		UpdatedAt:     time.Date(2026, 4, 8, 10, 0, 0, 0, time.UTC).Format(time.RFC3339),
 	}}
 	m.actions = []channelui.Action{{
 		Kind:      "external_build",
 		Actor:     "fe",
-		Summary:   "Build the office UI",
+		Summary:   "Build the team UI",
 		CreatedAt: time.Date(2026, 4, 8, 10, 5, 0, 0, time.UTC).Format(time.RFC3339),
 	}}
 
 	for i := 0; i < messageCount; i++ {
-		from := []string{"ceo", "fe", "pm", "designer"}[i%4]
+		from := []string{"cos", "fe", "pm", "designer"}[i%4]
 		msg := channelui.BrokerMessage{
 			ID:        fmt.Sprintf("msg-%04d", i),
 			From:      from,

@@ -1,8 +1,10 @@
+import { directChannelSlug } from "../lib/channels";
+import { CHIEF_OF_STAFF_SLUG } from "../lib/constants";
 import { del, get, post } from "./client";
 import type { Task, TaskResponse } from "./tasks";
 
 /**
- * CustomApp is the manifest for an agent-generated internal tool. Mirrors the
+ * CustomApp is the manifest for a bot-generated internal tool. Mirrors the
  * Go CustomApp shape (internal/team/custom_app.go).
  */
 export interface CustomApp {
@@ -18,7 +20,7 @@ export interface CustomApp {
    * "building" = a pre-scaffolded app awaiting its first published build
    * (shown as a building row, not a clickable app). Absent/"ready" = published.
    */
-  status?: "building" | "ready";
+  status?: "building" | "ready" | "failed";
   /**
    * Slug of the app's persistent edit thread — the channel of the App Builder
    * task that created/improves it (`task-<id>`). The app view binds its
@@ -32,6 +34,13 @@ export interface CustomApp {
   createdAt: string;
   updatedAt: string;
   contentHash: string;
+  /**
+   * A deterministic, non-blocking heads-up about the last publish (scaffold
+   * placeholder shipped, bundle too small, corrupt publish). Empty when the
+   * publish looked healthy. The finish card downgrades a green "ready" to an
+   * honest "built, but this looks off" when this is set.
+   */
+  advisory?: string;
 }
 
 export interface CustomAppDetail {
@@ -198,11 +207,11 @@ export async function openAppEditSession(id: string): Promise<string> {
  * settled edit channel and posts the change there, which drives the App
  * Builder's proven `task_followup` wake to re-engage on its OWN task (read
  * get_app → apply → republish). This is deliberately NOT a new "Improve app"
- * task — a fresh task is created already Running but with no agent turn
+ * task — a fresh task is created already Running but with no bot turn
  * attending it, so a follow-up note has nothing to ride and hangs. Completion is
- * observed by the app's version bump, not by parsing the agent's narration.
+ * observed by the app's version bump, not by parsing the bot's narration.
  *
- * Returns the edit channel slug so the caller can stream the agent's narration.
+ * Returns the edit channel slug so the caller can stream the bot's narration.
  */
 export async function submitAppEdit(
   appId: string,
@@ -228,7 +237,7 @@ export interface AppBuildRequest {
  * requestAppBuild kicks off an App Builder task for an explicit, human-initiated
  * build/improve (the /create-app, /update-app slash commands and the Edit button
  * on an app screen). These paths skip the propose_app approval gate because the
- * human already authorized the work. Implicit agent intent goes through
+ * human already authorized the work. Implicit bot intent goes through
  * propose_app -> a non-blocking approval instead.
  *
  * Returns the created Task so the caller can open its chat — an App Builder
@@ -240,10 +249,19 @@ export async function requestAppBuild(req: AppBuildRequest): Promise<Task> {
   const title = `${verb} app: ${req.name}`;
   const res = await post<TaskResponse>("/tasks", {
     action: "create",
-    channel: "general",
+    // The Chief of Staff's DM, and the Chief of Staff as owner. Two retired
+    // destinations preceded this: the literal "general" (404'd the moment the
+    // shared room was retired) and then the App Builder's DM — but the App
+    // Builder is no longer seeded, so on a fresh office that owner does not
+    // exist and its DM cannot be created. The lead is the one bot every
+    // office is guaranteed to have; app building is a system skill it carries
+    // like any bot. Not omitted-and-resolved-server-side, because the broker
+    // resolves an omitted channel from `created_by` ("human"), who is not a
+    // roster member and so has no DM to fall back to.
+    channel: directChannelSlug(CHIEF_OF_STAFF_SLUG),
     title,
     details: composeAppBrief(req),
-    owner: "app-builder",
+    owner: CHIEF_OF_STAFF_SLUG,
     created_by: "human",
     task_type: "issue",
   });

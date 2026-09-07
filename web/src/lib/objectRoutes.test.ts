@@ -3,10 +3,10 @@ import { describe, expect, it } from "vitest";
 import { resolveObjectRoute, resolveUnknownObjectRoute } from "./objectRoutes";
 
 describe("resolveObjectRoute", () => {
-  it("resolves an agent slug to the agents hash route", () => {
+  it("resolves a bot slug to the bots hash route", () => {
     const route = resolveObjectRoute({ kind: "agent", slug: "alex" });
     expect(route.href).toBe("#/agents/alex");
-    expect(route.label).toBe("Agent: alex");
+    expect(route.label).toBe("Bot: alex");
     expect(route.appAction).toEqual({ app: "agents", channel: "alex" });
     expect(route.fallback).toBeUndefined();
   });
@@ -33,7 +33,7 @@ describe("resolveObjectRoute", () => {
     // Per-segment encodeURIComponent keeps `/` separators intact for
     // nested slugs like `people/nazz`.
     expect(route.href).toBe("#/wiki/people/nazz");
-    expect(route.label).toBe("Company Brain: people/nazz");
+    expect(route.label).toBe("Wiki: people/nazz");
     expect(route.appAction).toEqual({ app: "wiki" });
   });
 
@@ -48,7 +48,7 @@ describe("resolveObjectRoute", () => {
     expect(route.href).toBe("#/wiki/concepts/foo%3Fbar%23baz%26qux");
     expect(route.href).not.toContain("?bar");
     expect(route.href).not.toContain("#baz");
-    expect(route.label).toBe("Company Brain: concepts/foo?bar#baz&qux");
+    expect(route.label).toBe("Wiki: concepts/foo?bar#baz&qux");
   });
 
   it("resolves a workbench-item to the task route and surfaces its kind", () => {

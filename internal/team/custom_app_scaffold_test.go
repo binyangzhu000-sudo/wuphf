@@ -14,11 +14,11 @@ import (
 
 // TestScaffoldCreatesBuildingDraft locks the instant-preview contract: Scaffold
 // materializes a real editable project (so the dev server can boot it in
-// seconds) and records a "building" draft BEFORE the agent writes any code.
+// seconds) and records a "building" draft BEFORE the bot writes any code.
 func TestScaffoldCreatesBuildingDraft(t *testing.T) {
 	store := newCustomAppStore(t.TempDir())
 	now := time.Unix(1_700_000_000, 0).UTC()
-	id := customAppID("lead-scorer", "Lead Scorer", "general")
+	id := customAppID("lead-scorer", "Lead Scorer", "team")
 
 	app, err := store.Scaffold(id, "Lead Scorer", "", "app-builder", now)
 	if err != nil {
@@ -64,7 +64,7 @@ func TestScaffoldCreatesBuildingDraft(t *testing.T) {
 func TestScaffoldIsIdempotent(t *testing.T) {
 	store := newCustomAppStore(t.TempDir())
 	now := time.Unix(1_700_000_000, 0).UTC()
-	id := customAppID("lead-scorer", "Lead Scorer", "general")
+	id := customAppID("lead-scorer", "Lead Scorer", "team")
 
 	if _, err := store.Scaffold(id, "Lead Scorer", "", "app-builder", now); err != nil {
 		t.Fatalf("Scaffold 1: %v", err)
@@ -95,7 +95,7 @@ func TestPublishFlipsDraftToReadyAndPreservesNodeModules(t *testing.T) {
 	store := newCustomAppStore(t.TempDir())
 	store.buildBundle = stubBuildBundle
 	now := time.Unix(1_700_000_000, 0).UTC()
-	id := customAppID("lead-scorer", "Lead Scorer", "general")
+	id := customAppID("lead-scorer", "Lead Scorer", "team")
 
 	if _, err := store.Scaffold(id, "Lead Scorer", "", "app-builder", now); err != nil {
 		t.Fatalf("Scaffold: %v", err)
@@ -161,6 +161,14 @@ func TestParseNewAppBuildTitle(t *testing.T) {
 		"Update app: X":            {"", false},
 		"Write the plan":           {"", false},
 		"Build app:":               {"", false},
+		// The loose forms agents use when a human asks them directly.
+		"Build Pomodoro timer app":          {"Pomodoro timer", true},
+		"Create a lead scorer app":          {"lead scorer", true},
+		"build me an expense tracker app":   {"expense tracker", true},
+		"Ship the onboarding checklist app": {"onboarding checklist", true},
+		"Build the app":                     {"", false},
+		"Improve the Pomodoro timer app":    {"", false},
+		"Build a landing page":              {"", false},
 	}
 	for title, want := range cases {
 		name, ok := parseNewAppBuildTitle(title)
@@ -177,16 +185,16 @@ func TestMutateTaskPrescaffoldsNewAppBuild(t *testing.T) {
 	t.Setenv("WUPHF_RUNTIME_HOME", t.TempDir())
 	b := newTestBroker(t)
 	b.channels = []teamChannel{
-		{Slug: "general", Name: "general", Members: []string{"ceo", appBuilderSlug}},
+		{Slug: "team", Name: "team", Members: []string{"cos", appBuilderSlug}},
 	}
 
 	created, err := b.MutateTask(TaskPostRequest{
 		Action:    "create",
-		Channel:   "general",
+		Channel:   "team",
 		Title:     "Build app: Lead Scorer",
 		Details:   "Score inbound leads by ICP fit.",
 		Owner:     appBuilderSlug,
-		CreatedBy: "ceo",
+		CreatedBy: "cos",
 	})
 	if err != nil {
 		t.Fatalf("MutateTask create: %v", err)
@@ -226,14 +234,14 @@ func TestMutateTaskImproveDoesNotPrescaffold(t *testing.T) {
 	t.Setenv("WUPHF_RUNTIME_HOME", t.TempDir())
 	b := newTestBroker(t)
 	b.channels = []teamChannel{
-		{Slug: "general", Name: "general", Members: []string{"ceo", appBuilderSlug}},
+		{Slug: "team", Name: "team", Members: []string{"cos", appBuilderSlug}},
 	}
 	created, err := b.MutateTask(TaskPostRequest{
 		Action:    "create",
-		Channel:   "general",
+		Channel:   "team",
 		Title:     "Improve app: Lead Scorer",
 		Owner:     appBuilderSlug,
-		CreatedBy: "ceo",
+		CreatedBy: "cos",
 	})
 	if err != nil {
 		t.Fatalf("MutateTask create: %v", err)
@@ -369,77 +377,119 @@ func TestParseAppBuilderTaskAppID(t *testing.T) {
 	}
 }
 
-// TestMutateTaskStampsEditChannelOnBuild: creating a "Build app: X" task mints a
-// per-task channel AND stamps it onto the pre-scaffolded app's manifest, so the
-// FE can bind the per-app edit chat to that channel.
+// TestMutateTaskStampsEditChannelOnBuild: creating a "Build app: X" task binds
+// the pre-scaffolded app to its own `app-<appid>` edit thread, so the FE can
+// mount the per-app edit chat on it.
+//
+// The binding used to run the other way — the task's `task-<id>` channel was
+// stamped onto the app. Per-task channels are gone, so the build task lands in
+// the channel it was created from and that channel is shared; stamping it would
+// give every app the same thread. The app's id is the one thing that is unique
+// per app, so the thread is derived from that and the task is routed into it.
 func TestMutateTaskStampsEditChannelOnBuild(t *testing.T) {
 	t.Setenv("WUPHF_RUNTIME_HOME", t.TempDir())
 	b := newTestBroker(t)
 	b.channels = []teamChannel{
-		{Slug: "general", Name: "general", Members: []string{"ceo", appBuilderSlug}},
+		{Slug: "team", Name: "team", Members: []string{"cos", appBuilderSlug}},
 	}
 
 	created, err := b.MutateTask(TaskPostRequest{
 		Action:    "create",
-		Channel:   "general",
+		Channel:   "team",
 		Title:     "Build app: Lead Scorer",
 		Details:   "Score inbound leads by ICP fit.",
 		Owner:     appBuilderSlug,
-		CreatedBy: "ceo",
+		CreatedBy: "cos",
 	})
 	if err != nil {
 		t.Fatalf("MutateTask create: %v", err)
-	}
-	// The task minted a dedicated per-task channel (slug is lowercased).
-	wantChannel := created.Task.Channel
-	if !strings.HasPrefix(wantChannel, "task-") {
-		t.Fatalf("task channel = %q, want a task-<id> channel", wantChannel)
 	}
 	apps, _ := b.appStore().List()
 	if len(apps) != 1 {
 		t.Fatalf("want 1 scaffolded app, got %+v", apps)
 	}
+	// The app is bound to a thread named after the app, not after the task and
+	// never the shared office channel.
+	wantChannel := appEditChannelSlug(apps[0].ID)
 	if apps[0].EditChannel != wantChannel {
 		t.Fatalf("app EditChannel = %q, want %q", apps[0].EditChannel, wantChannel)
+	}
+	if apps[0].EditChannel == "team" {
+		t.Fatal("an app's edit thread must never be the team channel")
+	}
+	// The build task works IN that thread, so appForEditChannel (app acceptance)
+	// and appBuilderRunTaskID (the activity stream) still resolve, and a human
+	// post in the Edit panel reaches a task that can wake the owner.
+	if created.Task.Channel != wantChannel {
+		t.Fatalf("build task channel = %q, want the app's thread %q", created.Task.Channel, wantChannel)
+	}
+	b.mu.Lock()
+	minted := b.findChannelLocked(wantChannel)
+	b.mu.Unlock()
+	if minted == nil {
+		t.Fatalf("app edit thread %q was bound but never created", wantChannel)
 	}
 }
 
 // TestMutateTaskStampsEditChannelOnImprove: an "Improve app: X" task (created
-// with the canonical register_app(app_id=...) brief) re-binds the EXISTING app
-// to the improve task's channel, so a later edit chat targets the live thread.
+// with the canonical register_app(app_id=...) brief) binds the EXISTING app to
+// its `app-<appid>` thread and runs there, so build and improve conversations
+// for one app accumulate in one place.
+//
+// Previously each improve REBOUND the app to that improve task's own channel,
+// which is why the old name says "re-binds": the live thread moved every time.
+// Deriving the thread from the app id makes it stable — the second improve lands
+// in the same thread as the first, and as the build.
 func TestMutateTaskStampsEditChannelOnImprove(t *testing.T) {
 	t.Setenv("WUPHF_RUNTIME_HOME", t.TempDir())
 	b := newTestBroker(t)
 	b.channels = []teamChannel{
-		{Slug: "general", Name: "general", Members: []string{"ceo", appBuilderSlug}},
+		{Slug: "team", Name: "team", Members: []string{"cos", appBuilderSlug}},
 	}
 	// An already-published app the improve task targets.
-	id := customAppID("lead-scorer", "Lead Scorer", "general")
+	id := customAppID("lead-scorer", "Lead Scorer", "team")
 	if _, err := b.appStore().Scaffold(id, "Lead Scorer", "", appBuilderSlug, time.Now()); err != nil {
 		t.Fatalf("Scaffold: %v", err)
 	}
 
 	created, err := b.MutateTask(TaskPostRequest{
 		Action:    "create",
-		Channel:   "general",
+		Channel:   "team",
 		Title:     "Improve app: Lead Scorer",
 		Details:   "Improve the existing app `" + id + "`.\n\nAdd a CSV export button.\n\nWhen the build passes, register it with register_app (app_id=" + id + ") so it appears under Apps.",
 		Owner:     appBuilderSlug,
-		CreatedBy: "ceo",
+		CreatedBy: "cos",
 	})
 	if err != nil {
 		t.Fatalf("MutateTask create: %v", err)
 	}
-	wantChannel := created.Task.Channel
-	if !strings.HasPrefix(wantChannel, "task-") {
-		t.Fatalf("improve task channel = %q, want a task-<id> channel", wantChannel)
+	wantChannel := appEditChannelSlug(id)
+	if created.Task.Channel != wantChannel {
+		t.Fatalf("improve task channel = %q, want the app's thread %q", created.Task.Channel, wantChannel)
 	}
 	app, _, err := b.appStore().Get(id)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
 	if app.EditChannel != wantChannel {
-		t.Fatalf("improve did not rebind edit channel: got %q want %q", app.EditChannel, wantChannel)
+		t.Fatalf("improve did not bind the app's edit thread: got %q want %q", app.EditChannel, wantChannel)
+	}
+
+	// A second improve lands in the SAME thread — the binding is stable, not
+	// re-pointed at whatever task ran most recently.
+	second, err := b.MutateTask(TaskPostRequest{
+		Action:    "create",
+		Channel:   "team",
+		Title:     "Improve app: Lead Scorer",
+		Details:   "Improve the existing app `" + id + "`.\n\nAdd a date filter.\n\nWhen the build passes, register it with register_app (app_id=" + id + ") so it appears under Apps.",
+		Owner:     appBuilderSlug,
+		CreatedBy: "cos",
+	})
+	if err != nil {
+		t.Fatalf("second MutateTask create: %v", err)
+	}
+	if second.Task.Channel != wantChannel {
+		t.Fatalf("second improve channel = %q, want the same thread %q", second.Task.Channel, wantChannel)
 	}
 }
 
@@ -449,4 +499,83 @@ func keysOf(m map[string]string) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// TestMutateTaskPrescaffoldsForAnyAgentWithAppBuilding: app building is a
+// system skill every agent carries, so a Designer who is asked directly for
+// an app gets the same pre-scaffolded workspace (and app id) the App Builder
+// used to get. Without it the agent has nothing to publish onto and ships an
+// article instead (human eval, 2026-09-03).
+func TestMutateTaskPrescaffoldsForAnyAgentWithAppBuilding(t *testing.T) {
+	t.Setenv("WUPHF_RUNTIME_HOME", t.TempDir())
+	b := newTestBroker(t)
+	b.mu.Lock()
+	b.members = append(b.members, officeMember{Slug: "designer", Name: "Designer", Role: "Designer"})
+	b.channels = []teamChannel{
+		{Slug: "team", Name: "team", Members: []string{"cos", "designer"}},
+	}
+	b.mu.Unlock()
+
+	created, err := b.MutateTask(TaskPostRequest{
+		Action:    "create",
+		Channel:   "team",
+		Title:     "Build Pomodoro timer app",
+		Details:   "25-minute countdown with start, pause, and reset.",
+		Owner:     "designer",
+		CreatedBy: "designer",
+	})
+	if err != nil {
+		t.Fatalf("MutateTask create: %v", err)
+	}
+	if !strings.Contains(created.Task.Details, appWorkspaceBriefMarker) {
+		t.Fatalf("designer's app build got no workspace brief: %q", created.Task.Details)
+	}
+	if !strings.Contains(created.Task.Details, "register_app(app_id=app_") {
+		t.Fatalf("task details missing app_id publish instruction: %q", created.Task.Details)
+	}
+	apps, err := b.appStore().List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	found := false
+	for _, app := range apps {
+		if app.Name == "Pomodoro timer" && app.Status == customAppStatusBuilding {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a building Pomodoro timer draft, got %+v", apps)
+	}
+}
+
+// TestMutateTaskSkipsPrescaffoldWhenAppBuildingDisabled: disabling the
+// system skill for an agent turns the pre-scaffold off for that agent only.
+func TestMutateTaskSkipsPrescaffoldWhenAppBuildingDisabled(t *testing.T) {
+	t.Setenv("WUPHF_RUNTIME_HOME", t.TempDir())
+	b := newTestBroker(t)
+	b.mu.Lock()
+	b.members = append(b.members, officeMember{Slug: "designer", Name: "Designer", Role: "Designer"})
+	b.channels = []teamChannel{
+		{Slug: "team", Name: "team", Members: []string{"cos", "designer"}},
+	}
+	for i := range b.skills {
+		if b.skills[i].System && b.skills[i].Name == systemSkillAppBuilding {
+			b.skills[i].DisabledBots = append(b.skills[i].DisabledBots, "designer")
+		}
+	}
+	b.mu.Unlock()
+
+	created, err := b.MutateTask(TaskPostRequest{
+		Action:    "create",
+		Channel:   "team",
+		Title:     "Build Pomodoro timer app",
+		Owner:     "designer",
+		CreatedBy: "designer",
+	})
+	if err != nil {
+		t.Fatalf("MutateTask create: %v", err)
+	}
+	if strings.Contains(created.Task.Details, appWorkspaceBriefMarker) {
+		t.Fatalf("app-building is disabled for designer, yet a workspace was scaffolded: %q", created.Task.Details)
+	}
 }

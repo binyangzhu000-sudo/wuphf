@@ -57,17 +57,17 @@ func LookupMember(slug string) (OfficeMember, bool) {
 	return m, ok
 }
 
-// DisplayName resolves a human-readable label for an agent slug.
+// DisplayName resolves a human-readable label for a bot slug.
 // Custom names from the office directory take precedence; otherwise we
 // fall back to the canonical title for one of the built-in roles, and
-// finally to "@<slug>" for unknown agents.
+// finally to "@<slug>" for unknown bots.
 func DisplayName(slug string) string {
 	if member, ok := officeDirectory[slug]; ok && member.Name != "" {
 		return member.Name
 	}
 	switch slug {
-	case "ceo":
-		return "CEO"
+	case "cos":
+		return "Chief of Staff"
 	case "pm":
 		return "Product Manager"
 	case "fe":
@@ -83,7 +83,7 @@ func DisplayName(slug string) string {
 	case "cro":
 		return "CRO"
 	case "nex":
-		return "Nex"
+		return "Automation"
 	case "you":
 		return "You"
 	default:
@@ -91,7 +91,7 @@ func DisplayName(slug string) string {
 	}
 }
 
-// RoleLabel resolves a short role descriptor for an agent slug, used in
+// RoleLabel resolves a short role descriptor for a bot slug, used in
 // secondary metadata lines (e.g., "frontend" under the FE avatar).
 // Falls back to the canonical role for built-in slugs, then to
 // "teammate" for anything else.
@@ -100,7 +100,7 @@ func RoleLabel(slug string) string {
 		return member.Role
 	}
 	switch slug {
-	case "ceo":
+	case "cos":
 		return "strategy"
 	case "pm":
 		return "product"
@@ -117,7 +117,7 @@ func RoleLabel(slug string) string {
 	case "cro":
 		return "revenue"
 	case "nex":
-		return "context graph"
+		return "automation"
 	case "you":
 		return "human"
 	default:

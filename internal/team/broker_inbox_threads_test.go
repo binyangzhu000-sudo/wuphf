@@ -1,7 +1,7 @@
 package team
 
 // broker_inbox_threads_test.go exercises Phase 3 thread grouping:
-// per-agent buckets, preview enrichment from DM messages, and the
+// per-bot buckets, preview enrichment from DM messages, and the
 // interleaved event stream returned by /inbox/threads/{slug}.
 
 import (
@@ -33,7 +33,7 @@ func TestInboxThreads_GroupsItemsByAgent(t *testing.T) {
 		}
 	}
 	b.requests = []humanInterview{
-		{ID: "req-1", From: "ada", Channel: "general", Question: "Bump dep?", Kind: "approval", CreatedAt: now.Add(-10 * time.Minute).Format(time.RFC3339)},
+		{ID: "req-1", From: "ada", Channel: "team", Question: "Bump dep?", Kind: "approval", CreatedAt: now.Add(-10 * time.Minute).Format(time.RFC3339)},
 	}
 	b.mu.Unlock()
 
@@ -45,25 +45,25 @@ func TestInboxThreads_GroupsItemsByAgent(t *testing.T) {
 		t.Fatalf("threads = %d, want 2 (mira + ada); got %+v", len(payload.Threads), payload.Threads)
 	}
 
-	byAgent := map[string]InboxThread{}
+	byBot := map[string]InboxThread{}
 	for _, th := range payload.Threads {
-		byAgent[th.AgentSlug] = th
+		byBot[th.BotSlug] = th
 	}
-	mira, ok := byAgent["mira"]
+	mira, ok := byBot["mira"]
 	if !ok {
 		t.Fatal("expected thread for mira")
 	}
 	if mira.PendingCount != 2 || len(mira.Items) != 2 {
 		t.Fatalf("mira: pending=%d items=%d, want 2/2", mira.PendingCount, len(mira.Items))
 	}
-	if mira.AgentName != "Mira" {
-		t.Fatalf("mira AgentName = %q, want %q", mira.AgentName, "Mira")
+	if mira.BotName != "Mira" {
+		t.Fatalf("mira BotName = %q, want %q", mira.BotName, "Mira")
 	}
 	if mira.DMChannel == "" {
 		t.Fatal("mira DMChannel should be populated for non-system threads")
 	}
 
-	ada, ok := byAgent["ada"]
+	ada, ok := byBot["ada"]
 	if !ok {
 		t.Fatal("expected thread for ada")
 	}
@@ -94,7 +94,7 @@ func TestInboxThreads_PreviewFromLatestMessage(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	b.messages = []channelMessage{
-		{ID: "m-1", From: "mira", Channel: "general", Content: "I just shipped the refactor", Timestamp: now.Add(-1 * time.Minute).Format(time.RFC3339)},
+		{ID: "m-1", From: "mira", Channel: "team", Content: "I just shipped the refactor", Timestamp: now.Add(-1 * time.Minute).Format(time.RFC3339)},
 	}
 	b.mu.Unlock()
 
@@ -123,8 +123,8 @@ func TestInboxThreads_DetailInterleavesMessagesAndItems(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	b.messages = []channelMessage{
-		{ID: "m-1", From: "mira", Channel: "general", Content: "starting work", Timestamp: now.Add(-20 * time.Minute).Format(time.RFC3339)},
-		{ID: "m-2", From: "mira", Channel: "general", Content: "almost done", Timestamp: now.Add(-5 * time.Minute).Format(time.RFC3339)},
+		{ID: "m-1", From: "mira", Channel: "team", Content: "starting work", Timestamp: now.Add(-20 * time.Minute).Format(time.RFC3339)},
+		{ID: "m-2", From: "mira", Channel: "team", Content: "almost done", Timestamp: now.Add(-5 * time.Minute).Format(time.RFC3339)},
 	}
 	b.mu.Unlock()
 
@@ -183,7 +183,7 @@ func TestHandleInboxThreads_Owner(t *testing.T) {
 	if len(payload.Threads) != 1 {
 		t.Fatalf("threads = %d, want 1", len(payload.Threads))
 	}
-	if !strings.EqualFold(payload.Threads[0].AgentSlug, "mira") {
-		t.Fatalf("thread slug = %q, want %q", payload.Threads[0].AgentSlug, "mira")
+	if !strings.EqualFold(payload.Threads[0].BotSlug, "mira") {
+		t.Fatalf("thread slug = %q, want %q", payload.Threads[0].BotSlug, "mira")
 	}
 }

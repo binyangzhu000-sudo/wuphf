@@ -26,7 +26,7 @@ const MODEL = { id: "test-model" } as unknown as NonNullable<CapabilityConfig["a
 test("unconfigured host: integrations.call throws an explanatory error", async () => {
 	const tree = buildCapabilities({});
 	await expect(Promise.resolve(cap(tree, "integrations.call")("gmail", "GMAIL_FETCH_EMAILS"))).rejects.toThrow(
-		/not connected on this host/,
+		/not connected yet/,
 	);
 });
 
@@ -56,11 +56,12 @@ test("capabilityConfigFromEnv threads TOOL_CALL_TIMEOUT_MS into callTimeoutMs", 
 });
 
 test("GATED_CAPABILITIES lists every mutating capability the send-gate must hold", () => {
-	// toolRuntime.ts default-allows anything NOT in this set — these three paths
-	// disappearing from it would silently un-gate external mutations.
-	expect(GATED_CAPABILITIES.has("crm.assign")).toBe(true);
+	// toolRuntime.ts default-allows anything NOT in this set — these outbound
+	// paths disappearing from it would silently un-gate external mutations.
 	expect(GATED_CAPABILITIES.has("nex.send")).toBe(true);
 	expect(GATED_CAPABILITIES.has("nex.browser")).toBe(true);
+	// The catalog is domain-neutral now: no crm.* capability exists to gate.
+	expect(GATED_CAPABILITIES.has("crm.assign")).toBe(false);
 });
 
 // --- simulated fallbacks (empty input honesty) ----------------------------------
@@ -75,7 +76,7 @@ test("simulated nex.run with a blank input is honest, not 'Ran on  (simulated).'
 	expect(out).not.toContain("Ran on  (simulated)."); // the double-space bug
 	expect(out).not.toMatch(/on\s{2,}/); // no empty interpolation anywhere
 	expect(out.toLowerCase()).toContain("simulated");
-	expect(out).toContain("no model"); // honest about why
+	expect(out).toContain("no AI model"); // honest about why
 });
 
 test("simulated nex.run names the input it would have acted on", async () => {
@@ -116,6 +117,21 @@ test("real nex.ai.summarize returns the model's text", async () => {
 	expect(await cap(tree, "nex.ai.summarize")([1, 2, 3])).toBe("6 deals moved; Globex leads.");
 });
 
+test("nex.ai.summarize feeds the FULL input to the model, not a 57-char preview", async () => {
+	let captured = "";
+	const capturing = (async (_m: unknown, ctx: { messages: { content: unknown }[] }) => {
+		captured = String(ctx.messages?.[0]?.content ?? "");
+		return { content: [{ type: "text", text: "ok" }] };
+	}) as unknown as CompleteFn;
+	// Meaningful content sits well past char 57; preview() used to cut everything
+	// after ~57 chars, so the model saw its own input "cut off" and refused.
+	const items = Array.from({ length: 12 }, (_, i) => `incident-${i}: Falcon Logistics outage breached SLA`);
+	const tree = buildCapabilities({ aiModel: MODEL, complete: capturing });
+	await cap(tree, "nex.ai.summarize")(items);
+	expect(captured.length).toBeGreaterThan(200);
+	expect(captured).toContain("incident-11");
+});
+
 // --- real integrations.call (stubbed broker) ------------------------------------
 
 const BROKER: CapabilityConfig = { brokerUrl: "http://broker.test", brokerToken: "tok" };
@@ -137,6 +153,50 @@ test("integrations.call surfaces the broker's approval card for a mutation", asy
 	const out = await cap(tree, "integrations.call")("slack", "SLACK_SENDS_A_MESSAGE", {});
 	expect(String(out)).toContain("Held for your approval");
 	expect(String(out)).toContain("req_9");
+});
+
+test("data.* is the empty simulation without an appId", async () => {
+	const tree = buildCapabilities({ ...BROKER });
+	expect(await cap(tree, "data.list")("records")).toEqual([]);
+	expect(await cap(tree, "data.get")("records", "x")).toBeNull();
+});
+
+test("data.list binds to the app store (query op) when an appId is set", async () => {
+	let captured: { url?: string; body?: unknown } = {};
+	const fetch = (async (url: string, init: { body: string }) => {
+		captured = { url, body: JSON.parse(init.body) };
+		return new Response(JSON.stringify({ table: { rows: [{ id: "1", name: "Meridian" }] } }), { status: 200 });
+	}) as unknown as CapabilityConfig["fetch"];
+	const tree = buildCapabilities({ ...BROKER, appId: "app_00000000000000aa", fetch });
+	const rows = await cap(tree, "data.list")("accounts");
+	expect(rows).toEqual([{ id: "1", name: "Meridian" }]);
+	expect(captured.url).toBe("http://broker.test/apps/app_00000000000000aa/db");
+	expect(captured.body).toMatchObject({ op: "query", table: "accounts" });
+});
+
+test("data.get finds a row by id from the app store", async () => {
+	const fetch = (async () =>
+		new Response(JSON.stringify({ table: { rows: [{ id: "a" }, { id: "b" }] } }), { status: 200 })) as unknown as CapabilityConfig["fetch"];
+	const tree = buildCapabilities({ ...BROKER, appId: "app_00000000000000aa", fetch });
+	expect(await cap(tree, "data.get")("t", "b")).toEqual({ id: "b" });
+	expect(await cap(tree, "data.get")("t", "z")).toBeNull();
+});
+
+test("data.list returns [] for a table that does not exist yet (honest empty)", async () => {
+	const fetch = (async () => new Response(JSON.stringify({ error: "no such table" }), { status: 404 })) as unknown as CapabilityConfig["fetch"];
+	const tree = buildCapabilities({ ...BROKER, appId: "app_00000000000000aa", fetch });
+	expect(await cap(tree, "data.list")("nope")).toEqual([]);
+});
+
+test("data.upsert writes a row to the app store (upsert op, key id)", async () => {
+	let body: unknown;
+	const fetch = (async (_url: string, init: { body: string }) => {
+		body = JSON.parse(init.body);
+		return new Response(JSON.stringify({ table: { rows: [] } }), { status: 200 });
+	}) as unknown as CapabilityConfig["fetch"];
+	const tree = buildCapabilities({ ...BROKER, appId: "app_00000000000000aa", fetch });
+	await cap(tree, "data.upsert")("accounts", { id: "1", stage: "won" });
+	expect(body).toMatchObject({ op: "upsert", table: "accounts", key: "id", rows: [{ id: "1", stage: "won" }] });
 });
 
 test("integrations.call throws on a broker error / disconnected platform", async () => {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
@@ -316,13 +317,40 @@ type Page struct {
 }
 
 // PageMeta is page metadata as returned by list_pages (no body).
+//
+// Updated accepts BOTH `updated_at` (what gbrain 0.42.58.0 actually emits) and
+// the legacy `updated` key. The struct originally declared only `updated`, so
+// the field silently decoded empty on current gbrain — which left
+// LastEditedTs blank on every wiki page in the adapter, and left no usable
+// cursor for pagination. See UnmarshalJSON.
 type PageMeta struct {
 	Slug    string   `json:"slug"`
 	Title   string   `json:"title"`
 	Type    string   `json:"type"`
 	Tags    []string `json:"tags"`
-	Updated string   `json:"updated"`
+	Updated string   `json:"-"`
 	Stale   bool     `json:"stale"`
+}
+
+// UnmarshalJSON decodes a page-metadata row, tolerating either spelling of the
+// updated timestamp. Tolerating both means a gbrain upgrade that renames the
+// key cannot silently blank the field again.
+func (p *PageMeta) UnmarshalJSON(data []byte) error {
+	type alias PageMeta // avoids recursing into this method
+	var raw struct {
+		alias
+		UpdatedAt string `json:"updated_at"`
+		Updated   string `json:"updated"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*p = PageMeta(raw.alias)
+	p.Updated = strings.TrimSpace(raw.UpdatedAt)
+	if p.Updated == "" {
+		p.Updated = strings.TrimSpace(raw.Updated)
+	}
+	return nil
 }
 
 // ListOptions filters list_pages. Zero values are omitted from the call.
@@ -358,7 +386,46 @@ type PutResult struct {
 // Query runs gbrain's hybrid retrieval (vector + keyword + expansion) and
 // returns the parsed hits.
 func (c *Client) Query(ctx context.Context, query string, limit int) ([]Hit, error) {
-	return c.searchLike(ctx, toolQuery, query, limit, map[string]any{"detail": "low"})
+	return c.QueryTypes(ctx, query, limit, nil)
+}
+
+// QueryTypes is Query restricted to pages whose `type` is in types.
+//
+// The parameter is `types` (a LIST), not `type`. This is easy to get wrong and
+// fails silently: list_pages takes a singular `type`, query takes a plural
+// `types`, and MCP drops unknown arguments without complaint, so sending
+// `type` here returns byte-identical unfiltered rows. That mistake is what the
+// client-side slug filter in the entity text index was originally compensating
+// for.
+//
+// Worth using rather than filtering after the fact: gbrain applies this at the
+// SQL level on every retrieval leg, so the fusion ranks are computed over the
+// filtered candidate set. Dropping rows client-side instead leaves the
+// surviving rows carrying scores that were fused against the noise (verified:
+// the same two hits score 0.5082/0.4999 unfiltered and 0.7767/0.7767 filtered).
+// So this is a ranking-quality fix, not only an efficiency one.
+func (c *Client) QueryTypes(ctx context.Context, query string, limit int, types []string) ([]Hit, error) {
+	extra := map[string]any{"detail": "low"}
+	if clean := cleanTypes(types); len(clean) > 0 {
+		extra["types"] = clean
+	}
+	return c.searchLike(ctx, toolQuery, query, limit, extra)
+}
+
+// cleanTypes trims, drops blanks, and de-duplicates while preserving order.
+// gbrain rejects a non-string entry outright rather than ignoring the filter.
+func cleanTypes(types []string) []string {
+	out := make([]string, 0, len(types))
+	seen := make(map[string]bool, len(types))
+	for _, t := range types {
+		t = strings.TrimSpace(t)
+		if t == "" || seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	return out
 }
 
 // Search runs gbrain's full-text search and returns the parsed hits.
@@ -575,8 +642,47 @@ func decodeJSON(raw string, v any) error {
 	if strings.HasPrefix(raw, "ERROR: ") {
 		return errors.New(strings.TrimPrefix(raw, "ERROR: "))
 	}
-	if err := json.Unmarshal([]byte(raw), v); err != nil {
-		return fmt.Errorf("unmarshal payload: %w", err)
+	// Decode the FIRST JSON value and tolerate anything after it.
+	//
+	// gbrain returns tool output as MCP text blocks, and flattenResult
+	// concatenates them all. Since 0.48 it appends advisory blocks alongside the
+	// payload, e.g.
+	//
+	//   [ ...json... ]
+	//   warning: unknown parameter "slug_prefix" ignored.
+	//
+	// json.Unmarshal rejects that as "invalid character 'w' after top-level
+	// value", which turned an advisory note into a hard decode failure across
+	// every call. A Decoder reads one value and stops, so trailing prose cannot
+	// break parsing again.
+	dec := json.NewDecoder(strings.NewReader(raw))
+	if err := dec.Decode(v); err != nil {
+		// Bounded prefix AND suffix: a bare parse error names neither the tool
+		// nor the content, and the useful part is often at the end.
+		return fmt.Errorf("unmarshal payload: %w (payload: %.160q … %.160q)", err, raw, tailOf(raw, 160))
+	}
+	// Surface, do not swallow. These warnings announce upcoming breaking
+	// changes ("a future release rejects unknown parameters"), so silently
+	// discarding them trades a visible problem now for a hard failure later.
+	if trailing := strings.TrimSpace(drainDecoder(dec, raw)); trailing != "" {
+		log.Printf("gbrain: advisory alongside tool payload: %.300s", trailing)
 	}
 	return nil
+}
+
+// drainDecoder returns whatever followed the decoded JSON value.
+func drainDecoder(dec *json.Decoder, raw string) string {
+	off := dec.InputOffset()
+	if off < 0 || int(off) >= len(raw) {
+		return ""
+	}
+	return raw[off:]
+}
+
+// tailOf returns the last n characters of s.
+func tailOf(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[len(s)-n:]
 }

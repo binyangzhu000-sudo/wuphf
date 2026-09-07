@@ -38,7 +38,7 @@ describe("<FactsOnFile>", () => {
         kind: "people",
         slug: "sarah-chen",
         text: "Champion inside Customer X.",
-        recorded_by: "ceo",
+        recorded_by: "cos",
         source_path: "team/companies/customer-x.md",
         created_at: "2026-04-15T00:00:00Z",
       },
@@ -158,7 +158,7 @@ describe("<FactsOnFile>", () => {
         kind: "people",
         slug: "sarah-chen",
         text: "Fresh fact from SSE.",
-        recorded_by: "ceo",
+        recorded_by: "cos",
         created_at: "2026-04-15T00:00:00Z",
       },
       {
@@ -179,7 +179,7 @@ describe("<FactsOnFile>", () => {
         kind: "people",
         slug: "sarah-chen",
         fact_id: "f2",
-        recorded_by: "ceo",
+        recorded_by: "cos",
         fact_count: 2,
         threshold_crossed: false,
         timestamp: "2026-04-15T00:00:00Z",
@@ -263,7 +263,7 @@ describe("isWikiSource source-path rendering (Fix M15)", () => {
   });
 
   const wikiPaths = [
-    "wiki/artifacts/agent-pm/abc123.md",
+    "wiki/artifacts/bot-pm/abc123.md",
     "team/people/sarah-chen.md",
     "wiki/facts/person/sarah-chen.jsonl",
     "wiki/insights/entity/sarah-chen.jsonl",

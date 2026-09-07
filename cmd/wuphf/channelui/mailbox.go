@@ -3,7 +3,7 @@ package channelui
 import "strings"
 
 // FilterMessagesForViewerScope returns messages whose viewer-scope
-// matches scope ("inbox" / "outbox" / "agent"). Empty / unknown scope
+// matches scope ("inbox" / "outbox" / "bot"). Empty / unknown scope
 // returns a copy of the input unchanged. The returned slice is fresh
 // so callers may mutate without affecting messages.
 func FilterMessagesForViewerScope(messages []BrokerMessage, viewerSlug, scope string) []BrokerMessage {
@@ -27,7 +27,7 @@ func FilterMessagesForViewerScope(messages []BrokerMessage, viewerSlug, scope st
 }
 
 // NormalizeMailboxScope canonicalizes a mailbox-scope label to one of
-// "inbox" / "outbox" / "agent", returning "" for anything else.
+// "inbox" / "outbox" / "bot", returning "" for anything else.
 func NormalizeMailboxScope(value string) string {
 	switch strings.TrimSpace(strings.ToLower(value)) {
 	case "inbox", "outbox", "agent":
@@ -61,7 +61,7 @@ func MailboxMessageBelongsToViewerOutbox(msg BrokerMessage, viewerSlug string) b
 }
 
 // MailboxMessageBelongsToViewerInbox is true when msg is addressed to
-// viewerSlug — either authored by a human ("you" / "human" / "ceo"),
+// viewerSlug — either authored by a human ("you" / "human" / "cos"),
 // tagging the viewer (or "all"), or replying within a thread the
 // viewer started. The viewer's own messages do not count as inbox.
 func MailboxMessageBelongsToViewerInbox(msg BrokerMessage, viewerSlug string, messagesByID map[string]BrokerMessage) bool {
@@ -73,7 +73,7 @@ func MailboxMessageBelongsToViewerInbox(msg BrokerMessage, viewerSlug string, me
 	switch from {
 	case viewerSlug:
 		return false
-	case "you", "human", "ceo":
+	case "you", "human", "cos":
 		return true
 	}
 	for _, tagged := range msg.Tagged {

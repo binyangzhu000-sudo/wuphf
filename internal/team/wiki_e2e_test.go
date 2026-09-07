@@ -6,7 +6,7 @@
 // Critical paths covered here (from the test plan):
 //   - First-run materialization produces skeleton articles that resolve via
 //     GET /wiki/article once a git repo exists and articles are committed.
-//   - Agent writes via POST /wiki/write → SSE event fires on the wiki event
+//   - Bot writes via POST /wiki/write → SSE event fires on the wiki event
 //     channel → article is readable via GET /wiki/read + GET /wiki/article.
 //   - Cross-article backlinks: A links to B, B links back after write, the
 //     /wiki/article endpoint for B returns A as a backlink with the correct
@@ -83,7 +83,7 @@ func (c *capturePublisher) PublishWikiEvent(ev wikiWriteEvent) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// E2E: agent write → SSE event → article readable
+// E2E: bot write → SSE event → article readable
 // ─────────────────────────────────────────────────────────────────────────────
 
 func TestE2EWikiWriteReadAndEvent(t *testing.T) {
@@ -97,7 +97,7 @@ func TestE2EWikiWriteReadAndEvent(t *testing.T) {
 
 	// Write an article via the HTTP endpoint.
 	writeBody := map[string]string{
-		"slug":           "ceo",
+		"slug":           "cos",
 		"path":           "team/people/customer-x.md",
 		"content":        "# Customer X\n\nA mid-market logistics company.\n",
 		"mode":           "create",
@@ -132,8 +132,8 @@ func TestE2EWikiWriteReadAndEvent(t *testing.T) {
 		if ev.Path != "team/people/customer-x.md" {
 			t.Errorf("event.Path = %q", ev.Path)
 		}
-		if ev.AuthorSlug != "ceo" {
-			t.Errorf("event.AuthorSlug = %q, want ceo", ev.AuthorSlug)
+		if ev.AuthorSlug != "cos" {
+			t.Errorf("event.AuthorSlug = %q, want cos", ev.AuthorSlug)
 		}
 		if ev.CommitSHA == "" {
 			t.Error("event.CommitSHA is empty")
@@ -171,7 +171,7 @@ func TestE2EWikiArticleBacklinks(t *testing.T) {
 	// Write two articles: B is the target; A links to B via [[people/b]].
 	writes := []map[string]string{
 		{
-			"slug":           "ceo",
+			"slug":           "cos",
 			"path":           "team/people/b.md",
 			"content":        "# Article B\n\nThe target article.\n",
 			"mode":           "create",
@@ -210,8 +210,8 @@ func TestE2EWikiArticleBacklinks(t *testing.T) {
 	if meta.Revisions != 1 {
 		t.Errorf("Revisions = %d, want 1", meta.Revisions)
 	}
-	if meta.LastEditedBy != "ceo" {
-		t.Errorf("LastEditedBy = %q, want ceo", meta.LastEditedBy)
+	if meta.LastEditedBy != "cos" {
+		t.Errorf("LastEditedBy = %q, want cos", meta.LastEditedBy)
 	}
 	if len(meta.Backlinks) != 1 {
 		t.Fatalf("Backlinks len = %d, want 1 (entries=%+v)", len(meta.Backlinks), meta.Backlinks)
@@ -229,11 +229,11 @@ func TestE2EWikiArticleBacklinks(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// E2E: five agents write concurrently through the HTTP stack;
-// all articles land and git log preserves per-agent authorship.
+// E2E: five bots write concurrently through the HTTP stack;
+// all articles land and git log preserves per-bot authorship.
 // ─────────────────────────────────────────────────────────────────────────────
 
-func TestE2EWikiConcurrentAgents(t *testing.T) {
+func TestE2EWikiConcurrentBots(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -241,8 +241,8 @@ func TestE2EWikiConcurrentAgents(t *testing.T) {
 	baseURL, worker, cleanup := newWikiTestServer(t)
 	defer cleanup()
 
-	agents := []struct{ slug, path string }{
-		{"ceo", "team/people/alice.md"},
+	bots := []struct{ slug, path string }{
+		{"cos", "team/people/alice.md"},
 		{"pm", "team/people/bob.md"},
 		{"cro", "team/people/carol.md"},
 		{"eng-1", "team/people/dave.md"},
@@ -250,8 +250,8 @@ func TestE2EWikiConcurrentAgents(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	errs := make(chan error, len(agents))
-	for _, a := range agents {
+	errs := make(chan error, len(bots))
+	for _, a := range bots {
 		wg.Add(1)
 		go func(slug, path string) {
 			defer wg.Done()
@@ -274,8 +274,8 @@ func TestE2EWikiConcurrentAgents(t *testing.T) {
 		t.Errorf("concurrent write error: %v", err)
 	}
 
-	// Every article is committed and readable; per-agent authorship preserved.
-	for _, a := range agents {
+	// Every article is committed and readable; per-bot authorship preserved.
+	for _, a := range bots {
 		refs, err := worker.Repo().Log(context.Background(), a.path)
 		if err != nil {
 			t.Errorf("Log(%s): %v", a.path, err)

@@ -63,7 +63,7 @@ describe("shouldShowArtifactSkeleton — phrase heuristic", () => {
     ["The chart is coming.", true],
     ["Diagram incoming.", true],
     ["Full breakdown — coming.", true],
-    // Common codex-path closers the agent actually emits.
+    // Common codex-path closers the bot actually emits.
     ["I put together the full breakdown.", true],
     ["Here's the schematic.", true],
     // No promise — must stay silent.
@@ -147,7 +147,7 @@ describe("shouldShowArtifactSkeleton — 60s recency window", () => {
 });
 
 describe("shouldShowArtifactSkeleton — unmount on marker arrival", () => {
-  it("unmounts when a newer message from the same agent carries the marker", () => {
+  it("unmounts when a newer message from the same bot carries the marker", () => {
     expect(
       shouldShowArtifactSkeleton({
         message: buildMessage(),
@@ -163,17 +163,17 @@ describe("shouldShowArtifactSkeleton — unmount on marker arrival", () => {
     ).toBe(false);
   });
 
-  it("does NOT unmount for an unrelated newer message from a different agent", () => {
+  it("does NOT unmount for an unrelated newer message from a different bot", () => {
     expect(
       shouldShowArtifactSkeleton({
         message: buildMessage(),
         newerMessages: [
           {
-            from: "ceo",
+            from: "cos",
             content: "FYI\n\nvisual-artifact:ra_aaaaaaaaaaaaaaaa",
           },
         ],
-        members: [PM_MEMBER, { slug: "ceo", status: "active" }],
+        members: [PM_MEMBER, { slug: "cos", status: "active" }],
         nowMs: BASE_NOW,
       }),
     ).toBe(true);
@@ -276,7 +276,7 @@ describe("shouldShowArtifactSkeleton — author guards", () => {
     ).toBe(false);
   });
 
-  it("does not show when the authoring agent is not currently active", () => {
+  it("does not show when the authoring bot is not currently active", () => {
     expect(
       shouldShowArtifactSkeleton({
         message: buildMessage(),
@@ -287,7 +287,7 @@ describe("shouldShowArtifactSkeleton — author guards", () => {
     ).toBe(false);
   });
 
-  it("does not show when the authoring agent is missing from the office roster", () => {
+  it("does not show when the authoring bot is missing from the team roster", () => {
     expect(
       shouldShowArtifactSkeleton({
         message: buildMessage(),

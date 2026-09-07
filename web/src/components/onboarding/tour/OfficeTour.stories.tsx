@@ -75,7 +75,7 @@ function StartAtSlide({ slide, onClose, onFinish }: StartAtSlideProps) {
 /** Default: the tour opens on the intro slide. */
 export const Open: Story = {};
 
-/** Slide 1, "This is your office." (same as Open, named for clarity.) */
+/** Slide 1, "This is your team." (same as Open, named for clarity.) */
 export const SlideIntro: Story = {
   render: (args) => (
     <StartAtSlide
@@ -87,7 +87,7 @@ export const SlideIntro: Story = {
 };
 
 /** Slide 2, "Your team, on the clock." */
-export const SlideAgents: Story = {
+export const SlideBots: Story = {
   render: (args) => (
     <StartAtSlide
       slide="agents"

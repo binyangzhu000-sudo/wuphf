@@ -20,7 +20,7 @@ import { formatVersion } from "./upgradeBanner.utils";
 
 /**
  * Bottom status bar mirroring the legacy IIFE: shows the active channel/app,
- * mode (office vs 1:1), agent count, broker connection, and runtime provider.
+ * mode (office vs 1:1), bot count, broker connection, and runtime provider.
  */
 export function StatusBar() {
   const route = useCurrentRoute();
@@ -74,7 +74,7 @@ export function StatusBar() {
       refetchOnWindowFocus: false,
     });
 
-  const agentCount = members.filter(
+  const botCount = members.filter(
     (m) =>
       m.slug && m.slug !== "human" && m.slug !== "you" && m.slug !== "system",
   ).length;
@@ -105,8 +105,8 @@ export function StatusBar() {
       case "task-new":
         return "New task";
       case "agents":
-        return "Agents";
-      case "agent-detail":
+        return "Bots";
+      case "bot-detail":
         return `@${route.agentSlug}`;
       case "skill-detail":
         return `skill · ${route.skillName}`;
@@ -139,19 +139,19 @@ export function StatusBar() {
     const latest = formatVersion(upgradeCheck?.latest, "");
     switch (versionStatus.kind) {
       case "ok":
-        return `wuphf ${versionLabel} — up to date`;
+        return `gawkbot ${versionLabel} — up to date`;
       case "outdated":
         return latest
-          ? `wuphf ${versionLabel} — update available (${latest})`
-          : `wuphf ${versionLabel} — update available`;
+          ? `gawkbot ${versionLabel} — update available (${latest})`
+          : `gawkbot ${versionLabel} — update available`;
       case "dev":
-        return `wuphf ${versionLabel} — dev build`;
+        return `gawkbot ${versionLabel} — dev build`;
       case "error":
-        return `wuphf ${versionLabel} — version check failed`;
+        return `gawkbot ${versionLabel} — version check failed`;
       case "loading":
-        return `wuphf ${versionLabel} — checking for updates…`;
+        return `gawkbot ${versionLabel} — checking for updates…`;
       default:
-        return `wuphf ${versionLabel}`;
+        return `gawkbot ${versionLabel}`;
     }
   })();
 
@@ -173,7 +173,7 @@ export function StatusBar() {
         <span>shortcuts</span>
       </button>
       <span className="status-bar-item">
-        {agentCount} agent{agentCount === 1 ? "" : "s"}
+        {botCount} bot{botCount === 1 ? "" : "s"}
       </span>
       {provider ? (
         <span

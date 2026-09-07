@@ -28,6 +28,10 @@ func TestEnsureWikiWorkerRetriesAfterInitFailure(t *testing.T) {
 	}
 
 	b := newTestBroker(t)
+	// Registered after t.TempDir, so it runs first: the successful retry
+	// below kicks off the async skill backfill, and the temp dir must not
+	// be removed underneath it.
+	t.Cleanup(b.Stop)
 
 	b.ensureWikiWorker()
 	if b.WikiWorker() != nil {
@@ -44,6 +48,18 @@ func TestEnsureWikiWorkerRetriesAfterInitFailure(t *testing.T) {
 	}
 
 	b.ensureWikiWorker()
+	// The retry starts a REAL wiki worker rooted in this test's TempDir, and
+	// it keeps writing in the background after the test body returns —
+	// notably the system-skill backfill (app-building, wiki-maintenance).
+	// Without this, those writes race t.TempDir's RemoveAll and it fails with
+	// "directory not empty". Registered here rather than at the top because
+	// there is no worker to stop until this call succeeds; t.TempDir's own
+	// cleanup was queued first, so it still runs last.
+	t.Cleanup(func() {
+		if w := b.WikiWorker(); w != nil {
+			w.Stop()
+		}
+	})
 	if b.WikiWorker() == nil {
 		t.Fatalf("wiki worker should be set after retry; init err: %v", b.WikiInitErr())
 	}

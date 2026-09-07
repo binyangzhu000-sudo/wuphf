@@ -22,11 +22,13 @@ import {
   getInjectedAnalyticsConfig,
   initApi,
 } from "../api/client";
+import { AppDetail } from "../appdetail/surfaces/AppDetail";
 import { CreateAppDialog } from "../components/apps/CreateAppDialog";
 import { CustomAppView } from "../components/apps/CustomAppView";
 import { TelegramConnectHost } from "../components/integrations/TelegramConnectModal";
 import { Shell } from "../components/layout/Shell";
 import { UpgradeBanner } from "../components/layout/UpgradeBanner";
+import { TaskModalHost } from "../components/lifecycle/TaskModalHost";
 import { ChannelParticipants } from "../components/messages/ChannelParticipants";
 import { Composer } from "../components/messages/Composer";
 import { MessageFeed } from "../components/messages/MessageFeed";
@@ -168,15 +170,15 @@ const TaskComposer = lazy(() =>
     default: m.TaskComposer,
   })),
 );
-// Agents tool — roster grid (/agents) + per-agent config (/agents/$slug).
-const AgentsTool = lazy(() =>
-  import("../components/agents/AgentsTool").then((m) => ({
-    default: m.AgentsTool,
+// Bots tool — roster grid (/bots) + per-bot config (/bots/$slug).
+const BotsTool = lazy(() =>
+  import("../components/bots/BotsTool").then((m) => ({
+    default: m.BotsTool,
   })),
 );
-const AgentDetail = lazy(() =>
-  import("../components/agents/AgentsTool").then((m) => ({
-    default: m.AgentDetail,
+const BotDetail = lazy(() =>
+  import("../components/bots/BotsTool").then((m) => ({
+    default: m.BotDetail,
   })),
 );
 // Full-screen skill SKILL.md editor + preview.
@@ -184,14 +186,6 @@ const SkillDetailRoute = lazy(() =>
   import("./SkillDetailRoute").then((m) => ({
     default: m.SkillDetailRoute,
   })),
-);
-
-// Operator product shell. Mounted full-bleed at /#/operator, ahead of the office
-// Shell / onboarding / broker gates so the shape is always viewable regardless of
-// backend state. The clean-start product (web/src/operator) — talks to the pi-mono
-// agent service over HTTP/SSE, not the broker. See operator-harness-clean-start.md.
-const OperatorApp = lazy(() =>
-  import("../operator/OperatorApp").then((m) => ({ default: m.OperatorApp })),
 );
 
 function LazyPanelFallback() {
@@ -229,7 +223,7 @@ class ErrorBoundary extends Component<
 
   componentDidCatch(error: Error, info: { componentStack?: string | null }) {
     // eslint-disable-next-line no-console
-    console.error("[WUPHF ErrorBoundary]", error, info);
+    console.error("[gawkbot ErrorBoundary]", error, info);
 
     // Auto-recover from stale lazy-chunk hashes after a FE rebuild.
     // The browser holds an old index.html that points at deleted hashed
@@ -457,7 +451,7 @@ function TasksRedirect() {
 
 /**
  * FirstClassAppRedirect navigates the user from a `/apps/$id` URL whose
- * `$id` is a first-class app (wiki, inbox, tasks, agents) to that app's
+ * `$id` is a first-class app (wiki, inbox, tasks, bots) to that app's
  * canonical dedicated route. Users who type a sidebar-label-style URL by
  * hand (e.g. `/#/apps/wiki`) used to hit "Page not found" because
  * first-class apps live at their own paths, not under `/apps`. Mirrors
@@ -584,10 +578,22 @@ function MainContent() {
         return <FirstClassAppRedirect appId={route.appId} />;
       }
       if (!isAppPanelId(route.appId)) {
-        // Agent-generated Apps live at /apps/app_<hash>. Anything else under
+        // Bot-generated Apps live at /apps/app_<hash>. Anything else under
         // /apps that is neither a built-in panel nor a custom app id is unknown.
         if (route.appId.startsWith("app_")) {
-          return <CustomAppView appId={route.appId} />;
+          // The app surface is the operator-era detail view, folded into the
+          // office: UI / Routines / Tools / Data / Knowledge / Integrations
+          // plus the ask-the-app chat, on the same app_<id> record. "Edit app"
+          // hands off to the office App Builder dialog (update mode), which
+          // posts the improve task the App Builder picks up.
+          return (
+            <AppDetail
+              appId={route.appId}
+              onEditApp={(a) =>
+                useAppStore.getState().openUpdateAppDialog(a.id, a.name)
+              }
+            />
+          );
         }
         return <UnknownAppPanel appId={route.appId} />;
       }
@@ -619,9 +625,9 @@ function MainContent() {
     case "task-decision":
       return <DecisionPacketRoute taskId={route.taskId} />;
     case "agents":
-      return <AgentsTool />;
-    case "agent-detail":
-      return <AgentDetail agentSlug={route.agentSlug} tab={route.tab} />;
+      return <BotsTool />;
+    case "bot-detail":
+      return <BotDetail agentSlug={route.agentSlug} tab={route.tab} />;
     case "skill-detail":
       return <SkillDetailRoute skillName={route.skillName} />;
     case "routine-detail":
@@ -684,12 +690,10 @@ function NotFoundSurface({ pathname }: { pathname: string }) {
       <span>
         No route matches <code>{pathname}</code>.
       </span>
-      <Link
-        to="/channels/$channelSlug"
-        params={{ channelSlug: "general" }}
-        style={{ color: "var(--text-secondary)" }}
-      >
-        Go to #general
+      {/* Home, not #general: the shared room is retired, so the old escape
+          hatch from "Page not found" led straight back to another one. */}
+      <Link to="/" style={{ color: "var(--text-secondary)" }}>
+        Go home
       </Link>
     </div>
   );
@@ -736,7 +740,7 @@ function BrokerUnreachableScreen({ onRetry }: { onRetry: () => void }) {
       }}
     >
       <strong style={{ fontSize: 16, color: "var(--text)" }}>
-        WUPHF can&rsquo;t reach the office broker — retrying…
+        gawkbot can&rsquo;t reach the office broker — retrying…
       </strong>
       <span style={{ color: "var(--text-tertiary)" }}>
         The broker isn&rsquo;t answering. We retry automatically every few
@@ -807,26 +811,6 @@ export default function RootRoute() {
   // bootAttempt re-runs the bootstrap effect (Retry button + auto-retry).
   const [bootError, setBootError] = useState(false);
   const [bootAttempt, setBootAttempt] = useState(0);
-
-  // Operator shell mount. The product shell lives at /#/operator and is fully
-  // self-contained, so it short-circuits the office boot/onboarding/Shell. Read
-  // the hash directly (not useRouterState) so it also works where RootRoute
-  // renders without a RouterProvider (bootstrap-fallback tests).
-  const [hashPath, setHashPath] = useState<string>(() =>
-    typeof window !== "undefined" ? window.location.hash.replace(/^#/, "") : "",
-  );
-  useEffect(() => {
-    const onHash = () => setHashPath(window.location.hash.replace(/^#/, ""));
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
-  }, []);
-  const isOperatorRoute = hashPath.startsWith("/operator");
-  // Operator is the index (the product front door). The home route ("" / "/")
-  // lands in the operator surface after boot + onboarding, instead of the legacy
-  // office chat shell. The office shell still owns its own deep routes
-  // (#/c/:channel, #/agents, …) for anyone who navigates there directly, but it
-  // is no longer what a fresh `npx wuphf` opens to.
-  const isHomeRoute = hashPath === "" || hashPath === "/";
 
   // Manual SPA pageviews (autocapture is off). We subscribe to the router
   // singleton rather than useRouterState so this works even where RootRoute is
@@ -903,7 +887,7 @@ export default function RootRoute() {
   // wizard steps), so we pass `enabled={false}` to suppress the post-office
   // auto-open. The replay path is independent of `enabled` in useOfficeTour:
   // the `requestShowOfficeTour()` window-event listener stays bound, so Help →
-  // "Replay the office tour" still overlays the tour on the live office.
+  // "Replay the team tour" still overlays the tour on the live team.
   const officeTour = useOfficeTour(false);
 
   // Finish handoff (spec section 4): drop the user mid-action in the CEO DM
@@ -913,16 +897,16 @@ export default function RootRoute() {
   // matches (see stores/app.ts pendingComposerDraft + Composer.tsx). This is
   // the controlled-state-safe alternative to writing the textarea imperatively.
   const handleTourFinish = useCallback(() => {
-    const ceoChannel = directChannelSlug("ceo");
+    const ceoChannel = directChannelSlug("cos");
     useAppStore
       .getState()
       .setPendingComposerDraft(
         ceoChannel,
         "Audit our CRM for duplicate accounts, deals missing an owner, and opportunities with no activity in 30 days, then propose a cleanup plan",
       );
-    // The legacy `/dm/$agentSlug` route was removed in the task-scoped
+    // The legacy `/dm/$botSlug` route was removed in the task-scoped
     // restructure (DMs fold into task channels). It was only sugar over
-    // `/channels/<directChannelSlug(agentSlug)>`, so navigate to the same
+    // `/channels/<directChannelSlug(botSlug)>`, so navigate to the same
     // destination directly — the channel the draft was just seeded into.
     void router.navigate({
       to: "/channels/$channelSlug",
@@ -950,10 +934,6 @@ export default function RootRoute() {
   }, [theme]);
 
   useEffect(() => {
-    // The operator shell at /#/operator is self-contained and never talks to
-    // the office broker. Skip the whole bootstrap so it does not fire initApi(),
-    // hit /onboarding/state, or arm the retry loop with failing broker traffic.
-    if (isOperatorRoute) return;
     let cancelled = false;
     let unreachable = false;
     initApi()
@@ -987,7 +967,7 @@ export default function RootRoute() {
           // blank body or a misleading fresh-install screen.
           // eslint-disable-next-line no-console
           console.warn(
-            `[WUPHF boot] broker unreachable (attempt ${bootAttempt + 1})`,
+            `[gawkbot boot] broker unreachable (attempt ${bootAttempt + 1})`,
             err,
           );
           unreachable = true;
@@ -1007,31 +987,23 @@ export default function RootRoute() {
     return () => {
       cancelled = true;
     };
-  }, [bootAttempt, isOperatorRoute, setBrokerConnected, setOnboardingComplete]);
+  }, [bootAttempt, setBrokerConnected, setOnboardingComplete]);
 
   // Auto-retry while the broker is unreachable — the fallback copy promises
   // "retrying…", so keep that promise without requiring a click. Reads
   // bootAttempt (not a functional update) so a failed retry — which leaves
   // bootError true but bumps the attempt — re-arms the timer.
   useEffect(() => {
-    if (isOperatorRoute || !bootError) return;
+    if (!bootError) return;
     const next = bootAttempt + 1;
     const timer = setTimeout(() => {
       setBootAttempt(next);
     }, BOOT_RETRY_MS);
     return () => clearTimeout(timer);
-  }, [isOperatorRoute, bootError, bootAttempt]);
+  }, [bootError, bootAttempt]);
 
   let body: ReactNode;
-  if (isOperatorRoute) {
-    // Operator product shell — self-contained, full-bleed. Bypasses the office
-    // boot/onboarding/Shell so it renders regardless of backend state.
-    body = (
-      <Suspense fallback={<LazyPanelFallback />}>
-        <OperatorApp />
-      </Suspense>
-    );
-  } else if (bootError) {
+  if (bootError) {
     body = (
       <BrokerUnreachableScreen onRetry={() => setBootAttempt((a) => a + 1)} />
     );
@@ -1053,15 +1025,31 @@ export default function RootRoute() {
   } else if (!onboardingComplete) {
     if (inCeoOnboarding || bootPhase) {
       // Visual stepped wizard — full-screen, NOT inside the office Shell. The
-      // user is not "in the office" yet. The wizard educates with a persistent
+      // user is not "on the team" yet. The wizard educates with a persistent
       // mock office and creates the team (pick a blueprint, brief the first
-      // agent, write the first issue), then POSTs /onboarding/complete to seed
+      // bot, write the first issue), then POSTs /onboarding/complete to seed
       // the office and flip onboarded=true. Its onComplete fires after the seed
       // succeeds, so we flip onboardingComplete here and the office Shell mounts
       // via the branch below with the first issue already seeded into the CEO
       // DM composer (pendingComposerDraft, set inside the wizard hook).
       body = (
-        <OnboardingWizard onComplete={() => setOnboardingComplete(true)} />
+        <OnboardingWizard
+          onComplete={() => {
+            setOnboardingComplete(true);
+            // Land IN the Chief of Staff DM, not on the home route. Founder:
+            // "onboarding should throw you into a chat with Chief of Staff
+            // when you enter the office with the first task you had kicked
+            // off." The kickoff (or the intro message when no task was given)
+            // is already in that conversation, so the first paint is the chat
+            // it lives in rather than a dashboard the user must navigate away
+            // from.
+            void router.navigate({
+              to: "/agents/$agentSlug",
+              params: { agentSlug: "cos" },
+              replace: true,
+            });
+          }}
+        />
       );
     } else {
       // Provider picker. No phase set yet — user hasn't picked a runtime.
@@ -1085,16 +1073,6 @@ export default function RootRoute() {
         />
       );
     }
-  } else if (isHomeRoute) {
-    // Onboarded, at the index: operator is the front door. Same self-contained
-    // OperatorApp as the explicit /#/operator deep link, but reached through the
-    // normal boot + onboarding gate so it has a live broker token and a seeded
-    // workspace.
-    body = (
-      <Suspense fallback={<LazyPanelFallback />}>
-        <OperatorApp />
-      </Suspense>
-    );
   } else {
     body = (
       <Shell>
@@ -1105,7 +1083,7 @@ export default function RootRoute() {
             reads it via useCurrentRoute. */}
         <Outlet />
         {/* Replay only: an already-onboarded user reopened the tour from Help,
-            so it overlays the live office at --z-modal. First-run shows the
+            so it overlays the live team at --z-modal. First-run shows the
             tour as the surface above (no Shell behind), per the converged arc. */}
         {officeTour.open && officeTour.replay ? (
           <OfficeTour
@@ -1127,6 +1105,7 @@ export default function RootRoute() {
       <ProviderSwitcherHost />
       <TelegramConnectHost />
       <CreateAppDialog />
+      <TaskModalHost />
     </ErrorBoundary>
   );
 }

@@ -33,14 +33,14 @@ func evalJobCompletionHook(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	created, err := fx.broker.MutateTask(TaskPostRequest{
 		Action: "create", Channel: "general", Title: "Close the Acme Corp renewal",
 		Details: "Coordinate with @eng on the renewal brief for Acme Corp.",
-		Owner:   "eng", CreatedBy: "ceo",
+		Owner:   "eng", CreatedBy: "cos",
 	})
 	if err != nil {
 		return err
 	}
 	taskID := created.Task.ID
 	if _, err := fx.broker.MutateTask(TaskPostRequest{
-		Action: "define", ID: taskID, Channel: "general", CreatedBy: "ceo",
+		Action: "define", ID: taskID, Channel: "general", CreatedBy: "cos",
 		Definition: &TaskDefinition{
 			Goal:            "Secure a 12-month renewal from Acme Corp at current seat count",
 			Deliverables:    []TaskDeliverable{{Name: "renewal brief", Format: "markdown in the wiki"}},
@@ -62,7 +62,7 @@ func evalJobCompletionHook(fx *officeEvalFixture, r *OfficeEvalReport) error {
 		}
 		if cur := fx.broker.TaskByID(taskID); cur != nil && !strings.EqualFold(strings.TrimSpace(cur.status), "done") {
 			_, err := fx.broker.MutateTask(TaskPostRequest{
-				Action: "approve", ID: taskID, Channel: "general", CreatedBy: "ceo",
+				Action: "approve", ID: taskID, Channel: "general", CreatedBy: "cos",
 				ArtifactPath: artifactPath,
 			})
 			return err
@@ -100,9 +100,15 @@ func evalJobCompletionHook(fx *officeEvalFixture, r *OfficeEvalReport) error {
 			donePost = msg.Content
 		}
 	}
+	// A delivery raises NO Inbox card. This used to require one: a non-blocking
+	// notice alongside the chat post. It carried the same sentence as the post
+	// and a lone "Acknowledge" button, so every finished task cost the human a
+	// click to dismiss news they had already read in the channel the whole
+	// roster is in. Cards are for requests that need a decision; a delivery is
+	// news. Pinned at zero so a re-introduced card fails the eval.
 	noticeFound := false
 	for _, req := range fx.broker.requests {
-		if req.Kind == "notice" && strings.TrimSpace(req.IssueID) == taskID && requestIsActive(req) && !req.Blocking {
+		if req.Kind == "notice" && strings.TrimSpace(req.IssueID) == taskID {
 			noticeFound = true
 		}
 	}
@@ -110,7 +116,8 @@ func evalJobCompletionHook(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	r.add(job, "done-post lands in the task channel with summary + artifact link",
 		strings.Contains(donePost, "delivered:") && strings.Contains(donePost, "Renewal brief published to the wiki") && strings.Contains(donePost, artifact),
 		fmt.Sprintf("post=%q", donePost), "")
-	r.add(job, "done raises a non-blocking Inbox notice", noticeFound, "", "")
+	r.add(job, "done raises no Inbox card — the chat post is the whole announcement",
+		!noticeFound, fmt.Sprintf("noticeFound=%v", noticeFound), "")
 
 	// (c) Entity facts: the task mentions two entities (@eng, "Acme Corp").
 	// The distillation goroutine records them via the existing fact-log
@@ -140,7 +147,7 @@ func evalJobCompletionHook(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	// lifecycle state (the exact gate sendTaskUpdate dispatches on) and the
 	// owner's headless turn is enqueued through the same wake path a fresh
 	// assignment uses. The run-turn override captures the dispatched turn.
-	if _, err := fx.broker.MutateTask(TaskPostRequest{Action: "reopen", ID: taskID, Channel: "general", CreatedBy: "ceo"}); err != nil {
+	if _, err := fx.broker.MutateTask(TaskPostRequest{Action: "reopen", ID: taskID, Channel: "general", CreatedBy: "cos"}); err != nil {
 		r.add(job, "reopen re-enqueues the owner's headless turn", false, err.Error(), "")
 		return nil
 	}
@@ -160,7 +167,7 @@ func evalJobCompletionHook(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	defer headlessCodexRunTurnOverride.Store(prior)
 	fx.launcher.sendTaskUpdate(
 		notificationTarget{Slug: "eng"},
-		officeActionLog{Kind: "task_updated", Actor: "ceo", Channel: reopened.Channel, RelatedID: taskID},
+		officeActionLog{Kind: "task_updated", Actor: "cos", Channel: reopened.Channel, RelatedID: taskID},
 		*reopened,
 		"Task reopened — resume work.",
 	)
@@ -185,11 +192,11 @@ func evalJobCompletionHook(fx *officeEvalFixture, r *OfficeEvalReport) error {
 //	    notification content, not as a bare "changes requested" flag
 //	    ([00:55]: "The feedback isn't visible in the packet").
 //	(b) open objection hard-blocks terminal transitions — while the
-//	    human's objection stands, approve/complete by ANY agent (the
+//	    human's objection stands, approve/complete by ANY bot (the
 //	    lead included, on both the team_task path and the
 //	    /tasks/{id}/decision path) is refused with an error naming the
 //	    objection; a HUMAN approve clears it and lands the task
-//	    ([01:04]: "CEO self-approves over a human rejection").
+//	    ([01:04]: "Chief of Staff self-approves over a human rejection").
 //	(c) reopen symmetric with close — the lead reopens the closed task
 //	    and the owner is re-enqueued through the same wake path a fresh
 //	    assignment uses ([01:06]: the CEO could close over an objection
@@ -199,7 +206,7 @@ func evalJobHumanSovereignty(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	created, err := fx.broker.MutateTask(TaskPostRequest{
 		Action: "create", Channel: "general", Title: "Draft the renewal one-pager",
 		Details: "Draft the renewal one-pager for the Q4 account review.",
-		Owner:   "eng", CreatedBy: "ceo",
+		Owner:   "eng", CreatedBy: "cos",
 	})
 	if err != nil {
 		return err
@@ -235,9 +242,9 @@ func evalJobHumanSovereignty(fx *officeEvalFixture, r *OfficeEvalReport) error {
 		strings.Contains(wake, "CHANGES REQUESTED by @human") && strings.Contains(wake, feedback),
 		fmt.Sprintf("wake=%d chars", len(wake)), "")
 
-	// (b) Every agent path to a terminal transition is refused while the
+	// (b) Every bot path to a terminal transition is refused while the
 	// human's objection is open — the error names the objection.
-	_, ceoApproveErr := fx.broker.MutateTask(TaskPostRequest{Action: "approve", ID: taskID, Channel: "general", CreatedBy: "ceo"})
+	_, ceoApproveErr := fx.broker.MutateTask(TaskPostRequest{Action: "approve", ID: taskID, Channel: "general", CreatedBy: "cos"})
 	var mutationErr *TaskMutationError
 	ceoBlocked := errors.As(ceoApproveErr, &mutationErr) && mutationErr.Kind == TaskMutationForbidden &&
 		strings.Contains(mutationErr.Message, "@human") && strings.Contains(mutationErr.Message, "Dana")
@@ -247,9 +254,9 @@ func evalJobHumanSovereignty(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	ownerBlocked := errors.As(ownerCompleteErr, &mutationErr) && mutationErr.Kind == TaskMutationForbidden
 	r.add(job, "owner complete is blocked while the human objection is open", ownerBlocked,
 		fmt.Sprintf("err=%v", ownerCompleteErr), "")
-	decisionErr := fx.broker.RecordTaskDecision(taskID, "approve", "ceo")
+	decisionErr := fx.broker.RecordTaskDecision(taskID, "approve", "cos")
 	notDone := fx.broker.TaskByID(taskID) != nil && !strings.EqualFold(strings.TrimSpace(fx.broker.TaskByID(taskID).status), "done")
-	r.add(job, "decision-endpoint agent approve is blocked while the human objection is open",
+	r.add(job, "decision-endpoint bot approve is blocked while the human objection is open",
 		errors.Is(decisionErr, ErrHumanObjectionOpen) && notDone,
 		fmt.Sprintf("err=%v", decisionErr), "")
 
@@ -266,7 +273,7 @@ func evalJobHumanSovereignty(fx *officeEvalFixture, r *OfficeEvalReport) error {
 
 	// (c) The lead reopens the closed task; the owner is re-enqueued
 	// through the same wake path a fresh assignment uses (B1 seam).
-	if _, err := fx.broker.MutateTask(TaskPostRequest{Action: "reopen", ID: taskID, Channel: "general", CreatedBy: "ceo"}); err != nil {
+	if _, err := fx.broker.MutateTask(TaskPostRequest{Action: "reopen", ID: taskID, Channel: "general", CreatedBy: "cos"}); err != nil {
 		r.add(job, "lead reopen re-engages the owner", false, err.Error(), "")
 		return nil
 	}
@@ -286,7 +293,7 @@ func evalJobHumanSovereignty(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	defer headlessCodexRunTurnOverride.Store(prior)
 	fx.launcher.sendTaskUpdate(
 		notificationTarget{Slug: "eng"},
-		officeActionLog{Kind: "task_updated", Actor: "ceo", Channel: reopened.Channel, RelatedID: taskID},
+		officeActionLog{Kind: "task_updated", Actor: "cos", Channel: reopened.Channel, RelatedID: taskID},
 		*reopened,
 		"Task reopened — resume work.",
 	)
@@ -326,14 +333,14 @@ func evalJobEntityArticles(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	runTask := func(title, details, goal, deliverable, artifact string) (string, error) {
 		created, err := fx.broker.MutateTask(TaskPostRequest{
 			Action: "create", Channel: "general", Title: title,
-			Details: details, Owner: "eng", CreatedBy: "ceo",
+			Details: details, Owner: "eng", CreatedBy: "cos",
 		})
 		if err != nil {
 			return "", err
 		}
 		id := created.Task.ID
 		if _, err := fx.broker.MutateTask(TaskPostRequest{
-			Action: "define", ID: id, Channel: "general", CreatedBy: "ceo",
+			Action: "define", ID: id, Channel: "general", CreatedBy: "cos",
 			Definition: &TaskDefinition{
 				Goal:            goal,
 				Deliverables:    []TaskDeliverable{{Name: deliverable, Format: "markdown in the wiki"}},
@@ -352,7 +359,7 @@ func evalJobEntityArticles(fx *officeEvalFixture, r *OfficeEvalReport) error {
 		}
 		if cur := fx.broker.TaskByID(id); cur != nil && !strings.EqualFold(strings.TrimSpace(cur.status), "done") {
 			if _, err := fx.broker.MutateTask(TaskPostRequest{
-				Action: "approve", ID: id, Channel: "general", CreatedBy: "ceo", ArtifactPath: artifact,
+				Action: "approve", ID: id, Channel: "general", CreatedBy: "cos", ArtifactPath: artifact,
 			}); err != nil {
 				return "", err
 			}
@@ -479,9 +486,9 @@ func (evalPlaybookFastPathProvider) AskIsSkill(_ context.Context, _, articleCont
 // artifact citations; (b) a second similar task UPDATES the same playbook
 // (worked example appended, no duplicate file); (c) a playbook with a
 // "## Rules" section, run through the compile funnel, yields a skill AND
-// atomic policies carrying the skill's agent assignment; (d) duplicate rule
-// text does not mint a second policy; (e) an agent's system prompt carries
-// its assigned policies and NOT one assigned exclusively to another agent —
+// atomic policies carrying the skill's bot assignment; (d) duplicate rule
+// text does not mint a second policy; (e) a bot's system prompt carries
+// its assigned policies and NOT one assigned exclusively to another bot —
 // and carries its assigned compiled skill (the step-8 always-loaded check).
 func evalJobPlaybookCompilation(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	const job = "playbook-compilation"
@@ -496,7 +503,7 @@ func evalJobPlaybookCompilation(fx *officeEvalFixture, r *OfficeEvalReport) erro
 	runVerifiedTask := func(title, goal, artifact string, criteria []string) (string, error) {
 		created, err := fx.broker.MutateTask(TaskPostRequest{
 			Action: "create", Channel: "general", Title: title,
-			Details: "Repeatable office workflow.", Owner: "eng", CreatedBy: "ceo",
+			Details: "Repeatable office workflow.", Owner: "eng", CreatedBy: "cos",
 			VerificationKind: "command", VerificationSpec: "exit 0", VerificationRequired: true,
 		})
 		if err != nil {
@@ -504,7 +511,7 @@ func evalJobPlaybookCompilation(fx *officeEvalFixture, r *OfficeEvalReport) erro
 		}
 		id := created.Task.ID
 		if _, err := fx.broker.MutateTask(TaskPostRequest{
-			Action: "define", ID: id, Channel: "general", CreatedBy: "ceo",
+			Action: "define", ID: id, Channel: "general", CreatedBy: "cos",
 			Definition: &TaskDefinition{
 				Goal:            goal,
 				Deliverables:    []TaskDeliverable{{Name: "investor update", Format: "markdown in the wiki"}},
@@ -523,7 +530,7 @@ func evalJobPlaybookCompilation(fx *officeEvalFixture, r *OfficeEvalReport) erro
 		}
 		if cur := fx.broker.TaskByID(id); cur != nil && !strings.EqualFold(strings.TrimSpace(cur.status), "done") {
 			if _, err := fx.broker.MutateTask(TaskPostRequest{
-				Action: "approve", ID: id, Channel: "general", CreatedBy: "ceo", ArtifactPath: artifact,
+				Action: "approve", ID: id, Channel: "general", CreatedBy: "cos", ArtifactPath: artifact,
 			}); err != nil {
 				return "", err
 			}
@@ -610,7 +617,7 @@ func evalJobPlaybookCompilation(fx *officeEvalFixture, r *OfficeEvalReport) erro
 		fmt.Sprintf("files=%d len=%dB", playbookFiles, len(updated)), "")
 
 	// (c) A playbook with a ## Rules section through the compile funnel
-	// yields a skill AND atomic policies with the skill's agent assignment.
+	// yields a skill AND atomic policies with the skill's bot assignment.
 	// The fixture scanner promotes explicit-frontmatter articles only — no
 	// LLM — mirroring defaultLLMProvider's fast path.
 	fx.broker.SetSkillScanner(NewSkillScanner(fx.broker, evalPlaybookFastPathProvider{}, 10))
@@ -650,7 +657,7 @@ description: Qualify inbound leads before routing them to sales.
 		}
 	}
 	r.add(job, "compile funnel yields the playbook's skill, roster-assigned",
-		compiledSkill != nil && len(compiledSkill.OwnerAgents) == 2,
+		compiledSkill != nil && len(compiledSkill.OwnerBots) == 2,
 		fmt.Sprintf("skills=%d", len(skills)), "")
 
 	findPolicy := func(rule string) *officePolicy {
@@ -663,9 +670,9 @@ description: Qualify inbound leads before routing them to sales.
 		return nil
 	}
 	p1, p2 := findPolicy(ruleOne), findPolicy(ruleTwo)
-	r.add(job, "compile funnel yields atomic policies with the skill's agent assignment",
+	r.add(job, "compile funnel yields atomic policies with the skill's bot assignment",
 		p1 != nil && p2 != nil &&
-			len(p1.Agents) == 2 && policyAppliesToAgent(*p1, "eng") && policyAppliesToAgent(*p1, "ceo"),
+			len(p1.Bots) == 2 && policyAppliesToBot(*p1, "eng") && policyAppliesToBot(*p1, "cos"),
 		fmt.Sprintf("policies=%d", len(fx.broker.ListPolicies())), "")
 
 	// (d) Duplicate rule text (different casing, second playbook) does not
@@ -703,23 +710,23 @@ description: Send renewal outreach emails to existing customers.
 	r.add(job, "duplicate rule text does not create a second policy", dupCount == 1,
 		fmt.Sprintf("matching policies=%d", dupCount), "")
 
-	// (e) Always-loaded (core-loop step 8): an agent's prompt carries its
+	// (e) Always-loaded (core-loop step 8): a bot's prompt carries its
 	// assigned policies + skills and NOT a policy assigned exclusively to
-	// another agent.
+	// another bot.
 	const engOnlyRule = "Run the deploy checklist before every release"
 	const ceoOnlyRule = "Review specialist hiring proposals within one day"
 	if _, err := fx.broker.RecordPolicyScoped("human_directed", engOnlyRule, []string{"eng"}); err != nil {
 		return err
 	}
-	if _, err := fx.broker.RecordPolicyScoped("human_directed", ceoOnlyRule, []string{"ceo"}); err != nil {
+	if _, err := fx.broker.RecordPolicyScoped("human_directed", ceoOnlyRule, []string{"cos"}); err != nil {
 		return err
 	}
 	engPrompt := fx.launcher.buildPrompt("eng")
-	r.add(job, "agent prompt carries its assigned policy and not another agent's",
+	r.add(job, "bot prompt carries its assigned policy and not another bot's",
 		strings.Contains(engPrompt, engOnlyRule) && !strings.Contains(engPrompt, ceoOnlyRule) &&
 			strings.Contains(engPrompt, ruleOne),
 		fmt.Sprintf("prompt=%d chars", len(engPrompt)), "")
-	r.add(job, "agent prompt carries its assigned compiled skill (always loaded)",
+	r.add(job, "bot prompt carries its assigned compiled skill (always loaded)",
 		strings.Contains(engPrompt, "qualify-inbound-leads"),
 		"", "")
 	return nil
@@ -808,11 +815,11 @@ func evalJobHybridRetrieval(fx *officeEvalFixture, r *OfficeEvalReport) error {
 
 	// (d) End to end: the work packet for the dense-only task carries the
 	// adjacent insight when the provider is configured.
-	task, _, err := fx.broker.EnsureTask("general", denseQuery, "", "eng", "ceo", "")
+	task, _, err := fx.broker.EnsureTask("general", denseQuery, "", "eng", "cos", "")
 	if err != nil {
 		return err
 	}
-	packet := fx.launcher.notifyCtx().BuildTaskExecutionPacket("eng", officeActionLog{Actor: "ceo"}, *fx.broker.TaskByID(task.ID), "Task assigned to you.")
+	packet := fx.launcher.notifyCtx().BuildTaskExecutionPacket("eng", officeActionLog{Actor: "cos"}, *fx.broker.TaskByID(task.ID), "Task assigned to you.")
 	r.add(job, "hybrid: dense-adjacent learning reaches the work packet",
 		strings.Contains(packet, "cap nav depth at two levels"),
 		fmt.Sprintf("packet=%d chars", len(packet)), "")
@@ -844,14 +851,14 @@ func evalJobGrounding(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	// (a) Long money-bearing title: the amount sits past the old 120-char
 	// display clip; the owner's packet and wake content must carry it.
 	moneyTitle := "Renew the Corti Labs contract before the Q4 board review and make sure the two unresolved support escalations are handled escalation-first in every touch ($61,000 ARR at risk)"
-	moneyTask, _, err := fx.broker.EnsureTask("general", moneyTitle, "", "eng", "ceo", "")
+	moneyTask, _, err := fx.broker.EnsureTask("general", moneyTitle, "", "eng", "cos", "")
 	if err != nil {
 		return err
 	}
-	moneyPacket := fx.launcher.notifyCtx().BuildTaskExecutionPacket("eng", officeActionLog{Actor: "ceo"}, *fx.broker.TaskByID(moneyTask.ID), "Task assigned to you.")
+	moneyPacket := fx.launcher.notifyCtx().BuildTaskExecutionPacket("eng", officeActionLog{Actor: "cos"}, *fx.broker.TaskByID(moneyTask.ID), "Task assigned to you.")
 	r.add(job, "owner packet carries the full money-bearing title", strings.Contains(moneyPacket, "$61,000"),
 		fmt.Sprintf("title=%d chars packet=%d chars", len(moneyTitle), len(moneyPacket)), "")
-	moneyWake := fx.launcher.notifyCtx().TaskNotificationContent(officeActionLog{Kind: "task_updated", Actor: "ceo"}, *fx.broker.TaskByID(moneyTask.ID))
+	moneyWake := fx.launcher.notifyCtx().TaskNotificationContent(officeActionLog{Kind: "task_updated", Actor: "cos"}, *fx.broker.TaskByID(moneyTask.ID))
 	r.add(job, "wake notification carries the full money-bearing title", strings.Contains(moneyWake, "$61,000"), "", "")
 
 	// (b) Mandatory retrieval: an approved wiki article about the entity
@@ -866,11 +873,11 @@ func evalJobGrounding(fx *officeEvalFixture, r *OfficeEvalReport) error {
 		return err
 	}
 	acmeTask, _, err := fx.broker.EnsureTask("general", "Prepare the Acme Corp QBR one-pager",
-		"Build the QBR one-pager for Acme Corp using our account briefs and the renewal playbook.", "eng", "ceo", "")
+		"Build the QBR one-pager for Acme Corp using our account briefs and the renewal playbook.", "eng", "cos", "")
 	if err != nil {
 		return err
 	}
-	acmePacket, acmeContext := fx.launcher.notifyCtx().BuildTaskExecutionPacketWithContext("eng", officeActionLog{Actor: "ceo"}, *fx.broker.TaskByID(acmeTask.ID), "Task assigned to you.")
+	acmePacket, acmeContext := fx.launcher.notifyCtx().BuildTaskExecutionPacketWithContext("eng", officeActionLog{Actor: "cos"}, *fx.broker.TaskByID(acmeTask.ID), "Task assigned to you.")
 	carriesHit := strings.Contains(acmePacket, "RETRIEVED CONTEXT") &&
 		strings.Contains(acmePacket, "wiki:"+acmePath) &&
 		strings.Contains(acmePacket, "Acme Corp — renewal brief")
@@ -885,11 +892,11 @@ func evalJobGrounding(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	r.add(job, "wiki hit rides the context_used manifest", hitOnManifest, fmt.Sprintf("context_used=%v", acmeContext), "")
 
 	noHitTask, _, err := fx.broker.EnsureTask("general", "Tune the quokka zephyr cadence experiment",
-		"Calibrate the quokka zephyr cadence rig.", "eng", "ceo", "")
+		"Calibrate the quokka zephyr cadence rig.", "eng", "cos", "")
 	if err != nil {
 		return err
 	}
-	noHitPacket := fx.launcher.notifyCtx().BuildTaskExecutionPacket("eng", officeActionLog{Actor: "ceo"}, *fx.broker.TaskByID(noHitTask.ID), "Task assigned to you.")
+	noHitPacket := fx.launcher.notifyCtx().BuildTaskExecutionPacket("eng", officeActionLog{Actor: "cos"}, *fx.broker.TaskByID(noHitTask.ID), "Task assigned to you.")
 	r.add(job, "no wiki hits → packet carries the explicit searched-no-hits line",
 		strings.Contains(noHitPacket, "(searched the wiki for:") && strings.Contains(noHitPacket, "no hits"),
 		fmt.Sprintf("packet=%d chars", len(noHitPacket)), "")
@@ -897,7 +904,7 @@ func evalJobGrounding(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	// (c) Stop-order backstop. Force the task running, post a human "stop"
 	// into its channel, and walk the gate: complete blocked → packet leads
 	// with the note (consuming it) → complete succeeds.
-	stopTask, _, err := fx.broker.EnsureTask("general", "Draft the renewal outreach sequence", "Draft the outreach sequence for the renewal book.", "eng", "ceo", "")
+	stopTask, _, err := fx.broker.EnsureTask("general", "Draft the renewal outreach sequence", "Draft the outreach sequence for the renewal book.", "eng", "cos", "")
 	if err != nil {
 		return err
 	}
@@ -925,12 +932,12 @@ func evalJobGrounding(fx *officeEvalFixture, r *OfficeEvalReport) error {
 
 	_, blockedErr := fx.broker.MutateTask(TaskPostRequest{Action: "complete", ID: stopTask.ID, Channel: "general", CreatedBy: "eng"})
 	var mutationErr *TaskMutationError
-	r.add(job, "leading stop blocks agent complete until a packet consumed the note",
+	r.add(job, "leading stop blocks bot complete until a packet consumed the note",
 		errors.As(blockedErr, &mutationErr) && mutationErr.Kind == TaskMutationForbidden &&
 			strings.Contains(mutationErr.Message, "stop order"),
 		fmt.Sprintf("err=%v", blockedErr), "")
 
-	stopPacket := fx.launcher.notifyCtx().BuildTaskExecutionPacket("eng", officeActionLog{Actor: "ceo"}, *fx.broker.TaskByID(stopTask.ID), "Continue.")
+	stopPacket := fx.launcher.notifyCtx().BuildTaskExecutionPacket("eng", officeActionLog{Actor: "cos"}, *fx.broker.TaskByID(stopTask.ID), "Continue.")
 	r.add(job, "owner's next packet leads with HUMAN POSTED WHILE YOU WORKED",
 		strings.HasPrefix(stopPacket, "HUMAN POSTED WHILE YOU WORKED") && strings.Contains(stopPacket, stopOrder),
 		fmt.Sprintf("packet head=%q", truncate(stopPacket, 120)), "")
@@ -940,7 +947,7 @@ func evalJobGrounding(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	r.add(job, "complete succeeds once a packet consumed the note", completeErr == nil, fmt.Sprintf("err=%v", completeErr), "")
 
 	// Non-halt note: rides the next packet's top but never blocks.
-	fyiTask, _, err := fx.broker.EnsureTask("general", "Assemble the Brightline expansion brief", "Assemble the expansion brief for Brightline.", "eng", "ceo", "")
+	fyiTask, _, err := fx.broker.EnsureTask("general", "Assemble the Brightline expansion brief", "Assemble the expansion brief for Brightline.", "eng", "cos", "")
 	if err != nil {
 		return err
 	}
@@ -986,7 +993,7 @@ func evalJobGrounding(fx *officeEvalFixture, r *OfficeEvalReport) error {
 //	    required command check (with the action-log stamp), the done claim
 //	    is blocked while the file is missing, and succeeds once it exists.
 //	(b) artifact delta on resubmission — after a human request_changes on a
-//	    task with a readable artifact, an agent resubmission with a
+//	    task with a readable artifact, a bot resubmission with a
 //	    byte-identical artifact is refused; modifying the artifact clears
 //	    the gate. An unverifiable artifact degrades to an audit stamp.
 //	(c) post-done routing — a human message in a delivered task's channel
@@ -1001,7 +1008,7 @@ func evalJobDoneIntegrity(fx *officeEvalFixture, r *OfficeEvalReport) error {
 		Action: "create", Channel: "general", Title: "Build the launch report",
 		Details:   "Definition of done: a file out/report.md exists. Don't tell me it's done unless that check passes.",
 		Owner:     "eng",
-		CreatedBy: "ceo",
+		CreatedBy: "cos",
 	})
 	if err != nil {
 		return err
@@ -1065,7 +1072,7 @@ func evalJobDoneIntegrity(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	worker.WaitForIdle()
 	deltaCreated, err := fx.broker.MutateTask(TaskPostRequest{
 		Action: "create", Channel: "general", Title: "Build the Acme exec one-pager",
-		Details: "Draft the exec one-pager from the account brief.", Owner: "eng", CreatedBy: "ceo",
+		Details: "Draft the exec one-pager from the account brief.", Owner: "eng", CreatedBy: "cos",
 	})
 	if err != nil {
 		return err
@@ -1113,22 +1120,33 @@ func evalJobDoneIntegrity(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	// follow-up note + task_followup action → owner re-enqueued through the
 	// wake seam with the FOLLOW-UP packet.
 	doneTask, _, err := fx.broker.EnsureTask("general", "Ship the landing page for the beta waitlist",
-		"Build landing/index.html with the email capture form.", "eng", "ceo", "")
+		"Build landing/index.html with the email capture form.", "eng", "cos", "")
 	if err != nil {
 		return err
 	}
 	if _, err := fx.broker.MutateTask(TaskPostRequest{Action: "complete", ID: doneTask.ID, Channel: "general", CreatedBy: "eng"}); err != nil {
 		return err
 	}
-	if _, err := fx.broker.MutateTask(TaskPostRequest{Action: "approve", ID: doneTask.ID, Channel: "general", CreatedBy: "ceo"}); err != nil {
+	if _, err := fx.broker.MutateTask(TaskPostRequest{Action: "approve", ID: doneTask.ID, Channel: "general", CreatedBy: "cos"}); err != nil {
 		return err
 	}
 	delivered := fx.broker.TaskByID(doneTask.ID)
 	doneChannel := normalizeChannelSlug(delivered.Channel)
-	if doneChannel == "" || doneChannel == "general" {
-		return fmt.Errorf("done-integrity: expected a per-task channel for the delivered task, got %q", delivered.Channel)
+	// A delivered task stays in the channel it was created from — here, the one
+	// EnsureTask was called with above. This used to hard-error unless the task
+	// had been pushed out into a per-task channel, which is exactly the
+	// fragmentation that model was removed for. Compared against doneTask's own
+	// channel rather than a literal, so it survives #general being retired.
+	if doneChannel != normalizeChannelSlug(doneTask.Channel) {
+		return fmt.Errorf("done-integrity: a delivered task must stay in the channel it was created from (%q), got %q", doneTask.Channel, delivered.Channel)
 	}
-	const followUpMsg = "Make the tagline punchier — keep everything else."
+	// The follow-up used to be a bare line, because the delivered task owned the
+	// channel and posting there WAS addressing it. In one room the human names
+	// the task instead (see messageAddressesTask in task_addressing.go): a bare
+	// lobby line cannot wake anyone without waking every waiting task's owner at
+	// once. The dead-air failure this job guards is unchanged — a human steering
+	// a delivered task must reach its owner, not silence.
+	followUpMsg := "Make the tagline punchier on " + doneTask.ID + " — keep everything else."
 	if _, err := fx.broker.PostMessage("you", doneChannel, followUpMsg, nil, ""); err != nil {
 		return err
 	}

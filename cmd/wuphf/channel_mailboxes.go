@@ -16,7 +16,7 @@ func buildInboxLines(messages []channelui.BrokerMessage, requests []channelui.In
 		return append(lines,
 			channelui.RenderedLine{Text: ""},
 			channelui.RenderedLine{Text: muted.Render("  Nothing is waiting in the inbox lane.")},
-			channelui.RenderedLine{Text: muted.Render("  Human asks, CEO guidance, tags, and thread replies will collect here.")},
+			channelui.RenderedLine{Text: muted.Render("  Human asks, Chief of Staff guidance, tags, and thread replies will collect here.")},
 		)
 	}
 	if len(requests) > 0 {
@@ -39,7 +39,7 @@ func buildOutboxLines(messages []channelui.BrokerMessage, actions []channelui.Ac
 		return append(lines,
 			channelui.RenderedLine{Text: ""},
 			channelui.RenderedLine{Text: muted.Render("  Nothing is in the outbox yet.")},
-			channelui.RenderedLine{Text: muted.Render("  Agent-authored updates and recent external actions will collect here.")},
+			channelui.RenderedLine{Text: muted.Render("  Bot-authored updates and recent external actions will collect here.")},
 		)
 	}
 	if len(messages) > 0 {

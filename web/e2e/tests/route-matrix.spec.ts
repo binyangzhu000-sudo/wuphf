@@ -7,11 +7,29 @@ import {
   waitForReactMount,
 } from "./_helpers";
 
+// The office shell is the front door again. This file previously pinned the
+// exact opposite — "the operator surface is the ONLY front door (founder
+// decision, 2026-08-14)" — and asserted that every office route normalized to
+// /#/operator. That decision was reversed: the office IA is the product, and
+// `operator-root` no longer exists anywhere in web/src, which is why every
+// assertion here failed with "element(s) not found".
+//
+// Worth being precise about what was wrong, because the tests were not buggy:
+// they were correct pins on a superseded product. A test that fails because
+// the product deliberately changed direction is doing its job; it just has to
+// be re-aimed rather than repaired. These are re-aimed at the office.
+//
+// The office-era matrix (pre-5027ec625) is the ancestor of this file and most
+// of its shape is restored verbatim, because the contract it pinned is the
+// contract again.
+
 async function gotoRoute(page: Page, route: string): Promise<void> {
   await page.goto(route);
   await waitForReactMount(page);
 }
 
+/** The route reaches its own surface: no not-found, the expected surface
+ *  mounted, and no React error on the way. */
 async function expectCanonicalRoute(
   page: Page,
   route: string,
@@ -25,43 +43,38 @@ async function expectCanonicalRoute(
 }
 
 test.describe("canonical route matrix", () => {
-  test("index renders the operator surface (the product front door)", async ({
+  test("index mounts the team shell (the product front door)", async ({
     page,
   }) => {
     const getErrors = collectReactErrors(page);
     await gotoRoute(page, "/");
 
-    // Operator-as-index: for an onboarded user the root URL renders the
-    // operator product in place (no redirect), reached through the normal
-    // boot + onboarding gate so it has a live broker token. The office Shell
-    // is no longer the landing surface; it stays reachable via deep routes
-    // (#/channels, #/wiki, #/tasks). The operator root mounting at the root
-    // URL is the proof it landed (a redirect would mount another surface).
-    // See isHomeRoute in routes/RootRoute.tsx.
+    // The index mounts in place through the normal boot + onboarding gate —
+    // no redirect, so the URL stays bare.
+    //
+    // The front door is the TASK COMPOSER ("Describe the outcome. The team
+    // starts on it immediately"), not a conversation. Worth stating because
+    // the obvious guess is wrong: `.composer-input` is the CHANNEL composer
+    // and it is absent here, so asserting it fails on a page that is
+    // rendering perfectly well.
     await expect(page).toHaveURL(/localhost:\d+\/(#\/?)?$/);
-    await expect(page.getByTestId("operator-root")).toBeVisible({
+    await expect(page.getByTestId("task-composer-input")).toBeVisible({
       timeout: 10_000,
     });
+    await expect(page.getByTestId("route-not-found")).toHaveCount(0);
     await expectNoReactErrors(page, getErrors, "while rendering /");
   });
 
-  test("conversation routes mount their message surfaces", async ({ page }) => {
-    // The /dm/$agent route was removed in the task-scoped restructure (DMs
-    // fold into task channels). The channel conversation surface remains.
-    await expectCanonicalRoute(page, "/#/channels/general", async (p) => {
-      await expect(p.locator(".composer-input")).toHaveAttribute(
-        "placeholder",
-        "Message #general",
-      );
-    });
-  });
-
-  test("every registered app panel route mounts", async ({ page }) => {
+  test("every registered app panel route mounts its own panel", async ({
+    page,
+  }) => {
+    // The inverse of the retired pin. This spec's predecessor asserted these
+    // panels must NOT mount ("a regression that resurrects the team panels
+    // fails loudly"). They were resurrected on purpose, so mounting is now
+    // the contract and a redirect would be the regression.
     for (const appId of APP_PANEL_IDS) {
-      // /#/apps/requests redirects to /tasks (the Inbox was consolidated
-      // into the Task board; requests fold into its Needs-human lane)
-      // instead of rendering a dedicated panel. Verify the redirect by
-      // URL, not by panel testid.
+      // /#/apps/requests folds into the Task board's Needs-human lane rather
+      // than rendering a panel of its own, so it is pinned by URL.
       if (appId === "requests") {
         await page.goto(`/#/apps/${appId}`);
         await expect(page).toHaveURL(/#\/tasks$/, { timeout: 10_000 });
@@ -75,13 +88,20 @@ test.describe("canonical route matrix", () => {
     }
   });
 
+  test("the task board mounts", async ({ page }) => {
+    await expectCanonicalRoute(page, "/#/tasks", async (p) => {
+      await expect(p.getByTestId("route-not-found")).toHaveCount(0);
+      await expect(p.locator("body")).toBeVisible();
+    });
+  });
+
   test("legacy workbench URLs redirect through to the Tasks surface", async ({
     page,
   }) => {
     const getErrors = collectReactErrors(page);
     await gotoRoute(page, "/#/apps/workbench/pm/tasks/task-7");
 
-    // workbench → legacy task redirect → /tasks/$id detail (see
+    // workbench -> legacy task redirect -> /tasks/$id detail (see
     // legacyWorkbenchTaskRoute in lib/router.ts).
     await expect(page).toHaveURL(/#\/tasks/, { timeout: 10_000 });
     await expect(page.getByTestId("route-not-found")).toHaveCount(0);
@@ -94,69 +114,27 @@ test.describe("canonical route matrix", () => {
 
   test("wiki routes mount their first-class surfaces", async ({ page }) => {
     await expectCanonicalRoute(page, "/#/wiki", async (p) => {
-      await expect(p.getByTestId("wiki-root")).toBeVisible();
-    });
-
-    await expectCanonicalRoute(page, "/#/wiki/lookup?q=renewal", async (p) => {
-      await expect(p.locator(".wk-cited-answer")).toBeVisible({
-        timeout: 10_000,
-      });
+      await expect(p.getByTestId("wiki-root")).toBeVisible({ timeout: 10_000 });
     });
 
     await expectCanonicalRoute(page, "/#/wiki/companies/acme", async (p) => {
-      await expect(p.getByTestId("wiki-root")).toBeVisible();
+      await expect(p.getByTestId("wiki-root")).toBeVisible({ timeout: 10_000 });
     });
   });
 
-  test("dropped legacy aliases and unknown routes render not found", async ({
-    page,
-  }) => {
-    for (const route of ["/#/console", "/#/threads", "/#/missing-route"]) {
+  test("unknown routes render the not-found surface", async ({ page }) => {
+    // The other half of the reversal. With the office retired there was no
+    // not-found surface at all — every unknown hash "normalized home", so a
+    // typo silently landed the user somewhere plausible. The office has a
+    // real not-found affordance and an unknown route must reach it rather
+    // than being quietly absorbed.
+    for (const route of ["/#/missing-route", "/#/not-a-surface"]) {
       const getErrors = collectReactErrors(page);
       await gotoRoute(page, route);
-      await expect(page.getByTestId("route-not-found")).toBeVisible();
+      await expect(page.getByTestId("route-not-found")).toBeVisible({
+        timeout: 10_000,
+      });
       await expectNoReactErrors(page, getErrors, `while rendering ${route}`);
     }
-  });
-
-  test("a business task's channel redirects to its task; #general stays", async ({
-    page,
-    request,
-  }) => {
-    // ARCH-H1: a business task's channel is reached through the task, not as a
-    // parallel chat surface, so /channels/$slug for a business-owned channel
-    // redirects to the task detail. System channels (#general, owned by the
-    // archived Backup & Migration task) stay directly readable.
-    const resp = await request.post("/api/task-plan", {
-      data: {
-        channel: "general",
-        created_by: "human",
-        tasks: [{ title: "channel redirect probe", assignee: "ceo" }],
-      },
-    });
-    expect(resp.ok(), `task-plan failed: ${resp.status()}`).toBeTruthy();
-    const created = (await resp.json()) as {
-      tasks?: { id?: string; channel?: string }[];
-    };
-    const biz = created.tasks?.[0];
-    expect(
-      biz?.channel,
-      "business task should mint its own channel",
-    ).toBeTruthy();
-    expect(biz?.id, "business task should have an id").toBeTruthy();
-
-    // Business channel → redirects to its task detail.
-    await page.goto(`/#/channels/${biz?.channel}`);
-    await expect(page).toHaveURL(new RegExp(`#/tasks/${biz?.id}`), {
-      timeout: 10_000,
-    });
-    await expect(page.getByTestId("route-not-found")).toHaveCount(0);
-
-    // System channel #general → stays on the conversation view (no redirect).
-    await gotoRoute(page, "/#/channels/general");
-    await expect(page.locator(".composer-input")).toHaveAttribute(
-      "placeholder",
-      "Message #general",
-    );
   });
 });

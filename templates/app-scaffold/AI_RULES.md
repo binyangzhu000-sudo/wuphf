@@ -238,6 +238,16 @@ render from the DB**:
 
 1. **Define your tables** — the entities the app manages and their typed columns,
    INCLUDING the computed fields, not just the raw source fields.
+   **One row per RECORD — never one aggregate row holding JSON-encoded
+   arrays.** If your model is "the findings of the last audit", the table is
+   `findings` with one row per finding (kind, record id, title, status,
+   found_at), plus at most a tiny meta/summary table for scalars. A single
+   `latest` row with columns like `no_owner: "[{...},{...}]"` is the
+   load-bearing anti-pattern: the Data tab and CSV export become unreadable,
+   `db.upsert` can no longer dedupe re-runs per record, and downstream tools
+   cannot query individual findings. Stringified JSON in a cell is a smell —
+   if you are about to `JSON.stringify` into a column, you almost always want
+   another table.
 2. **On first load, derive once and persist** — fetch the real source
    (`getEmails` / `getTasks` / `callIntegration`), compute your model, and write it
    with `db.defineTable` + `db.upsert`. Pass a stable `key` column so a re-run
@@ -440,3 +450,81 @@ power the live preview's **select to edit** and runtime-error surfacing. They ar
 dev-only — `vite.config.ts` injects the inspector and the production single-file
 build strips all of it — so leave both in place. You may freely rewrite
 `src/main.tsx`; the inspector loads via `index.html`, not the entry file.
+
+## Integration copy — point at the host, not invented surfaces
+
+When an integration is not connected, say so plainly and stop. The HOST
+renders the connect affordance (a banner with a real Connect button above
+your app). NEVER invent navigation like "Settings → Integrations" — those
+surfaces are the host's, they move, and wrong directions strand the
+operator. Good: "Gmail is not connected yet — use the Connect button
+above." Bad: "Connect Gmail in Settings → Integrations."
+
+## After a mutating action, the UI reflects it immediately
+
+When a button mutates state (approve, escalate, archive, send), update the
+affected row/counters in the same interaction — optimistic update or refetch,
+either works. An operator who clicks "Escalate" and still sees PENDING with
+the same button assumes the click failed and clicks again. Every action's
+outcome must be visible where the operator is looking, immediately.
+
+## Bridge action failures are told, never swallowed
+
+`createTask`, `integration`, and other bridge calls can be refused (a
+confirmation is already pending), cancelled, or time out. NEVER swallow the
+rejection in an empty catch: tell the operator what happened where they are
+looking ("The confirmation was still open — finish it and try again", "That
+did not go through — try again"), and leave the row/state unchanged so the
+retry is obvious. A silent failure reads as a broken button.
+
+## Data provenance is sacred — no invented DATA rows
+
+Every persisted **data** row must trace to a bridge source (integration, office
+data) or something the operator typed. NEVER seed placeholder records ("Engineer
+1" … "Engineer 6", sample deals) into a data table — placeholders are
+indistinguishable from facts and poison every number computed from them. When a
+source is empty, render the honest empty state and let the operator add the
+first real record. If the workspace itself is the only data (no integration
+connected), never persist AI analysis OF THE WORKSPACE'S OWN SCAFFOLDING (your
+build task is not a deal).
+
+The one legitimate non-source row is the **derive marker** (the `Meta` /
+`initialized` sentinel in the useTable pattern above): it is app-owned CONTROL
+state, not data, and it never appears in a data table or a computed number. Use
+it exactly as shown — a `rows.length` check cannot tell "never derived" from
+"derived, and the honest answer was zero rows", so the explicit marker is
+required. That is the ONLY sentinel allowed; it is not a license for placeholder
+data.
+
+## Every user-triggered write gets visible feedback
+
+Use `@mantine/notifications` (already a dependency — mount `<Notifications />`
+once in main.tsx) or an inline status line: saving, saved, failed. A silent
+`.catch(() => {})` on a user-triggered write is forbidden — if the write can
+fail, the operator hears about it where they clicked.
+
+## Post-submit copy must describe surfaces that exist
+
+The host shell has NO "inbox", no task board, and no notifications center —
+its only surfaces are this app's tabs and the bot chat panel. After a
+successful `create_task` or approval-style submit, never write "check your
+inbox" or point at any surface you have not seen in the host. The honest
+line is: "Submitted — the team picked it up. You will be pinged in the bot
+chat when it needs your sign-off." Copy that sends the operator hunting for
+a page that does not exist reads as a bug even when the write succeeded.
+
+## No half-built tabs, and reach every control by keyboard
+
+Every tab, section, and button you render must be fully wired. NEVER ship a
+tab that shows "Coming soon", a placeholder, or an empty shell you did not
+intend as an honest empty state — if a surface is not built, do not render its
+tab. A dead tab reads as a broken app even when the rest works.
+
+Accessibility minimums (they are also how the operator's keyboard and the
+live-preview inspector reach your UI):
+- Every icon-only button gets an `aria-label` naming its action.
+- Every input has a visible `<label>` or an `aria-label`.
+- Every action is reachable and triggerable by keyboard (a clickable `<div>`
+  is not — use `<button>`).
+- Status reads as more than color: pair a color with text or a shape (use
+  `src/statusColor.ts` for the color, and always render the status word too).

@@ -2,7 +2,7 @@
 //
 // Sprites are 14×14 grids of palette indices, encoded with Unicode
 // half-block characters (▀▄█) so two pixel rows occupy one terminal row.
-// Known slugs ("ceo", "pm", "fe", …) get hand-designed sprites; unknown
+// Known slugs ("cos", "pm", "fe", …) get hand-designed sprites; unknown
 // slugs get a deterministic procedural composition seeded by the slug.
 // The package is intentionally free of any TUI / channel-state
 // dependency — every public function takes only a slug (and frame for
@@ -20,7 +20,7 @@ import (
 //   0 = transparent
 //   1 = outline (dark)
 //   2 = skin tone
-//   3 = accent (agent color)
+//   3 = accent (bot color)
 //   4 = hair/hat
 //   5 = prop/accessory
 //   6 = white/highlight
@@ -209,7 +209,7 @@ func spriteForSlug(slug string, frame ...int) Sprite {
 
 	var sprite Sprite
 	switch slug {
-	case "ceo":
+	case "cos":
 		sprite = cloneSprite(spriteCEO)
 	case "pm":
 		sprite = cloneSprite(spritePM)
@@ -226,7 +226,7 @@ func spriteForSlug(slug string, frame ...int) Sprite {
 	case "cro":
 		sprite = cloneSprite(spriteCRO)
 	default:
-		// Unknown slug — compose from modular layers so every agent is unique.
+		// Unknown slug — compose from modular layers so every bot is unique.
 		sprite = proceduralSpriteForSlug(slug)
 	}
 
@@ -252,7 +252,7 @@ func animateFrame(sprite Sprite, slug string) {
 		return
 	}
 	switch slug {
-	case "ceo":
+	case "cos":
 		// Coffee cup raised: move prop pixels up one row
 		sprite[7][11] = pxProp
 		sprite[7][12] = pxLine
@@ -358,7 +358,7 @@ func parseHexColor(hex string) [3]int {
 }
 
 // PaletteForSlug returns the per-pixel-index color map for an avatar.
-// The known office roster (ceo, pm, fe, …) uses the hand-tuned palettes
+// The known office roster (cos, pm, fe, …) uses the hand-tuned palettes
 // shipped with each sprite; every other slug routes through the
 // procedural palette generator (which derives skin/hair/accent
 // independently from a hash of the slug). Together those two branches
@@ -425,7 +425,7 @@ func proceduralOfficePalette(base map[int][3]int, slug string) map[int][3]int {
 
 // ProceduralOfficeAccentForSlug deterministically picks an accent
 // color from the procedural pool for a non-canonical slug. Used by
-// channelui.AgentColor to give dynamic agents (operation-created,
+// channelui.BotColor to give dynamic bots (operation-created,
 // custom roles) a stable color identity.
 func ProceduralOfficeAccentForSlug(slug string) string {
 	hash := proceduralHash(slug)

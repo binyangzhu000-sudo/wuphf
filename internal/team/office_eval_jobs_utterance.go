@@ -3,7 +3,7 @@ package team
 // office_eval_jobs_utterance.go — the `utterance-routing` eval job.
 //
 // Grader round-2 fix family #2 (v3, 6/10): "make every human utterance
-// reach an agent, and make blocking asks loud." This job replicates the
+// reach a bot, and make blocking asks loud." This job replicates the
 // v3 failures at the HTTP layer with the exact payloads the FE fires:
 //
 //	(a) Task-toolbar "Request changes" ([17:47→17:50]): the FE sends the
@@ -12,16 +12,16 @@ package team
 //	    FE payload must land the text in the changes_requested stamp, in
 //	    the channel wake, and in the owner's next packet.
 //	(b) Thread reply to an interview ([19:24:53]): the Inbox card's only
-//	    affordance posted a chat reply that reached no agent. A thread
+//	    affordance posted a chat reply that reached no bot. A thread
 //	    reply anchored to the interview must BE the answer the polling
-//	    agent receives — and creating the interview must post a loud
+//	    bot receives — and creating the interview must post a loud
 //	    chat announcement in its channel (the thread anchor).
 //	(c) Plain chat in a waiting (decision-state) task channel
 //	    ([17:51→18:02]): 14 minutes of dead air. The post must stamp the
 //	    note AND re-enqueue the owner with the note leading the packet.
-//	(d) One agent's pending interview must not wedge the office
-//	    ([19:23:59]): dispatch for OTHER agents keeps flowing; only the
-//	    asking agent's new turns are parked until the answer lands, then
+//	(d) One bot's pending interview must not wedge the office
+//	    ([19:23:59]): dispatch for OTHER bots keeps flowing; only the
+//	    asking bot's new turns are parked until the answer lands, then
 //	    its lane resumes. The blocking-request chat gate is channel-
 //	    scoped: it parks chat in ITS channel only.
 
@@ -55,7 +55,7 @@ func evalJobUtteranceRouting(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	createTask := func(title, owner string) (*teamTask, error) {
 		status, raw, err := client.postJSON("/tasks", map[string]any{
 			"action": "create", "channel": "general", "title": title,
-			"details": "Utterance-routing probe work.", "owner": owner, "created_by": "ceo",
+			"details": "Utterance-routing probe work.", "owner": owner, "created_by": "cos",
 		})
 		if err != nil {
 			return nil, fmt.Errorf("create %q: %w", title, err)
@@ -188,12 +188,21 @@ func evalJobUtteranceRouting(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	if err := json.Unmarshal([]byte(answerBody), &answerParsed); err != nil {
 		return err
 	}
-	r.add(job, "a human thread reply to the interview IS the answer the polling agent receives",
+	r.add(job, "a human thread reply to the interview IS the answer the polling bot receives",
 		replyStatus == http.StatusOK && answerParsed.Status == "answered" &&
 			answerParsed.Answered != nil && answerParsed.Answered.CustomText == ivReply,
 		fmt.Sprintf("reply=%d body=%s answer=%s", replyStatus, truncate(replyBody, 80), truncate(answerBody, 160)), "")
 
-	// ── (c) plain chat in a decision-state task channel wakes the owner ─────
+	// ── (c) plain chat addressed to a decision-state task wakes the owner ───
+	//
+	// The probe used to post its redlines as a bare line, because the task owned
+	// the channel and the room WAS the address. With one room every task lives
+	// in #general, so a bare line addresses nothing in particular and
+	// markHumanNoteOnChannelTasksLocked (see messageAddressesTask in
+	// task_addressing.go) will not wake anyone — waking every waiting owner on
+	// every lobby post is the storm the addressing rule exists to avoid. The
+	// human names the task instead, which is what naming it in a shared room
+	// means. Still a plain composer post: no @-mention, no tags.
 	taskC, err := createTask("Build the QBR one-pager (utterance c)", "eng")
 	if err != nil {
 		return err
@@ -210,7 +219,7 @@ func evalJobUtteranceRouting(fx *officeEvalFixture, r *OfficeEvalReport) error {
 		return err
 	}
 	taskC = fx.broker.TaskByID(taskC.ID)
-	const redlines = "Redlines: Dana Whitfield + dana.whitfield@acme.example for Acme, Corti resolution date July 15 2026, sender is Maya. Finalize and resubmit."
+	redlines := "Redlines on " + taskC.ID + ": Dana Whitfield + dana.whitfield@acme.example for Acme, Corti resolution date July 15 2026, sender is Maya. Finalize and resubmit."
 	// Exact FE payload: web/src/api/client.ts postMessage from the channel
 	// composer — plain chat, no @-mention, no tags.
 	noteStatus, _, err := client.postJSON("/messages", map[string]any{
@@ -266,7 +275,7 @@ func evalJobUtteranceRouting(fx *officeEvalFixture, r *OfficeEvalReport) error {
 		ownerWake[0] == "eng" && strings.Contains(ownerWake[1], "July 15") && noteLeads,
 		fmt.Sprintf("slug=%q packet=%d chars noteLeads=%v", ownerWake[0], len(ownerWake[1]), noteLeads), "")
 
-	// ── (d) a pending interview parks only the asking agent's lane ──────────
+	// ── (d) a pending interview parks only the asking bot's lane ──────────
 	ivdStatus, ivdBody, err := client.postJSON("/requests", map[string]any{
 		"kind": "interview", "channel": "general", "from": "eng",
 		"title": "Human interview", "question": "Which CRM export format do you want?",
@@ -285,9 +294,9 @@ func evalJobUtteranceRouting(fx *officeEvalFixture, r *OfficeEvalReport) error {
 		return fmt.Errorf("interview (d): status=%d body=%s", ivdStatus, ivdBody)
 	}
 
-	// Task B belongs to a DIFFERENT agent (the lead). Its dispatch must
+	// Task B belongs to a DIFFERENT bot (the lead). Its dispatch must
 	// flow while eng's interview is pending — the v3 office froze here.
-	taskB, err := createTask("Ship the pipeline baseline (utterance d)", "ceo")
+	taskB, err := createTask("Ship the pipeline baseline (utterance d)", "cos")
 	if err != nil {
 		return err
 	}
@@ -300,11 +309,11 @@ func evalJobUtteranceRouting(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	case otherWake = <-woke:
 	case <-time.After(utteranceWakeTimeout):
 	}
-	r.add(job, "a pending interview for agent A does not stop a turn for agent B",
-		otherWake[0] == "ceo",
+	r.add(job, "a pending interview for bot A does not stop a turn for bot B",
+		otherWake[0] == "cos",
 		fmt.Sprintf("dispatched=%q while interview %s pending", otherWake[0], ivdParsed.ID), "")
 
-	// The ASKING agent's lane is parked while its interview is pending…
+	// The ASKING bot's lane is parked while its interview is pending…
 	fx.broker.mu.Lock()
 	if t := fx.broker.taskByIDLocked(taskA.ID); t != nil {
 		// request_changes left it changes_requested; force Running so the
@@ -323,7 +332,7 @@ func evalJobUtteranceRouting(fx *officeEvalFixture, r *OfficeEvalReport) error {
 		parked = wake[0]
 	case <-time.After(750 * time.Millisecond):
 	}
-	r.add(job, "the asking agent's own lane is parked while its interview is pending",
+	r.add(job, "the asking bot's own lane is parked while its interview is pending",
 		parked == "", fmt.Sprintf("dispatched=%q", parked), "")
 
 	// …and resumes once the human answers (exact FE payload:
@@ -344,21 +353,33 @@ func evalJobUtteranceRouting(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	case <-time.After(utteranceWakeTimeout):
 	}
 	fx.launcher.stopHeadlessWorkers()
-	r.add(job, "answering the interview resumes the asking agent's lane",
+	r.add(job, "answering the interview resumes the asking bot's lane",
 		ansStatus == http.StatusOK && resumed == "eng",
 		fmt.Sprintf("answer=%d body=%s dispatched=%q", ansStatus, truncate(ansBody, 80), resumed), "")
 
 	// ── (e) the blocking-request chat gate is channel-scoped ────────────────
-	// A blocking approval in the task channel parks chat THERE, not
-	// everywhere: the human keeps talking in #general.
+	// A blocking approval parks chat in ITS channel, not everywhere: the human
+	// keeps talking in #general.
+	//
+	// The gated channel used to be taskC's own per-task channel. Tasks no longer
+	// have one — taskC lives in #general — so raising the approval there would
+	// gate the same room this probe uses as its control and prove nothing. The
+	// gated channel is now an explicit project channel, which is the shape that
+	// still differs from the office channel under the one-room model.
+	const gatedChannel = "renewals"
+	fx.broker.mu.Lock()
+	fx.broker.channels = append(fx.broker.channels, teamChannel{
+		Slug: gatedChannel, Name: gatedChannel, Members: []string{"human", "cos", "eng"},
+	})
+	fx.broker.mu.Unlock()
 	if _, _, err := client.postJSON("/requests", map[string]any{
-		"kind": "approval", "channel": taskC.Channel, "from": "eng",
+		"kind": "approval", "channel": gatedChannel, "from": "eng",
 		"title": "Approve the send", "question": "Send the three renewal emails now?",
 	}); err != nil {
 		return err
 	}
 	blockedStatus, _, err := client.postJSON("/messages", map[string]any{
-		"from": "you", "channel": taskC.Channel, "content": "Trying to chat past the gate.",
+		"from": "you", "channel": gatedChannel, "content": "Trying to chat past the gate.",
 	})
 	if err != nil {
 		return err

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nex-crm/wuphf/internal/agent"
+	"github.com/nex-crm/wuphf/internal/bot"
 )
 
 // Bug reproduced by scripts/debug-tagging/run.sh with HIRE_SLUG=qa-spec:
@@ -29,13 +29,13 @@ import (
 // PR #218 fixed reads (notification targeting). This test covers the write
 // side (reply posting) which is still broken on main.
 
-func newBrokerWithPackChannels(t *testing.T, packAgents []agent.AgentConfig) *Broker {
+func newBrokerWithPackChannels(t *testing.T, packBots []bot.BotConfig) *Broker {
 	t.Helper()
-	b := NewBrokerAt(filepath.Join(t.TempDir(), "broker-state.json"))
+	b := newBrokerWithTeamRoom(filepath.Join(t.TempDir(), "broker-state.json"))
 	b.mu.Lock()
 	// Seed pack-like roster.
-	members := make([]officeMember, 0, len(packAgents))
-	for _, cfg := range packAgents {
+	members := make([]officeMember, 0, len(packBots))
+	for _, cfg := range packBots {
 		members = append(members, officeMember{Slug: cfg.Slug, Name: cfg.Name, Role: cfg.Name})
 	}
 	b.members = members
@@ -57,10 +57,10 @@ func newBrokerWithPackChannels(t *testing.T, packAgents []agent.AgentConfig) *Br
 	// seed, don't wait.
 	backdated := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
 	b.channels = []teamChannel{
-		{Slug: "general", Name: "general", Members: packSlugs, CreatedAt: backdated, UpdatedAt: backdated},
-		{Slug: "engineering", Name: "engineering", Members: []string{"ceo"}, CreatedAt: backdated, UpdatedAt: backdated},
+		{Slug: "team", Name: "team", Members: packSlugs, CreatedAt: backdated, UpdatedAt: backdated},
+		{Slug: "engineering", Name: "engineering", Members: []string{"cos"}, CreatedAt: backdated, UpdatedAt: backdated},
 		// A DM channel that must NOT receive the new hire.
-		{Slug: "dm-human-ceo", Name: "DM: CEO", Type: "dm", Members: []string{"ceo"}, CreatedAt: backdated, UpdatedAt: backdated},
+		{Slug: "dm-human-ceo", Name: "DM: CEO", Type: "dm", Members: []string{"cos"}, CreatedAt: backdated, UpdatedAt: backdated},
 	}
 	b.mu.Unlock()
 	return b
@@ -68,12 +68,12 @@ func newBrokerWithPackChannels(t *testing.T, packAgents []agent.AgentConfig) *Br
 
 // Bug A — state-level: after POST /office-members action=create, the new
 // slug MUST be a member of every non-DM channel. Skips DM channels: those
-// encode the target agent in the slug and have their own membership gate.
+// encode the target bot in the slug and have their own membership gate.
 // Also asserts UpdatedAt moved forward so SSE-refreshing UIs see the roster
 // change, and asserts a channel_updated event fires per mutated channel.
 func TestWizardHire_AddsNewMemberToAllNonDMChannels(t *testing.T) {
-	b := newBrokerWithPackChannels(t, []agent.AgentConfig{
-		{Slug: "ceo", Name: "CEO"},
+	b := newBrokerWithPackChannels(t, []bot.BotConfig{
+		{Slug: "cos", Name: "CEO"},
 		{Slug: "pm", Name: "Product Manager"},
 	})
 	b.mu.Lock()
@@ -114,11 +114,11 @@ func TestWizardHire_AddsNewMemberToAllNonDMChannels(t *testing.T) {
 	defer b.mu.Unlock()
 
 	// #general already contained qa-spec? No, seeded without it. Must be added.
-	general := b.findChannelLocked("general")
+	general := b.findChannelLocked("team")
 	if general == nil || !containsString(general.Members, "qa-spec") {
 		t.Fatalf("general must contain qa-spec after hire; got members=%v", general.Members)
 	}
-	if general.UpdatedAt == preUpdated["general"] {
+	if general.UpdatedAt == preUpdated["team"] {
 		t.Fatalf("general.UpdatedAt did not advance (%q); SSE subscribers will not see the roster change", general.UpdatedAt)
 	}
 
@@ -173,7 +173,7 @@ drain:
 	if !seenMemberCreated {
 		t.Fatalf("expected member_created event for qa-spec")
 	}
-	if !updatedSlugs["general"] || !updatedSlugs["engineering"] {
+	if !updatedSlugs["team"] || !updatedSlugs["engineering"] {
 		t.Fatalf("expected channel_updated events for general and engineering; got %v", updatedSlugs)
 	}
 	if updatedSlugs["dm-human-ceo"] {
@@ -187,12 +187,12 @@ drain:
 // Disabled, so this is defensive. The test pins the invariant so a future
 // state-rebuild path that forgets it doesn't silently leave a new hire muted.
 func TestWizardHire_ClearsStaleDisabledEntryFromPriorLifecycle(t *testing.T) {
-	b := newBrokerWithPackChannels(t, []agent.AgentConfig{{Slug: "ceo", Name: "CEO"}})
+	b := newBrokerWithPackChannels(t, []bot.BotConfig{{Slug: "cos", Name: "CEO"}})
 	b.mu.Lock()
 	b.token = "test-token"
 	// Simulate a leftover disabled entry for the slug we're about to hire.
 	for i := range b.channels {
-		if b.channels[i].Slug == "general" {
+		if b.channels[i].Slug == "team" {
 			b.channels[i].Disabled = []string{"qa-spec"}
 		}
 	}
@@ -218,7 +218,7 @@ func TestWizardHire_ClearsStaleDisabledEntryFromPriorLifecycle(t *testing.T) {
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	general := b.findChannelLocked("general")
+	general := b.findChannelLocked("team")
 	if general == nil {
 		t.Fatalf("general channel missing")
 	}
@@ -236,7 +236,7 @@ func TestWizardHire_ClearsStaleDisabledEntryFromPriorLifecycle(t *testing.T) {
 // member on state reload. The existing remove branch already handles this
 // but we pin it so a future refactor of the create side can't break it.
 func TestWizardHire_RemoveReversesChannelMembership(t *testing.T) {
-	b := newBrokerWithPackChannels(t, []agent.AgentConfig{{Slug: "ceo", Name: "CEO"}})
+	b := newBrokerWithPackChannels(t, []bot.BotConfig{{Slug: "cos", Name: "CEO"}})
 	b.mu.Lock()
 	b.token = "test-token"
 	b.mu.Unlock()
@@ -281,12 +281,12 @@ func TestWizardHire_RemoveReversesChannelMembership(t *testing.T) {
 //
 //  1. Start broker with CEO + PM (pack) plus #general seeded.
 //  2. POST /office-members action=create { slug: "qa-spec" }.
-//  3. POST /messages { from: "qa-spec", channel: "general", content: "…" }.
+//  3. POST /messages { from: "qa-spec", channel: "team", content: "…" }.
 //     Today: 403 "channel access denied".
 //     Expected: 200 with a message id.
 func TestBug_WizardHiredSpecialist_ReplyEndToEnd_HTTPFlow(t *testing.T) {
-	b := newBrokerWithPackChannels(t, []agent.AgentConfig{
-		{Slug: "ceo", Name: "CEO"},
+	b := newBrokerWithPackChannels(t, []bot.BotConfig{
+		{Slug: "cos", Name: "CEO"},
 		{Slug: "pm", Name: "Product Manager"},
 	})
 	// Bypass auth for the test — we're exercising access control, not tokens.
@@ -338,11 +338,11 @@ func TestBug_WizardHiredSpecialist_ReplyEndToEnd_HTTPFlow(t *testing.T) {
 	//    at the end of a turn, and is what fails today with 403.
 	replyResp, replyBody := do("POST", "/messages", map[string]any{
 		"from":    "qa-spec",
-		"channel": "general",
-		"content": "Ack — qa-spec reply to #general after wizard-hire",
+		"channel": "team",
+		"content": "Ack — qa-spec reply to #team after wizard-hire",
 	})
 	if replyResp.StatusCode != http.StatusOK {
-		t.Fatalf("bug reproduced: wizard-hired qa-spec cannot post reply to #general. "+
+		t.Fatalf("bug reproduced: wizard-hired qa-spec cannot post reply to #team. "+
 			"status=%d body=%s — this is why the user sees 'no response comes back' "+
 			"after tagging a specialist added via the web wizard.",
 			replyResp.StatusCode, strings.TrimSpace(string(replyBody)))

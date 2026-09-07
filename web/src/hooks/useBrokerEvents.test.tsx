@@ -172,8 +172,8 @@ describe("useBrokerEvents unread counts", () => {
     expect(useAppStore.getState().unreadByChannel.general).toBe(1);
   });
 
-  it("suppresses unread for the canonical DM channel slug while viewing /dm/<agent>", () => {
-    // The hook hashes /dm/<agent> through directChannelSlug to get the
+  it("suppresses unread for the canonical DM channel slug while viewing /dm/<bot>", () => {
+    // The hook hashes /dm/<bot> through directChannelSlug to get the
     // broker's canonical "<lower>__<higher>" pairing — matching what
     // the broker emits on `message`. This regression-pins that mapping
     // for both ordering directions.
@@ -190,18 +190,18 @@ describe("useBrokerEvents unread counts", () => {
     expect(useAppStore.getState().unreadByChannel.human__pm ?? 0).toBe(0);
   });
 
-  it("suppresses unread for /dm/<agent> when the agent slug sorts after `human`", () => {
-    navigateRouter("/dm/ceo");
+  it("suppresses unread for /dm/<bot> when the bot slug sorts after `human`", () => {
+    navigateRouter("/dm/cos");
     renderHarness();
     const [source] = FakeEventSource.created;
 
     act(() => {
       source.emit("message", {
-        message: { id: "msg-1", channel: "ceo__human" },
+        message: { id: "msg-1", channel: "cos__human" },
       });
     });
 
-    expect(useAppStore.getState().unreadByChannel.ceo__human ?? 0).toBe(0);
+    expect(useAppStore.getState().unreadByChannel.cos__human ?? 0).toBe(0);
   });
 
   it("ignores message events without a channel", () => {
@@ -271,7 +271,7 @@ describe("useBrokerEvents activity stream", () => {
     (globalThis as { EventSource: unknown }).EventSource =
       FakeEventSource as unknown as typeof EventSource;
     useAppStore.setState({
-      agentActivitySnapshots: {},
+      botActivitySnapshots: {},
       isReconnecting: false,
     });
     navigateRouter("/channels/general");
@@ -280,7 +280,7 @@ describe("useBrokerEvents activity stream", () => {
   afterEach(() => {
     (globalThis as { EventSource: unknown }).EventSource = originalEventSource;
     useAppStore.setState({
-      agentActivitySnapshots: {},
+      botActivitySnapshots: {},
       isReconnecting: false,
       brokerConnected: false,
     });
@@ -318,7 +318,7 @@ describe("useBrokerEvents activity stream", () => {
     expect(invalidatedKeys).toContain("office-members");
     expect(invalidatedKeys).toContain("channel-members");
 
-    const snap = useAppStore.getState().agentActivitySnapshots.tess;
+    const snap = useAppStore.getState().botActivitySnapshots.tess;
     expect(snap).toBeDefined();
     expect(snap.activity).toBe("drafting reply");
     expect(snap.kind).toBe("routine");
@@ -350,7 +350,106 @@ describe("useBrokerEvents activity stream", () => {
       (call) => (call[0] as { queryKey?: unknown[] }).queryKey?.[0],
     );
     expect(keys).toContain("office-members");
-    expect(useAppStore.getState().agentActivitySnapshots).toEqual({});
+    expect(useAppStore.getState().botActivitySnapshots).toEqual({});
+    warnSpy.mockRestore();
+  });
+});
+
+describe("useBrokerEvents computer stream", () => {
+  const originalEventSource = globalThis.EventSource;
+
+  beforeEach(() => {
+    FakeEventSource.created = [];
+    (globalThis as { EventSource: unknown }).EventSource =
+      FakeEventSource as unknown as typeof EventSource;
+    useAppStore.setState({
+      computerStates: {},
+      computerRuntimeBuild: { building: false, problem: null, lines: [] },
+    });
+    navigateRouter("/agents/growth/computer");
+  });
+
+  afterEach(() => {
+    (globalThis as { EventSource: unknown }).EventSource = originalEventSource;
+    useAppStore.setState({
+      computerStates: {},
+      computerRuntimeBuild: { building: false, problem: null, lines: [] },
+      brokerConnected: false,
+    });
+  });
+
+  it("records the live frame in the store AND invalidates the per-slug status query", () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <BrokerEventsHarness />
+      </QueryClientProvider>,
+    );
+    const [source] = FakeEventSource.created;
+
+    act(() => {
+      source.emit("computer", {
+        slug: "growth",
+        state: "ready",
+        frame: "data:image/jpeg;base64,AAA",
+        at: 1725,
+      });
+    });
+
+    const keys = invalidateSpy.mock.calls.map(
+      (call) => (call[0] as { queryKey?: unknown[] }).queryKey,
+    );
+    expect(keys).toContainEqual(["computer", "growth"]);
+    expect(useAppStore.getState().computerStates.growth.frameDataUrl).toBe(
+      "data:image/jpeg;base64,AAA",
+    );
+  });
+
+  it("routes runtime build progress (empty slug) to the runtime query and build log", () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <BrokerEventsHarness />
+      </QueryClientProvider>,
+    );
+    const [source] = FakeEventSource.created;
+
+    act(() => {
+      source.emit("computer", {
+        slug: "",
+        state: "building",
+        message: "Pulling base image",
+      });
+    });
+
+    const keys = invalidateSpy.mock.calls.map(
+      (call) => (call[0] as { queryKey?: unknown[] }).queryKey,
+    );
+    expect(keys).toContainEqual(["computer-runtime"]);
+    expect(useAppStore.getState().computerRuntimeBuild.lines).toEqual([
+      "Pulling base image",
+    ]);
+  });
+
+  it("ignores a malformed computer payload without throwing", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    renderHarness();
+    const [source] = FakeEventSource.created;
+
+    expect(() => {
+      act(() => {
+        source.emitRaw("computer", "{not-json");
+      });
+    }).not.toThrow();
+    expect(useAppStore.getState().computerStates).toEqual({});
     warnSpy.mockRestore();
   });
 });

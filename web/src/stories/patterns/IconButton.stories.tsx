@@ -1,6 +1,5 @@
-import { Plus, Refresh, Settings, Xmark } from "iconoir-react";
-
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { Plus, Refresh, Settings, Xmark } from "iconoir-react";
 
 const meta: Meta = {
   title: "Design System/Atoms/IconButton",
@@ -12,7 +11,11 @@ export default meta;
 export const Sizes: StoryObj = {
   render: () => (
     <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-      <button type="button" className="icon-btn icon-btn--sm" aria-label="Close">
+      <button
+        type="button"
+        className="icon-btn icon-btn--sm"
+        aria-label="Close"
+      >
         <Xmark width={14} height={14} />
       </button>
       <button type="button" className="icon-btn" aria-label="Settings">
@@ -31,7 +34,12 @@ export const States: StoryObj = {
       <button type="button" className="icon-btn" aria-label="Default">
         <Refresh width={18} height={18} />
       </button>
-      <button type="button" className="icon-btn" aria-label="Disabled" disabled>
+      <button
+        type="button"
+        className="icon-btn"
+        aria-label="Disabled"
+        disabled={true}
+      >
         <Refresh width={18} height={18} />
       </button>
     </div>
@@ -58,7 +66,7 @@ export const InContext: StoryObj = {
           #architecture
         </span>
         <span style={{ color: "var(--text-tertiary)", fontSize: 12 }}>
-          12 agents, 3 humans
+          12 bots, 3 humans
         </span>
       </div>
       <div style={{ display: "flex", gap: 4 }}>

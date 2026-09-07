@@ -9,11 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nex-crm/wuphf/internal/agent"
+	"github.com/nex-crm/wuphf/internal/bot"
 )
 
 func TestBuildClaudePromptsSeparatesSystemMessages(t *testing.T) {
-	msgs := []agent.Message{
+	msgs := []bot.Message{
 		{Role: "system", Content: "You are the CEO."},
 		{Role: "system", Content: "Only delegate to @fe and @be."},
 		{Role: "user", Content: "Build the product."},
@@ -53,13 +53,13 @@ func TestBuildClaudeArgsIncludesResume(t *testing.T) {
 	if strings.Contains(joined, "--no-session-persistence") {
 		t.Fatalf("unexpected no-session-persistence flag: %q", joined)
 	}
-	// An agent turn keeps full tool access and many turns. The cap was raised
+	// A bot turn keeps full tool access and many turns. The cap was raised
 	// 20 -> 50 so complex app builds can finish and publish within one turn.
 	if !strings.Contains(joined, "--max-turns 50") {
-		t.Fatalf("expected agent turn to keep --max-turns 50, got %q", joined)
+		t.Fatalf("expected bot turn to keep --max-turns 50, got %q", joined)
 	}
 	if strings.Contains(joined, "--allowedTools") {
-		t.Fatalf("agent turn must NOT restrict tools, got %q", joined)
+		t.Fatalf("bot turn must NOT restrict tools, got %q", joined)
 	}
 }
 
@@ -85,12 +85,12 @@ func TestBuildClaudeArgsOneShotIsolatesTools(t *testing.T) {
 		t.Fatalf("one-shot must cap at a single turn, got %q", joined)
 	}
 	if strings.Contains(joined, "--max-turns 20") {
-		t.Fatalf("one-shot must not use the agent turn budget, got %q", joined)
+		t.Fatalf("one-shot must not use the bot turn budget, got %q", joined)
 	}
 }
 
 func TestStreamTextChunksSplitsLargeBlocks(t *testing.T) {
-	ch := make(chan agent.StreamChunk, 16)
+	ch := make(chan bot.StreamChunk, 16)
 	streamTextChunks(ch, "one two three four five six seven eight nine ten eleven twelve")
 	close(ch)
 
@@ -117,14 +117,14 @@ func TestCreateClaudeCodeStreamFnRetriesUnknownSession(t *testing.T) {
 	restore := stubClaudeRuntime(t, recordFile, "resume-retry", cwd)
 	defer restore()
 
-	fn := CreateClaudeCodeStreamFn("ceo")
+	fn := CreateClaudeCodeStreamFn("cos")
 
-	first := collectStreamChunks(fn([]agent.Message{{Role: "user", Content: "first turn"}}, nil))
+	first := collectStreamChunks(fn([]bot.Message{{Role: "user", Content: "first turn"}}, nil))
 	if joinedChunkText(first) != "fresh run one" {
 		t.Fatalf("unexpected first response: %q", joinedChunkText(first))
 	}
 
-	second := collectStreamChunks(fn([]agent.Message{{Role: "user", Content: "second turn"}}, nil))
+	second := collectStreamChunks(fn([]bot.Message{{Role: "user", Content: "second turn"}}, nil))
 	secondText := joinedChunkText(second)
 	if !strings.Contains(secondText, "fresh run two") {
 		t.Fatalf("expected retry response text, got %q", secondText)
@@ -161,8 +161,8 @@ func TestCreateClaudeCodeStreamFnPersistsSessionAcrossFactoryRecreation(t *testi
 	resetStore := stubClaudeSessionStore(t, filepath.Join(t.TempDir(), "claude-sessions.json"))
 	defer resetStore()
 
-	fn := CreateClaudeCodeStreamFn("ceo")
-	first := collectStreamChunks(fn([]agent.Message{{Role: "user", Content: "first turn"}}, nil))
+	fn := CreateClaudeCodeStreamFn("cos")
+	first := collectStreamChunks(fn([]bot.Message{{Role: "user", Content: "first turn"}}, nil))
 	if joinedChunkText(first) != "first persisted run" {
 		t.Fatalf("unexpected first response: %q", joinedChunkText(first))
 	}
@@ -171,8 +171,8 @@ func TestCreateClaudeCodeStreamFnPersistsSessionAcrossFactoryRecreation(t *testi
 	claudeSessionStoreInstance = nil
 	claudeSessionStoreMu.Unlock()
 
-	fn = CreateClaudeCodeStreamFn("ceo")
-	second := collectStreamChunks(fn([]agent.Message{{Role: "user", Content: "second turn"}}, nil))
+	fn = CreateClaudeCodeStreamFn("cos")
+	second := collectStreamChunks(fn([]bot.Message{{Role: "user", Content: "second turn"}}, nil))
 	if joinedChunkText(second) != "resumed after restart" {
 		t.Fatalf("unexpected second response: %q", joinedChunkText(second))
 	}
@@ -196,8 +196,8 @@ func TestCreateClaudeCodeStreamFnShowsLoginError(t *testing.T) {
 	restore := stubClaudeRuntime(t, recordFile, "login-required", cwd)
 	defer restore()
 
-	fn := CreateClaudeCodeStreamFn("ceo")
-	chunks := collectStreamChunks(fn([]agent.Message{{Role: "user", Content: "hello"}}, nil))
+	fn := CreateClaudeCodeStreamFn("cos")
+	chunks := collectStreamChunks(fn([]bot.Message{{Role: "user", Content: "hello"}}, nil))
 	if !hasErrorChunkContaining(chunks, "Claude CLI requires login") {
 		t.Fatalf("expected login guidance error, got %#v", chunks)
 	}
@@ -208,15 +208,15 @@ type claudeHelperRecord struct {
 	Stdin string   `json:"stdin"`
 }
 
-func collectStreamChunks(ch <-chan agent.StreamChunk) []agent.StreamChunk {
-	var chunks []agent.StreamChunk
+func collectStreamChunks(ch <-chan bot.StreamChunk) []bot.StreamChunk {
+	var chunks []bot.StreamChunk
 	for chunk := range ch {
 		chunks = append(chunks, chunk)
 	}
 	return chunks
 }
 
-func joinedChunkText(chunks []agent.StreamChunk) string {
+func joinedChunkText(chunks []bot.StreamChunk) string {
 	var parts []string
 	for _, chunk := range chunks {
 		if chunk.Type == "text" {
@@ -226,7 +226,7 @@ func joinedChunkText(chunks []agent.StreamChunk) string {
 	return strings.TrimSpace(strings.Join(parts, " "))
 }
 
-func hasThinkingChunk(chunks []agent.StreamChunk, needle string) bool {
+func hasThinkingChunk(chunks []bot.StreamChunk, needle string) bool {
 	for _, chunk := range chunks {
 		if chunk.Type == "thinking" && strings.Contains(chunk.Content, needle) {
 			return true
@@ -235,7 +235,7 @@ func hasThinkingChunk(chunks []agent.StreamChunk, needle string) bool {
 	return false
 }
 
-func hasErrorChunk(chunks []agent.StreamChunk) bool {
+func hasErrorChunk(chunks []bot.StreamChunk) bool {
 	for _, chunk := range chunks {
 		if chunk.Type == "error" {
 			return true
@@ -244,7 +244,7 @@ func hasErrorChunk(chunks []agent.StreamChunk) bool {
 	return false
 }
 
-func hasErrorChunkContaining(chunks []agent.StreamChunk, needle string) bool {
+func hasErrorChunkContaining(chunks []bot.StreamChunk, needle string) bool {
 	for _, chunk := range chunks {
 		if chunk.Type == "error" && strings.Contains(chunk.Content, needle) {
 			return true

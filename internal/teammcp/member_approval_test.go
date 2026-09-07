@@ -20,7 +20,7 @@ func TestRequireTeamMemberApprovalBypassesWhenUnsafe(t *testing.T) {
 	t.Setenv("WUPHF_UNSAFE", "1")
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	if err := requireTeamMemberApproval(ctx, "ceo", TeamMemberArgs{
+	if err := requireTeamMemberApproval(ctx, "cos", TeamMemberArgs{
 		Slug: "growth", Name: "Growth", Role: "growth lead",
 	}); err != nil {
 		t.Fatalf("WUPHF_UNSAFE=1 must bypass the member-approval gate, got err=%v", err)
@@ -60,7 +60,7 @@ func TestRequireTeamMemberApprovalProceedsOnApprove(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := requireTeamMemberApproval(ctx, "ceo", TeamMemberArgs{
+	if err := requireTeamMemberApproval(ctx, "cos", TeamMemberArgs{
 		Slug: "growth", Name: "Growth", Role: "growth lead",
 	}); err != nil {
 		t.Fatalf("approved request must return nil, got err=%v", err)
@@ -102,13 +102,13 @@ func TestRequireTeamMemberApprovalBlocksOnReject(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	err := requireTeamMemberApproval(ctx, "ceo", TeamMemberArgs{
+	err := requireTeamMemberApproval(ctx, "cos", TeamMemberArgs{
 		Slug: "growth", Name: "Growth", Role: "growth lead",
 	})
 	if err == nil {
 		t.Fatal("rejected request must return an error so the CEO reuses an existing specialist")
 	}
 	if !strings.Contains(err.Error(), "growth") {
-		t.Fatalf("error should name the declined slug so the agent knows what was blocked, got: %v", err)
+		t.Fatalf("error should name the declined slug so the bot knows what was blocked, got: %v", err)
 	}
 }

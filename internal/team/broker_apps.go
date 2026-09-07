@@ -1,6 +1,6 @@
 package team
 
-// broker_apps.go owns the HTTP surface for agent-generated internal tools
+// broker_apps.go owns the HTTP surface for bot-generated internal tools
 // ("Apps"). Routes are reached only via the /api proxy (ServeWebUI strips /api
 // and forwards to this mux), so they never collide with the SPA's client-side
 // /apps/<id> route — the browser navigation hits the SPA fallback, the data
@@ -49,17 +49,18 @@ func (b *Broker) handleApps(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Resolve the writer the same way rich artifacts do: prefer the
-		// authenticated agent slug, fall back to the human session identity.
+		// authenticated bot slug, fall back to the human session identity.
 		actor, status, err := richArtifactAuthenticatedSlug(r, body.Actor, "actor")
 		if err != nil {
 			writeJSON(w, status, map[string]string{"error": err.Error()})
 			return
 		}
-		// Only the App Builder (the lone agent with register_app) or a human
-		// session may write app bytes. A random agent holding the broker token
-		// must not register apps directly and bypass the build path.
+		// Only an bot carrying the app-building system skill (or a human
+		// session) may write app bytes. A slug that is not on the roster, or
+		// one the human switched app-building off for, must not register
+		// apps directly and bypass the build path.
 		if !b.appWriterAllowed(r, actor) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "only the App Builder may register apps"})
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": appWriterForbiddenMessage})
 			return
 		}
 		body.Actor = actor
@@ -73,7 +74,14 @@ func (b *Broker) handleApps(w http.ResponseWriter, r *http.Request) {
 		// off the request path so the Workflow tab opens already-compiled instead
 		// of compiling on demand while the operator watches. Fail-safe; the
 		// on-demand compile remains as the fallback.
-		go b.precompileAppWorkflowAsync(app.ID)
+		b.trackBackground(func() { b.precompileAppWorkflowAsync(app.ID) })
+		// First human build -> mint the starter routine server-side (the FE
+		// chat used to own this and lost it whenever it unmounted mid-build).
+		b.trackBackground(func() { b.mintStarterRoutineForFirstBuild(app) })
+		// Deterministic post-publish sanity note: if the saved page is still
+		// the scaffold placeholder or implausibly small, say so once in the
+		// edit channel. Advisory only — never blocks, reopens, or retries.
+		b.trackBackground(func() { b.advisePublishOddities(app) })
 		// A republish rewrites the source and may change the dependency set, so
 		// any running live-preview server is now stale. Stop it and pre-warm a
 		// fresh one in the background: the new deps (e.g. the refine stack)
@@ -81,7 +89,7 @@ func (b *Broker) handleApps(w http.ResponseWriter, r *http.Request) {
 		// blank cold boot when the human opens it.
 		mgr := b.appDevManager()
 		mgr.Stop(app.ID)
-		go func(id string) { _, _ = mgr.Ensure(id) }(app.ID)
+		b.trackBackground(func() { _, _ = mgr.Ensure(app.ID) })
 		writeJSON(w, http.StatusOK, map[string]any{"app": app})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -143,7 +151,7 @@ func (b *Broker) handleAppByID(w http.ResponseWriter, r *http.Request) {
 // handleAppActivity streams the app's live build/edit activity (the App
 // Builder's thinking + tool calls) as SSE, scoped to THIS app. It resolves the
 // app's backing app-builder run from its EditChannel and delegates to the shared
-// agent-stream writer, so the operator surface subscribes by app id alone and
+// bot-stream writer, so the operator surface subscribes by app id alone and
 // never threads a task id. An app whose run has not started yet streams an empty
 // (replay-end + heartbeat) connection rather than erroring, so the FE can attach
 // the feed the instant a build begins.
@@ -167,7 +175,7 @@ func (b *Broker) handleAppActivity(w http.ResponseWriter, r *http.Request, id st
 	if scope == "" {
 		scope = id
 	}
-	b.streamAgentTaskSSE(w, r, appBuilderSlug, scope)
+	b.streamBotTaskSSE(w, r, appBuilderSlug, scope)
 }
 
 // appBuilderRunTaskID resolves an app's persistent edit channel to the id of the
@@ -264,6 +272,15 @@ func (b *Broker) handleAppDB(w http.ResponseWriter, r *http.Request, id string) 
 			writeAppError(w, opErr)
 			return
 		}
+		// Data changed -> drop the stale wiki cache so the Knowledge tab
+		// re-synthesizes against the new rows on next view (2026-08-18
+		// output-quality pass). Best-effort: a failed invalidate must not fail
+		// the write the operator just made.
+		if op == "define" || op == "upsert" || op == "clear" {
+			if invErr := store.InvalidateAppKnowledge(id); invErr != nil {
+				fmt.Fprintf(os.Stderr, "broker: app knowledge invalidate failed: %v\n", invErr)
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"table": table})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -337,7 +354,7 @@ func (b *Broker) handleAppRoot(w http.ResponseWriter, r *http.Request, id string
 		// ?source=1 includes the app's source project — only the App Builder
 		// needs it (to edit), so the FE view never asks for it. Alongside the raw
 		// source we attach a deterministic capability summary (data model, APIs,
-		// office writes, UI) so the agent edits from the app's REAL shape instead
+		// office writes, UI) so the bot edits from the app's REAL shape instead
 		// of guessing or inventing capabilities it lacks.
 		if r.URL.Query().Get("source") == "1" {
 			source, err := b.appStore().Source(id)
@@ -351,7 +368,7 @@ func (b *Broker) handleAppRoot(w http.ResponseWriter, r *http.Request, id string
 		writeJSON(w, http.StatusOK, out)
 	case http.MethodPatch:
 		// Rename: the one metadata mutation on an app. Gated like delete/rollback
-		// (a human session or the App Builder) so a random agent holding the
+		// (a human session or the App Builder) so a random bot holding the
 		// broker token cannot rewrite app names. The FE's client-side rename
 		// store is a cache of this.
 		actor, _, _ := richArtifactAuthenticatedSlug(r, "", "actor")
@@ -448,14 +465,13 @@ func (b *Broker) handleAppRollback(w http.ResponseWriter, r *http.Request, id st
 //
 //	POST /apps/{id}/edit-session -> { channel }
 //
-// Every app should be editable, but an app minted before edit-channel stamping
-// (or registered html-only, with no backing task) carries no channel, so the FE
-// could not surface Edit for it. This lazily mints one: it creates an App
-// Builder "Edit app: <name>" task, and the task-create hook
-// (stampAppEditChannelForTaskLocked) stamps the new task-<id> channel onto the
-// app SYNCHRONOUSLY, so the bound channel is readable the moment MutateTask
-// returns. The App Builder then greets the human in that channel and waits; a
-// human post there wakes it through the same task_followup path edits use.
+// Every app should be editable, but an app registered html-only (no backing
+// task) carries no channel, so the FE could not surface Edit for it. This lazily
+// mints one: it creates the app's `app-<appid>` channel, then creates an App
+// Builder "Edit app: <name>" task INSIDE it, so the bound channel is readable
+// the moment ensureAppEditChannel returns. The App Builder then greets the human
+// in that channel and waits; a human post there wakes it through the same
+// task_followup path edits use.
 //
 // Idempotent: an app already bound to an edit thread returns it untouched, so a
 // double-click never spawns a second task. Gated like register/delete — a human
@@ -482,10 +498,20 @@ func (b *Broker) handleAppEditSession(w http.ResponseWriter, r *http.Request, id
 	writeJSON(w, http.StatusOK, map[string]any{"channel": ch})
 }
 
-// ensureAppEditChannel returns the app's persistent edit channel (`task-<id>`),
-// creating the App Builder "Edit app" task that owns it if the app is not bound
-// yet. Idempotent: an already-bound app returns its channel without spawning a
-// task. Shared by the edit-session and improve handlers.
+// ensureAppEditChannel returns the app's persistent edit channel
+// (`app-<appid>`), minting it and creating the App Builder "Edit app" task that
+// works it if the app is not bound yet. Idempotent: an already-bound app returns
+// its channel without spawning a task. Shared by the edit-session and improve
+// handlers.
+//
+// The channel is minted from the APP id BEFORE the task is created, and the task
+// is then created INTO it. That order matters: it used to create the task in
+// "general" and read back whatever channel the create hook happened to stamp,
+// which stopped producing a channel at all once tasks lost their own rooms.
+// Creating the task in the app's channel also keeps the correlations that read a
+// task's channel working — appForEditChannel (app acceptance) and
+// appBuilderRunTaskID (the activity stream) — and keeps the human's posts in the
+// edit panel landing somewhere a task actually lives, so they wake the owner.
 func (b *Broker) ensureAppEditChannel(id string) (string, error) {
 	app, _, err := b.appStore().Get(id)
 	if err != nil {
@@ -494,8 +520,14 @@ func (b *Broker) ensureAppEditChannel(id string) (string, error) {
 	if ch := strings.TrimSpace(app.EditChannel); ch != "" {
 		return ch, nil
 	}
+	b.mu.Lock()
+	channel := b.ensureAppEditChannelLocked(id, app.Name)
+	b.mu.Unlock()
+	if channel == "" {
+		return "", fmt.Errorf("could not open an edit thread for app %s", id)
+	}
 	// Ground the edit thread in the app's REAL shape (data model, APIs, writes,
-	// UI), derived from its source, so the agent never invents capabilities.
+	// UI), derived from its source, so the bot never invents capabilities.
 	capsSummary := ""
 	if source, serr := b.appStore().Source(id); serr == nil {
 		capsSummary = renderAppCapabilities(introspectAppSource(source))
@@ -505,7 +537,7 @@ func (b *Broker) ensureAppEditChannel(id string) (string, error) {
 	// maybeSpawnAppBuilderTaskFromProposal).
 	if _, err := b.MutateTask(TaskPostRequest{
 		Action:    "create",
-		Channel:   "general",
+		Channel:   channel,
 		Title:     title,
 		Details:   details,
 		Owner:     appBuilderSlug,
@@ -514,17 +546,7 @@ func (b *Broker) ensureAppEditChannel(id string) (string, error) {
 	}); err != nil {
 		return "", err
 	}
-	// The create hook stamped the new task-<id> channel onto the app
-	// synchronously; re-read the manifest to return the bound channel.
-	updated, _, err := b.appStore().Get(id)
-	if err != nil {
-		return "", err
-	}
-	ch := strings.TrimSpace(updated.EditChannel)
-	if ch == "" {
-		return "", fmt.Errorf("edit session created but no channel was bound")
-	}
-	return ch, nil
+	return channel, nil
 }
 
 // handleAppImprove applies a human-requested change to an existing app:
@@ -532,12 +554,12 @@ func (b *Broker) ensureAppEditChannel(id string) (string, error) {
 //	POST /apps/{id}/improve  { "change": "add a CSV export button" }  -> { channel }
 //
 // It is the robust, explicit edit path. Rather than minting a NEW "Improve app"
-// task (which is created already Running but with no agent turn attending it —
+// task (which is created already Running but with no bot turn attending it —
 // so the change has nothing to ride and hangs), it ensures the app's settled
 // edit-channel and posts the change there as a human message. That post drives
 // the proven task_followup wake, which re-engages the App Builder on its OWN
 // task (read get_app -> apply -> republish a new version). Completion is observed
-// by the app's version bump, not by parsing the agent's narration.
+// by the app's version bump, not by parsing the bot's narration.
 func (b *Broker) handleAppImprove(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -576,12 +598,12 @@ func (b *Broker) handleAppImprove(w http.ResponseWriter, r *http.Request, id str
 		writeAppError(w, err)
 		return
 	}
-	// Dispatch the App Builder DIRECTLY for this edit — one agent, one job, no
+	// Dispatch the App Builder DIRECTLY for this edit — one bot, one job, no
 	// CEO/lead hop. The lead route (a human post that wakes the orchestrator) can
 	// hit the lead's own turn cap and drop the edit, leaving it silently undone.
 	// If no direct enqueuer is wired (e.g. unit tests), fall back to the
 	// message-wake path.
-	if !b.dispatchAgentTurn(appBuilderSlug, buildAppImprovePrompt(app, change), channel) {
+	if !b.dispatchBotTurn(appBuilderSlug, buildAppImprovePrompt(app, change), channel) {
 		if _, err := b.PostMessage("human", channel, change, nil, ""); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
@@ -605,17 +627,22 @@ func buildAppImprovePrompt(app CustomApp, change string) string {
 }
 
 // appWriterAllowed reports whether the request may write/delete app bytes:
-// the authenticated agent is the App Builder, the caller is an invited human
-// session, or the caller is the OWNER — bare token auth with no agent
-// identity claimed. Agents always claim their slug via the agent header (and
+// the authenticated bot is the App Builder, the caller is an invited human
+// session, or the caller is the OWNER — bare token auth with no bot
+// identity claimed. Bots always claim their slug via the bot header (and
 // any non-app-builder slug is rejected above), so a header-less token caller
-// is the human driving the web UI, not an agent sidestepping the gate: the
-// header is cooperative, and an agent omitting it gains nothing it could not
+// is the human driving the web UI, not a bot sidestepping the gate: the
+// header is cooperative, and a bot omitting it gains nothing it could not
 // already do with the token it holds. Without the owner lane the operator
 // UI's own edit path (submitAppEdit → POST /apps/{id}/improve) 403'd for the
 // only human in a single-owner workspace.
 func (b *Broker) appWriterAllowed(r *http.Request, actor string) bool {
-	if strings.EqualFold(strings.TrimSpace(actor), appBuilderSlug) {
+	// App building is a system skill every agent carries, so any roster
+	// agent with it enabled may publish — not only the retired App Builder.
+	// A third human eval (2026-09-03) watched the Designer finish a build and
+	// then get "only the App Builder may register apps", hand off to
+	// @app-builder, and end up with two copies of the app.
+	if b.ownerCanBuildApps(actor) {
 		return true
 	}
 	a, ok := requestActorFromContext(r.Context())
@@ -627,6 +654,11 @@ func (b *Broker) appWriterAllowed(r *http.Request, actor string) bool {
 	}
 	return a.Kind == requestActorKindBroker && strings.TrimSpace(actor) == ""
 }
+
+// appWriterForbiddenMessage is the 403 body for app writes by a caller that
+// may not publish apps. Agents quote it back to the human, so it names the
+// actual rule.
+const appWriterForbiddenMessage = "only agents with the app-building skill enabled (or a human session) may register apps"
 
 func writeAppError(w http.ResponseWriter, err error) {
 	switch {

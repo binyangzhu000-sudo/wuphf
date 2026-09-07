@@ -1,3 +1,6 @@
+import { useQuery } from "@tanstack/react-query";
+
+import { listApps } from "../../api/apps";
 import { useChannels } from "../../hooks/useChannels";
 import { deriveBreadcrumbs } from "../../hooks/useObjectBreadcrumb";
 import { appTitle } from "../../lib/constants";
@@ -9,6 +12,7 @@ import { ThemeSwitcher } from "./ThemeSwitcher";
 function headerTitleAndDesc(
   route: ReturnType<typeof useCurrentRoute>,
   channels: { slug: string; description?: string }[],
+  customAppName?: string,
 ): { title: string; desc: string } {
   switch (route.kind) {
     case "channel": {
@@ -19,7 +23,7 @@ function headerTitleAndDesc(
       };
     }
     case "app":
-      return { title: appTitle(route.appId), desc: "" };
+      return { title: customAppName ?? appTitle(route.appId), desc: "" };
     case "task-board":
     case "task-detail":
       return { title: appTitle("tasks"), desc: "" };
@@ -36,8 +40,8 @@ function headerTitleAndDesc(
     case "task-new":
       return { title: "New task", desc: "" };
     case "agents":
-      return { title: "Agents", desc: "" };
-    case "agent-detail":
+      return { title: "Bots", desc: "" };
+    case "bot-detail":
       return { title: `@${route.agentSlug}`, desc: "" };
     case "skill-detail":
       return { title: `Skill: ${route.skillName}`, desc: "" };
@@ -61,9 +65,25 @@ export function ChannelHeader() {
   const route = useCurrentRoute();
   const setSearchOpen = useAppStore((s) => s.setSearchOpen);
   const { data: channels = [] } = useChannels();
+  // A custom app's breadcrumb should read "Recruiting Bot", not the
+  // title-cased record id ("App_ad2f6211ad746d37"). The apps list is already
+  // polled for the sidebar, so this is a cache read, not a new request.
+  const { data: apps = [] } = useQuery({
+    queryKey: ["apps"],
+    queryFn: listApps,
+    staleTime: 15_000,
+  });
+  const customAppName =
+    route.kind === "app"
+      ? apps.find((a) => a.id === route.appId)?.name
+      : undefined;
 
-  const { title, desc } = headerTitleAndDesc(route, channels);
-  const breadcrumbItems = deriveBreadcrumbs(route);
+  const { title, desc } = headerTitleAndDesc(route, channels, customAppName);
+  // customAppName has to reach the breadcrumb too, not just `title`: on the
+  // app route breadcrumbItems is non-empty, so <Breadcrumb> renders and the
+  // `title` branch below never runs — the resolved name was being computed
+  // and then discarded, leaving the raw "App_ad2f6211ad746d37" on screen.
+  const breadcrumbItems = deriveBreadcrumbs(route, customAppName);
 
   return (
     <div className="channel-header">

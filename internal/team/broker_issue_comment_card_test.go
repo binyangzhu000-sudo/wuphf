@@ -37,8 +37,8 @@ import (
 
 func TestCreateIssueEmitsOnlyOneCardKind(t *testing.T) {
 	b := newTestBroker(t)
-	ensureTestMemberAccess(b, "general", "ceo", "CEO")
-	ensureTestMemberAccess(b, "general", "builder", "Builder")
+	ensureTestMemberAccess(b, "team", "cos", "CEO")
+	ensureTestMemberAccess(b, "team", "builder", "Builder")
 	if err := b.StartOnPort(0); err != nil {
 		t.Fatalf("failed to start broker: %v", err)
 	}
@@ -49,9 +49,9 @@ func TestCreateIssueEmitsOnlyOneCardKind(t *testing.T) {
 		"action":     "create",
 		"title":      "Ship the Inbox needs-action filter",
 		"details":    "Add a new default tab in the Decision Inbox.",
-		"created_by": "ceo",
+		"created_by": "cos",
 		"owner":      "builder",
-		"channel":    "general",
+		"channel":    "team",
 		"task_type":  "issue",
 	})
 	req, _ := http.NewRequest(http.MethodPost, base+"/tasks", bytes.NewReader(body))
@@ -105,8 +105,8 @@ func TestCreateIssueEmitsOnlyOneCardKind(t *testing.T) {
 
 func TestPostTaskCommentPostsChatMessage(t *testing.T) {
 	b := newTestBroker(t)
-	ensureTestMemberAccess(b, "general", "ceo", "CEO")
-	ensureTestMemberAccess(b, "general", "builder", "Builder")
+	ensureTestMemberAccess(b, "team", "cos", "CEO")
+	ensureTestMemberAccess(b, "team", "builder", "Builder")
 	if err := b.StartOnPort(0); err != nil {
 		t.Fatalf("failed to start broker: %v", err)
 	}
@@ -119,9 +119,9 @@ func TestPostTaskCommentPostsChatMessage(t *testing.T) {
 		"action":     "create",
 		"title":      "Pick a Postgres major version",
 		"details":    "Need to align with platform before staging cutover.",
-		"created_by": "ceo",
+		"created_by": "cos",
 		"owner":      "builder",
-		"channel":    "general",
+		"channel":    "team",
 		"task_type":  "issue",
 	})
 	createReq, _ := http.NewRequest(http.MethodPost, base+"/tasks", bytes.NewReader(createBody))
@@ -218,8 +218,8 @@ func TestPostTaskCommentPostsChatMessage(t *testing.T) {
 // them as if the card were "newer".
 func TestIssueCardsReplyInOriginatingThread(t *testing.T) {
 	b := newTestBroker(t)
-	ensureTestMemberAccess(b, "general", "ceo", "CEO")
-	ensureTestMemberAccess(b, "general", "builder", "Builder")
+	ensureTestMemberAccess(b, "team", "cos", "CEO")
+	ensureTestMemberAccess(b, "team", "builder", "Builder")
 	if err := b.StartOnPort(0); err != nil {
 		t.Fatalf("failed to start broker: %v", err)
 	}
@@ -232,9 +232,9 @@ func TestIssueCardsReplyInOriginatingThread(t *testing.T) {
 		"action":     "create",
 		"title":      "Wire ReplyTo on Issue cards",
 		"details":    "Cards should fold into the originating thread.",
-		"created_by": "ceo",
+		"created_by": "cos",
 		"owner":      "builder",
-		"channel":    "general",
+		"channel":    "team",
 		"task_type":  "issue",
 		"thread_id":  threadRoot,
 	})
@@ -305,8 +305,8 @@ func TestIssueCardsReplyInOriginatingThread(t *testing.T) {
 // of Drafting→Approved→Running on a single Approve & Start click.
 func TestLifecycleCardsCoalesceWithinShortWindow(t *testing.T) {
 	b := newTestBroker(t)
-	ensureTestMemberAccess(b, "general", "ceo", "CEO")
-	ensureTestMemberAccess(b, "general", "builder", "Builder")
+	ensureTestMemberAccess(b, "team", "cos", "CEO")
+	ensureTestMemberAccess(b, "team", "builder", "Builder")
 	if err := b.StartOnPort(0); err != nil {
 		t.Fatalf("failed to start broker: %v", err)
 	}
@@ -317,9 +317,9 @@ func TestLifecycleCardsCoalesceWithinShortWindow(t *testing.T) {
 		"action":     "create",
 		"title":      "Coalesce lifecycle bursts",
 		"details":    "Drive two transitions to verify dedup.",
-		"created_by": "ceo",
+		"created_by": "cos",
 		"owner":      "builder",
-		"channel":    "general",
+		"channel":    "team",
 		"task_type":  "issue",
 	})
 	createReq, _ := http.NewRequest(http.MethodPost, base+"/tasks", bytes.NewReader(createBody))
@@ -393,8 +393,8 @@ func TestLifecycleCardsCoalesceWithinShortWindow(t *testing.T) {
 // for an unrelated task B in the same channel.
 func TestLifecycleCardsDoNotCoalesceAcrossTasks(t *testing.T) {
 	b := newTestBroker(t)
-	ensureTestMemberAccess(b, "general", "ceo", "CEO")
-	ensureTestMemberAccess(b, "general", "builder", "Builder")
+	ensureTestMemberAccess(b, "team", "cos", "CEO")
+	ensureTestMemberAccess(b, "team", "builder", "Builder")
 	if err := b.StartOnPort(0); err != nil {
 		t.Fatalf("failed to start broker: %v", err)
 	}
@@ -406,9 +406,9 @@ func TestLifecycleCardsDoNotCoalesceAcrossTasks(t *testing.T) {
 			"action":     "create",
 			"title":      title,
 			"details":    "n/a",
-			"created_by": "ceo",
+			"created_by": "cos",
 			"owner":      "builder",
-			"channel":    "general",
+			"channel":    "team",
 			"task_type":  "issue",
 		})
 		req, _ := http.NewRequest(http.MethodPost, base+"/tasks", bytes.NewReader(body))
@@ -490,7 +490,7 @@ func TestCoalesceWindowDoesNotRemoveOlderCards(t *testing.T) {
 	b.appendMessageLocked(channelMessage{
 		ID:           fmt.Sprintf("msg-%d", b.counter),
 		From:         "system",
-		Channel:      "general",
+		Channel:      "team",
 		Kind:         "issue_lifecycle",
 		Title:        "Old card",
 		Content:      "Old lifecycle event",

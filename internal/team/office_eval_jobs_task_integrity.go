@@ -13,8 +13,8 @@ package team
 //	    contract: an owner-set lane lands RUNNING and dispatches, an
 //	    ownerless lane lands READY and dispatch is gated only by
 //	    ownership (no start-approval ceremony).
-//	(c) a long-title task feeds NO clipped title into the agent-facing
-//	    details/packet of its repair sub-task (v3 [17:41:35]: one agent
+//	(c) a long-title task feeds NO clipped title into the bot-facing
+//	    details/packet of its repair sub-task (v3 [17:41:35]: one bot
 //	    pass consumed a truncated source and shipped a conflicting brief).
 //	(d) a double terminal-transition attempt produces exactly ONE
 //	    task_delivered post + ONE inbox notice (v3 6× done-messages), and
@@ -22,7 +22,7 @@ package team
 //	    one commit (v3 triple-identical commits).
 //	(e) decision/approval cards name the task owner from the TASK RECORD,
 //	    not the packet's last actor (v3 [18:44:21]: approve card named the
-//	    wrong agent).
+//	    wrong bot).
 
 import (
 	"context"
@@ -31,7 +31,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nex-crm/wuphf/internal/agent"
+	"github.com/nex-crm/wuphf/internal/bot"
 	"github.com/nex-crm/wuphf/internal/operations"
 )
 
@@ -46,10 +46,10 @@ func evalJobTaskIntegrity(fx *officeEvalFixture, r *OfficeEvalReport) error {
 		Name: "Probe Pack",
 		Kind: "general",
 		Starter: operations.StarterPlan{
-			LeadSlug:                  "ceo",
+			LeadSlug:                  "cos",
 			GeneralChannelDescription: "Primary coordination channel.",
-			Agents: []operations.StarterAgent{
-				{Slug: "ceo", Name: "CEO", Role: "lead", Checked: true, BuiltIn: true},
+			Bots: []operations.StarterBot{
+				{Slug: "cos", Name: "Chief of Staff", Role: "lead", Checked: true, BuiltIn: true},
 				{Slug: "eng", Name: "Engineer", Role: "engineering", Checked: true},
 			},
 			Tasks: []operations.StarterTask{{
@@ -69,6 +69,12 @@ func evalJobTaskIntegrity(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	if seedErr != nil {
 		return fmt.Errorf("seed blueprint: %w", seedErr)
 	}
+	// The blueprint seed replaces the channel list wholesale, and it no
+	// longer mints #general -- the lobby is retired. This eval's scenarios are
+	// about TASK INTEGRITY, not about which rooms a blueprint creates, and
+	// they all post into "general", so the harness re-establishes the room it
+	// needs rather than every scenario threading a different one.
+	ensureOfficeEvalRoom(fx.broker)
 	var packID, idleID string
 	for _, t := range fx.broker.AllTasks() {
 		if t.Title == "Run the first CRM hygiene sweep" {
@@ -139,13 +145,13 @@ func evalJobTaskIntegrity(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	// ── (a) self-heal: child not sibling, deduped, completion → parent ─────
 	parentA, err := fx.broker.MutateTask(TaskPostRequest{
 		Action: "create", Channel: "general", Title: "Send the Q4 renewal emails",
-		Details: "Draft and send the three Q4 renewal emails.", Owner: "eng", CreatedBy: "ceo",
+		Details: "Draft and send the three Q4 renewal emails.", Owner: "eng", CreatedBy: "cos",
 	})
 	if err != nil {
 		return err
 	}
 	parentAID := parentA.Task.ID
-	child, reused, err := fx.broker.RequestSelfHealing("eng", parentAID, agent.EscalationStuck, "Agent stuck: provider session went stale.")
+	child, reused, err := fx.broker.RequestSelfHealing("eng", parentAID, bot.EscalationStuck, "Bot stuck: provider session went stale.")
 	if err != nil {
 		return err
 	}
@@ -153,10 +159,10 @@ func evalJobTaskIntegrity(fx *officeEvalFixture, r *OfficeEvalReport) error {
 		!reused && strings.TrimSpace(child.ParentIssueID) == parentAID && isSelfHealingTask(&child),
 		fmt.Sprintf("child=%s parent_issue_id=%q pipeline=%q", child.ID, child.ParentIssueID, child.PipelineID), "")
 
-	// A second escalation for the SAME stalled work (different agent +
+	// A second escalation for the SAME stalled work (different bot +
 	// reason → different exact title) merges into the open lane instead of
 	// spawning a sibling dup.
-	dup, dupReused, err := fx.broker.RequestSelfHealing("ceo", parentAID, agent.EscalationMaxRetries, "Repeated provider errors on the same task.")
+	dup, dupReused, err := fx.broker.RequestSelfHealing("cos", parentAID, bot.EscalationMaxRetries, "Repeated provider errors on the same task.")
 	if err != nil {
 		return err
 	}
@@ -195,22 +201,22 @@ func evalJobTaskIntegrity(fx *officeEvalFixture, r *OfficeEvalReport) error {
 			strings.Contains(parentAfterHeal.Details, childDone.ID),
 		fmt.Sprintf("child=%s parentArtifact=%q parentState=%s", strings.TrimSpace(childDone.Status()), parentAfterHeal.Artifact, parentAfterHeal.LifecycleState), "")
 
-	// ── (c) no clipped title feeds the repair lane's agent-facing context ──
+	// ── (c) no clipped title feeds the repair lane's bot-facing context ──
 	const titleTail = "ACV $61,000 END-OF-TITLE-MARKER"
 	longTitle := "Corti Labs account brief covering the Q4 renewal motion, the champion-departure risk, the open support escalations, and the " + titleTail
 	const detailsTail = "The contract value is exactly $61,000 — END-OF-DETAILS-MARKER."
 	parentC, err := fx.broker.MutateTask(TaskPostRequest{
 		Action: "create", Channel: "general", Title: longTitle,
-		Details: "Write the Corti Labs brief. " + detailsTail, Owner: "eng", CreatedBy: "ceo",
+		Details: "Write the Corti Labs brief. " + detailsTail, Owner: "eng", CreatedBy: "cos",
 	})
 	if err != nil {
 		return err
 	}
-	healC, _, err := fx.broker.RequestSelfHealing("eng", parentC.Task.ID, agent.EscalationStuck, "Stuck on the brief.")
+	healC, _, err := fx.broker.RequestSelfHealing("eng", parentC.Task.ID, bot.EscalationStuck, "Stuck on the brief.")
 	if err != nil {
 		return err
 	}
-	packet := fx.launcher.notifyCtx().BuildTaskExecutionPacket(healC.Owner, officeActionLog{Actor: "ceo"}, healC, "Repair lane packet.")
+	packet := fx.launcher.notifyCtx().BuildTaskExecutionPacket(healC.Owner, officeActionLog{Actor: "cos"}, healC, "Repair lane packet.")
 	r.add(job, "repair sub-task carries the full title + parent contract, never a clipped echo",
 		strings.Contains(healC.Title, titleTail) &&
 			strings.Contains(healC.Details, titleTail) &&
@@ -220,10 +226,17 @@ func evalJobTaskIntegrity(fx *officeEvalFixture, r *OfficeEvalReport) error {
 			strings.Contains(healC.Title, titleTail), strings.Contains(healC.Details, titleTail),
 			strings.Contains(healC.Details, detailsTail), len(packet)), "")
 
-	// ── (d) exactly one done-post per terminal transition ──────────────────
+	// ── (d) exactly one done-post per terminal transition, and no card ─────
+	// This used to require one done-post AND one Inbox notice. The notice is
+	// gone: it repeated the chat post's sentence and offered only an
+	// "Acknowledge" button, so every finished task cost the human a click to
+	// dismiss news they had already read in the channel. The replay-absorption
+	// property this job actually guards is unchanged — a double terminal
+	// transition must not announce the same delivery twice — and the notice
+	// count is now pinned at zero so a re-introduced card fails the eval.
 	parentD, err := fx.broker.MutateTask(TaskPostRequest{
 		Action: "create", Channel: "general", Title: "Publish the pipeline baseline",
-		Details: "Publish the pipeline-truth baseline.", Owner: "eng", CreatedBy: "ceo",
+		Details: "Publish the pipeline-truth baseline.", Owner: "eng", CreatedBy: "cos",
 	})
 	if err != nil {
 		return err
@@ -266,8 +279,8 @@ func evalJobTaskIntegrity(fx *officeEvalFixture, r *OfficeEvalReport) error {
 		}
 	}
 	fx.broker.mu.Unlock()
-	r.add(job, "double terminal-transition attempt posts exactly one done-post + one notice",
-		deliveredPosts == 1 && deliveredNotices == 1,
+	r.add(job, "double terminal-transition attempt posts exactly one done-post and no Inbox card",
+		deliveredPosts == 1 && deliveredNotices == 0,
 		fmt.Sprintf("posts=%d notices=%d", deliveredPosts, deliveredNotices), "")
 
 	// Wiki fold: byte-identical consecutive writes to the same path produce
@@ -292,7 +305,7 @@ func evalJobTaskIntegrity(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	// ── (e) decision/approval cards name the owner from the task record ────
 	parentE, err := fx.broker.MutateTask(TaskPostRequest{
 		Action: "create", Channel: "general", Title: "Draft the exec-sponsor email",
-		Details: "Draft the exec-sponsor email for the QBR.", Owner: "eng", CreatedBy: "ceo",
+		Details: "Draft the exec-sponsor email for the QBR.", Owner: "eng", CreatedBy: "cos",
 	})
 	if err != nil {
 		return err
@@ -307,7 +320,7 @@ func evalJobTaskIntegrity(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	// Contaminate the packet: the LAST packet actor is the CEO, not the
 	// owner. The cards must keep naming the owner from the task record.
 	fx.broker.mu.Lock()
-	fx.broker.AppendPacketFeedbackLocked(eID, "ceo", "Packet-side note from the CEO — must not become the card actor.")
+	fx.broker.AppendPacketFeedbackLocked(eID, "cos", "Packet-side note from the Chief of Staff — must not become the card actor.")
 	fx.broker.mu.Unlock()
 	if err := fx.broker.RecordTaskDecisionWithComment(eID, "approve", "", "human"); err != nil {
 		return fmt.Errorf("start via decision path: %w", err)
@@ -316,8 +329,8 @@ func evalJobTaskIntegrity(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	// card coalescer replaces it once the in_review card lands.
 	startedOwner, startedFound := latestLifecycleCardOwner(fx.broker, eID, string(IssueLifecycleTransitionStarted))
 	if _, err := fx.broker.MutateTask(TaskPostRequest{
-		Action: "submit_for_review", ID: eID, Channel: "general", CreatedBy: "ceo",
-		Details: "Submitted on the owner's behalf by the CEO.",
+		Action: "submit_for_review", ID: eID, Channel: "general", CreatedBy: "cos",
+		Details: "Submitted on the owner's behalf by the Chief of Staff.",
 	}); err != nil {
 		return err
 	}

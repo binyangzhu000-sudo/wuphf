@@ -23,16 +23,16 @@ func TestFixtureBlueprintsDeclareReviewerConfig(t *testing.T) {
 			if bp.DefaultReviewer == ReviewerHumanOnly {
 				return
 			}
-			slugs := agentSlugSet(bp)
+			slugs := botSlugSet(bp)
 			if _, ok := slugs[bp.DefaultReviewer]; !ok {
-				t.Fatalf("blueprint %s default_reviewer %q not in starter agent slugs %v", id, bp.DefaultReviewer, keysOf(slugs))
+				t.Fatalf("blueprint %s default_reviewer %q not in starter bot slugs %v", id, bp.DefaultReviewer, keysOf(slugs))
 			}
 			for _, rule := range bp.ReviewerPaths {
 				if rule.Reviewer == ReviewerHumanOnly {
 					continue
 				}
 				if _, ok := slugs[rule.Reviewer]; !ok {
-					t.Fatalf("blueprint %s reviewer_paths %q -> %q not in starter agent slugs %v", id, rule.Pattern, rule.Reviewer, keysOf(slugs))
+					t.Fatalf("blueprint %s reviewer_paths %q -> %q not in starter bot slugs %v", id, rule.Pattern, rule.Reviewer, keysOf(slugs))
 				}
 			}
 		})
@@ -52,8 +52,8 @@ func TestResolveReviewerNicheCRM(t *testing.T) {
 		{"team/customers/acme-co.md", "growth"},
 		{"team/product/roadmap.md", "builder"},
 		{"team/reviews/q4-retro.md", "reviewer"},
-		{"team/random/other.md", "ceo"},
-		{"", "ceo"},
+		{"team/random/other.md", "cos"},
+		{"", "cos"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
@@ -81,7 +81,7 @@ func TestResolveReviewerYoutubeFactory(t *testing.T) {
 		{"team/packaging/ep-01-thumb.md", "packaging-lead"},
 		{"team/growth/shorts-plan.md", "growth-ops"},
 		{"team/revenue/sponsor-tracker.md", "monetization"},
-		{"team/unmatched/thing.md", "ceo"},
+		{"team/unmatched/thing.md", "cos"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
@@ -94,8 +94,8 @@ func TestResolveReviewerYoutubeFactory(t *testing.T) {
 
 func TestResolveReviewerFallsBackToCEOWhenUnconfigured(t *testing.T) {
 	bp := Blueprint{}
-	if got := bp.ResolveReviewer("team/anything.md"); got != "ceo" {
-		t.Fatalf("expected fallback 'ceo', got %q", got)
+	if got := bp.ResolveReviewer("team/anything.md"); got != "cos" {
+		t.Fatalf("expected fallback 'cos', got %q", got)
 	}
 }
 
@@ -343,9 +343,9 @@ func TestReviewerPathMapAsMap(t *testing.T) {
 
 // helpers below.
 
-func agentSlugSet(bp Blueprint) map[string]struct{} {
-	out := make(map[string]struct{}, len(bp.Starter.Agents))
-	for _, a := range bp.Starter.Agents {
+func botSlugSet(bp Blueprint) map[string]struct{} {
+	out := make(map[string]struct{}, len(bp.Starter.Bots))
+	for _, a := range bp.Starter.Bots {
 		out[strings.TrimSpace(a.Slug)] = struct{}{}
 	}
 	return out

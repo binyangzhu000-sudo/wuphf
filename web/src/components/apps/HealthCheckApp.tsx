@@ -384,7 +384,7 @@ function HostInviteControls({
         <div
           style={{
             marginTop: 8,
-            color: "var(--danger, #b42318)",
+            color: "var(--red)",
             fontSize: 12,
             lineHeight: 1.4,
             whiteSpace: "pre-wrap",
@@ -571,7 +571,7 @@ function HostTunnelControls({
         <div
           style={{
             marginTop: 8,
-            color: "var(--danger, #b42318)",
+            color: "var(--red)",
             fontSize: 12,
             lineHeight: 1.4,
             whiteSpace: "pre-wrap",
@@ -641,7 +641,7 @@ function TeamMemberSessions({
         <div
           style={{
             marginBottom: 8,
-            color: "var(--danger, #b42318)",
+            color: "var(--red)",
             fontSize: 12,
             lineHeight: 1.4,
           }}
@@ -840,11 +840,6 @@ function runtimeItems(data: HealthResponse | undefined): RuntimeItem[] {
       active: Boolean(data?.memory_backend_ready),
     },
     {
-      label: "Nex",
-      value: data?.nex_connected ? "connected" : "disconnected",
-      active: Boolean(data?.nex_connected),
-    },
-    {
       label: "Build",
       value: data?.build?.version ?? "unknown",
       active: Boolean(data?.build?.version),
@@ -913,7 +908,7 @@ function useTunnelControls(isHost: boolean) {
     confirm({
       title: "Start a public tunnel?",
       message:
-        "This opens a Cloudflare Quick Tunnel that publishes your WUPHF web UI on the public internet so a teammate can join from any browser.",
+        "This opens a Cloudflare Quick Tunnel that publishes your gawkbot web UI on the public internet so a teammate can join from any browser.",
       details: (
         <ul>
           <li>

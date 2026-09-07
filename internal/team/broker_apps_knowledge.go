@@ -92,6 +92,15 @@ type appKnowledgePage struct {
 	// their legacy pages (broker_apps_knowledge_legacy.go). URL is a broker
 	// route the FE fetches with auth and renders sandboxed.
 	Artifacts []appKnowledgeArtifact `json:"artifacts,omitempty"`
+	// Bot is the slug of the bot that knows this page. Set for bot-scoped
+	// knowledge (broker_agent_knowledge.go); empty for synthesized app pages.
+	Bot string `json:"agent,omitempty"`
+	// SourcePath is the repo-relative note this page was read from
+	// (bots/<slug>/notebook/<file>.md). It is what a promotion addresses.
+	SourcePath string `json:"sourcePath,omitempty"`
+	// Promotion reports this page's standing with the shared wiki: private to
+	// the bot, waiting on a human, or already promoted.
+	Promotion *knowledgePromotionStatus `json:"promotion,omitempty"`
 }
 
 // appKnowledgeArtifact is one attached file-ish view of a knowledge page.
@@ -705,12 +714,15 @@ func (b *Broker) gatherKnowledgeSources(id string) []knowledgeSource {
 
 // appBuildChatSnippet reads the app's build/edit conversation (its EditChannel)
 // into a bounded transcript, so the synthesis is grounded in what the user
-// actually asked for. Skips machine event rows; keeps human + agent prose.
+// actually asked for. Skips machine event rows; keeps human + bot prose.
 func (b *Broker) appBuildChatSnippet(editChannel string) string {
-	editChannel = normalizeChannelSlug(strings.TrimSpace(editChannel))
-	if editChannel == "" {
+	// Raw emptiness before normalising: the TrimSpace was already here but fed
+	// INTO the normaliser, which turns "" into "general", so the refusal was
+	// dead and an app with no edit channel resolved against #general.
+	if strings.TrimSpace(editChannel) == "" {
 		return ""
 	}
+	editChannel = normalizeChannelSlug(editChannel)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	var lines []string
@@ -1009,6 +1021,26 @@ func (s *customAppStore) WriteAppKnowledge(id string, pages []appKnowledgePage) 
 	defer s.mu.Unlock()
 	if err := writeFileAtomic(filepath.Join(s.appDir(id), customAppKnowledgeFile), body, 0o600); err != nil {
 		return fmt.Errorf("app knowledge: write: %w", err)
+	}
+	return nil
+}
+
+// InvalidateAppKnowledge drops the per-app knowledge cache so the NEXT
+// GET /apps/{id}/knowledge re-synthesizes against current data. Called when the
+// app's data changes (a db define/upsert/clear): otherwise the file cache serves
+// a synthesis frozen at first view — the reason a freshly-seeded app showed an
+// accurate data tab beside a wiki still claiming "no tickets yet" (2026-08-18
+// output-quality pass). Missing cache is not an error (nothing to invalidate).
+// NOTE: for gbrain-backed workspaces pages live in the brain, not this file;
+// data-driven staleness there needs a brain-side stamp and is not handled here.
+func (s *customAppStore) InvalidateAppKnowledge(id string) error {
+	if err := validateCustomAppID(id); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.Remove(filepath.Join(s.appDir(id), customAppKnowledgeFile)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("app knowledge: invalidate: %w", err)
 	}
 	return nil
 }

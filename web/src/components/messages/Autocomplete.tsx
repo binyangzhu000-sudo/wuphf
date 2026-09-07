@@ -8,7 +8,7 @@ import {
 import { useOfficeMembers } from "../../hooks/useMembers";
 
 export interface AutocompleteItem {
-  /** Token to insert (e.g. "/clear" or "@ceo"). */
+  /** Token to insert (e.g. "/clear" or "@cos"). */
   insert: string;
   /** Primary label shown in the panel. */
   label: string;
@@ -130,7 +130,7 @@ export function mentionAutocompleteItems(
     items.push({
       insert: "@all",
       label: "@all",
-      desc: "Notify every agent",
+      desc: "Notify every bot",
       icon: "📣",
     });
   }

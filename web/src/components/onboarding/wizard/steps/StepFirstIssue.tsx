@@ -1,15 +1,14 @@
 /**
- * StepFirstIssue — the final wizard step, "Hand off your first workflow."
+ * StepFirstIssue — wizard step 05, "Write your first issue."
  *
- * Collects the first workflow text, prefilled with the RevOps CRM-audit
- * example (ONBOARDING_FIRST_ISSUE_EXAMPLE, seeded into answers.firstIssue by
- * the wizard hook). Finish seeds the (empty) office and drops the user into
- * #general with this text already in the composer. There is no CEO and no
- * team: the workflow waits for the first agent the user spins up.
+ * Collects the first issue text, prefilled with the RevOps CRM-audit example
+ * (ONBOARDING_FIRST_ISSUE_EXAMPLE, seeded into answers.firstIssue by the
+ * wizard hook). Finish seeds the office and drops the user into #general /
+ * the CEO DM with this text already in the composer.
  *
- * The right rail shows where the handoff is headed: a small mock #general
- * row. A "reset to the example" link restores the prefill if the user clears
- * or edits it and wants it back.
+ * The right rail shows where the issue is headed: a small mock CEO DM row so
+ * the user sees the handoff before it happens. A "reset to the example" link
+ * restores the prefill if the user clears or edits it and wants it back.
  *
  * The wizard's advance gate requires non-empty text, so the Finish button is
  * disabled while the field is blank. Copy from
@@ -24,6 +23,7 @@
 
 import { useCallback } from "react";
 
+import { PixelAvatar } from "../../../ui/PixelAvatar";
 import {
   ONBOARDING_ANALYTICS_CONSENT_COPY,
   ONBOARDING_EMAIL_COPY,
@@ -65,7 +65,7 @@ export function StepFirstIssue({
               className="onboarding-team-label"
               htmlFor="onboarding-first-issue"
             >
-              Your first workflow
+              Your first issue
             </label>
             {isExample ? null : (
               <button
@@ -87,8 +87,7 @@ export function StepFirstIssue({
             data-testid="onboarding-first-issue"
           />
           <p className="onboarding-first-issue-hint">
-            It waits in #general. The first agent you spin up picks it up and
-            runs it end to end.
+            Your team picks this up the moment you walk into the office.
           </p>
         </div>
 
@@ -153,13 +152,18 @@ export function StepFirstIssue({
       <div className="office-tour-slide-stage office-tour-slide-stage--first-issue">
         <div className="onboarding-handoff-card" aria-hidden="true">
           <div className="onboarding-handoff-head">
-            <span className="onboarding-handoff-who">
-              <span className="onboarding-handoff-name">#general</span>
+            <span className="onboarding-handoff-avatar">
+              <PixelAvatar slug="cos" size={24} />
             </span>
-            <span className="onboarding-handoff-route">Workflow handoff</span>
+            <span className="onboarding-handoff-who">
+              <span className="onboarding-handoff-name">Chief of Staff</span>
+              <span className="onboarding-handoff-handle">@cos</span>
+            </span>
+            <span className="onboarding-handoff-route">Direct message</span>
           </div>
           <div className="onboarding-handoff-bubble">
-            {answers.firstIssue.trim() || "Write the first thing you want run."}
+            {answers.firstIssue.trim() ||
+              "Write the first thing you want your team to handle."}
           </div>
           <div className="onboarding-handoff-foot">
             <span className="onboarding-handoff-send">Send</span>

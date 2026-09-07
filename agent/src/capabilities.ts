@@ -18,9 +18,14 @@
 //                                 GATED at the agent layer (browser control needs
 //                                 the operator's in-chat approval, mirroring the
 //                                 browser-step reframe).
-//   nex.send / crm.*              Still simulated (real sends/CRM go through
-//                                 integrations.call); nex.send stays gated so the
-//                                 approval flow is exercised end to end.
+//   data.*                        REAL via the broker's op-dispatched
+//                                 POST/GET /apps/{id}/db (query/upsert) when a
+//                                 broker AND an app id are configured — an authored
+//                                 tool reads/writes the app's OWN records (the same
+//                                 rows the Data tab renders). Empty simulation
+//                                 otherwise (honest "nothing stored yet").
+//   nex.send                      Still simulated, and stays gated so the approval
+//                                 flow is exercised end to end.
 //
 // Secrets discipline: the broker token comes from the agent's OWN environment and
 // goes out only as an Authorization header to the configured broker — never to
@@ -40,13 +45,17 @@ import type { CapabilityFn, CapabilityTree } from "./toolRuntime.js";
 // ungated. Kept next to the capability definitions on purpose.
 // (integrations.call is intentionally absent: the broker classifies
 // read-vs-mutate server-side and raises its own approval card for mutations.)
-export const GATED_CAPABILITIES: ReadonlySet<string> = new Set(["crm.assign", "nex.send", "nex.browser"]);
+export const GATED_CAPABILITIES: ReadonlySet<string> = new Set(["nex.send", "nex.browser"]);
 
 export interface CapabilityConfig {
 	/** Broker base URL (e.g. http://127.0.0.1:7893) for integrations + browser. */
 	brokerUrl?: string;
 	/** Broker API token; sent as a Bearer header, never exposed to tool code. */
 	brokerToken?: string;
+	/** The app whose OWN data store data.* reads/writes (POST/GET /apps/{id}/db).
+	 * Set from the tool-call/routine request's agent id; when present (with a
+	 * broker), data.* operates on the app's real rows instead of the empty sim. */
+	appId?: string;
 	/** Model for real nex.ai.* calls; unset -> simulated. */
 	aiModel?: Model<string>;
 	apiKey?: string;
@@ -88,6 +97,23 @@ function preview(v: unknown): string {
 	return s.length > 60 ? `${s.slice(0, 57)}…` : s;
 }
 
+/** Serialize a value as MODEL INPUT — the full content up to `max` chars, not
+ * the 60-char label preview() produces. preview() is for action tracing; feeding
+ * it to nex.ai.* was the reason summaries read "your data got cut off" — the
+ * model only ever saw the first 57 characters of its own input. */
+function modelInput(v: unknown, max = 6000): string {
+	let s: string;
+	if (typeof v === "string") s = v;
+	else {
+		try {
+			s = v === undefined ? "" : JSON.stringify(v, null, 1);
+		} catch {
+			s = String(v);
+		}
+	}
+	return s.length > max ? `${s.slice(0, max)}… (input truncated)` : s;
+}
+
 /** Deterministic hash of the subject -> 55..95 (a plausible fit score). */
 function hashScore(subject: unknown): number {
 	const s = typeof subject === "string" ? subject : preview(subject);
@@ -95,13 +121,6 @@ function hashScore(subject: unknown): number {
 	for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
 	return 55 + (h % 41);
 }
-
-const DEALS = [
-	{ name: "Globex", stage: "Negotiation", amount: 120_000, stageChanged: true },
-	{ name: "Initech", stage: "Discovery", amount: 45_000, stageChanged: false },
-	{ name: "Acme", stage: "Proposal", amount: 80_000, stageChanged: true },
-	{ name: "Umbrella", stage: "Closed Won", amount: 96_000, stageChanged: true },
-] as const;
 
 function simSummarize(items: unknown): string {
 	const list = Array.isArray(items) ? items : [items];
@@ -122,7 +141,7 @@ function simRun(input: unknown): string {
 		subject = preview(input);
 	}
 	const on = subject ? ` of "${subject}"` : "";
-	return `Simulated run${on}: no model or integrations are connected on this host, so nothing actually ran — set TOOL_RUNTIME_MODEL=1 or connect the broker (WUPHF_BROKER_URL/WUPHF_BROKER_TOKEN) to run it for real.`;
+	return `Simulated run${on}: nothing actually ran — this computer has no AI model or integrations connected yet. Connect them in Settings to make runs real.`;
 }
 
 /** The all-simulated runtime: deterministic, no network, no model. */
@@ -137,17 +156,24 @@ export function simulatedCapabilities(): CapabilityTree {
 			run: (input: unknown) => simRun(input),
 			send: (target: unknown) => `Sent to ${labelOf(target)} (simulated).`,
 			browser: (goal: unknown) => `Would drive the browser: ${labelOf(goal)} (browser engine not configured).`,
+			// The reference "now" as an ISO string. Capabilities execute HOST-side
+			// (in the sidecar, which has a reliable clock) — only the sandboxed
+			// worker's own Date.now() is unreliable. So a tool that needs the current
+			// time (SLA windows, "days since") calls `await nex.now()` instead of
+			// Date.now(); this is the ONE trustworthy clock inside a tool.
+			now: () => new Date().toISOString(),
 		},
-		crm: {
-			deals: () => DEALS.map((d) => ({ ...d })),
-			dealContext: (deal: unknown) => ({
-				deal: labelOf(deal),
-				stage: "Negotiation",
-				lastTouch: "9 days ago",
-				owner: "Priya (AE)",
-			}),
-			ownerFor: () => ({ name: "Priya (AE)" }),
-			assign: (lead: unknown, ae: unknown) => `Assigned ${labelOf(lead)} to ${labelOf(ae)} (simulated).`,
+		// Domain-neutral store surface: an authored tool reads and writes the
+		// app's OWN records, whatever the domain (deals, tickets, candidates,
+		// products). Simulated here as an empty store — HONEST: nothing is
+		// connected yet, so list returns [] and get returns null rather than
+		// fabricating rows (a CRM-shaped fake was the reason non-sales workflows
+		// authored garbage, 2026-08-17 tools audit). On a real host this is
+		// overlaid with the app's db.* store.
+		data: {
+			list: () => [] as unknown[],
+			get: () => null,
+			upsert: (record: unknown) => `Saved ${labelOf(record)} (simulated — no data store connected).`,
 		},
 	};
 }
@@ -189,7 +215,7 @@ function realAI(cfg: CapabilityConfig): CapabilityTree {
 				const out = await aiComplete(
 					cfg,
 					"You score business subjects 0-100. Output ONLY an integer, nothing else.",
-					`Rubric: ${rubric}\nSubject: ${preview(subject)}\nScore 0-100:`,
+					`Rubric: ${rubric}\nSubject: ${modelInput(subject, 4000)}\nScore 0-100:`,
 				);
 				const n = Number.parseInt(out.replace(/[^0-9]/g, " ").trim().split(/\s+/)[0] ?? "", 10);
 				if (Number.isNaN(n)) throw new Error("non-numeric score");
@@ -204,7 +230,7 @@ function realAI(cfg: CapabilityConfig): CapabilityTree {
 				return await aiComplete(
 					cfg,
 					`You summarize data for a busy operator. Style: ${style}. Output the summary text only.`,
-					preview(items).slice(0, 4000),
+					modelInput(items),
 				);
 			} catch {
 				return simSummarize(items);
@@ -216,7 +242,7 @@ function realAI(cfg: CapabilityConfig): CapabilityTree {
 				return await aiComplete(
 					cfg,
 					`You write a ${labelOf(kind)} for a busy operator. Tone: ${labelOf(o.tone ?? "warm, brief")}. Output the text only.`,
-					`Context: ${preview(o.context ?? "none")}`,
+					`Context: ${modelInput(o.context ?? "none")}`,
 				);
 			} catch {
 				return `Drafted ${labelOf(kind)} — warm, brief, ready to review (simulated).`;
@@ -241,7 +267,7 @@ interface BrokerCallResponse {
 function realIntegrations(cfg: CapabilityConfig): CapabilityTree {
 	const call: CapabilityFn = async (platform: unknown, action: unknown, params?: unknown) => {
 		if (!cfg.brokerUrl || !cfg.brokerToken) {
-			throw new Error("integrations are not connected on this host (set WUPHF_BROKER_URL and WUPHF_BROKER_TOKEN)");
+			throw new Error("your integrations are not connected yet, so this step could not run — connect them from the agent's Integrations tab and try again");
 		}
 		const fetchFn = cfg.fetch ?? fetch;
 		// Run signal + timeout in one signal: a settled tool run aborts the fetch.
@@ -281,10 +307,95 @@ function realIntegrations(cfg: CapabilityConfig): CapabilityTree {
 // Real nex.browser — the broker's cua engine, SSE. Gated at the agent layer.
 // ---------------------------------------------------------------------------
 
+// realData binds data.* to the app's OWN backing store via the broker's
+// op-dispatched POST/GET /apps/{id}/db endpoint (define|upsert|query|clear).
+// This is what makes an authored tool operate on the SAME rows the app persists
+// and the Data tab renders — deals, tickets, candidates, products — instead of
+// the empty simulation. Only overlaid when a broker AND an appId are configured.
+function realData(cfg: CapabilityConfig): CapabilityTree {
+	const base = (cfg.brokerUrl ?? "").replace(/\/$/, "");
+	const appId = cfg.appId ?? "";
+	const dbCall = async (op: string, extra: Record<string, unknown>): Promise<{ table?: { rows?: unknown[] } }> => {
+		const fetchFn = cfg.fetch ?? fetch;
+		const deadline = deadlineSignal(currentRunSignal(), cfg.callTimeoutMs ?? DEFAULT_CAP_TIMEOUT_MS, {
+			timeoutMessage: "data capability timed out",
+			abortFallback: "tool run settled",
+		});
+		try {
+			const res = await fetchFn(`${base}/apps/${encodeURIComponent(appId)}/db`, {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					authorization: `Bearer ${cfg.brokerToken}`,
+				},
+				body: JSON.stringify({ op, ...extra }),
+				signal: deadline.signal,
+			});
+			if (!res.ok) throw new Error(`data ${op} failed (${res.status})`);
+			return (await res.json()) as { table?: { rows?: unknown[] } };
+		} finally {
+			deadline.done();
+		}
+	};
+	// A query against a table that does not exist yet is "no records", not an
+	// error — the honest empty answer, so list/get never crash a fresh app.
+	const rowsOf = async (collection: unknown): Promise<Record<string, unknown>[]> => {
+		try {
+			const body = await dbCall("query", { table: String(collection) });
+			const rows = body.table?.rows;
+			return Array.isArray(rows) ? (rows as Record<string, unknown>[]) : [];
+		} catch {
+			return [];
+		}
+	};
+	return {
+		list: async (collection: unknown) => rowsOf(collection),
+		get: async (collection: unknown, id: unknown) => {
+			const rows = await rowsOf(collection);
+			const key = String(id);
+			return rows.find((r) => String(r.id) === key) ?? null;
+		},
+		upsert: async (collection: unknown, record: unknown) => {
+			const row = record && typeof record === "object" && !Array.isArray(record) ? (record as Record<string, unknown>) : { value: record };
+			await dbCall("upsert", { table: String(collection), rows: [row], key: "id" });
+			return `Saved to ${String(collection)}.`;
+		},
+	};
+}
+
+// fetchAppSchema GETs the app's real table schema (names + columns) from the
+// broker so the tool author can steer an authored tool onto the SAME tables the
+// app already uses. Returns a compact one-line-per-table string, or "" when
+// there is no broker/app or the app has no tables yet. Best-effort: never throws.
+export async function fetchAppSchema(cfg: CapabilityConfig): Promise<string> {
+	if (!cfg.brokerUrl || !cfg.brokerToken || !cfg.appId) return "";
+	const base = cfg.brokerUrl.replace(/\/$/, "");
+	const fetchFn = cfg.fetch ?? fetch;
+	try {
+		const res = await fetchFn(`${base}/apps/${encodeURIComponent(cfg.appId)}/db`, {
+			headers: { authorization: `Bearer ${cfg.brokerToken}` },
+		});
+		if (!res.ok) return "";
+		const body = (await res.json()) as { tables?: { name?: string; columns?: { name?: string }[] }[] };
+		const tables = Array.isArray(body.tables) ? body.tables : [];
+		const lines = tables
+			// Meta is app-owned control state (the derive marker), not a data table
+			// a tool should read — leave it out of the author's schema view.
+			.filter((t) => (t.name ?? "").trim() && (t.name ?? "").toLowerCase() !== "meta")
+			.map((t) => {
+				const cols = Array.isArray(t.columns) ? t.columns.map((c) => (c.name ?? "").trim()).filter(Boolean) : [];
+				return `- ${t.name}(${cols.join(", ")})`;
+			});
+		return lines.join("\n");
+	} catch {
+		return "";
+	}
+}
+
 function realBrowser(cfg: CapabilityConfig): CapabilityFn {
 	return async (goal: unknown) => {
 		if (!cfg.brokerUrl || !cfg.brokerToken) {
-			throw new Error("browser execution is not configured on this host (set WUPHF_BROKER_URL and WUPHF_BROKER_TOKEN)");
+			throw new Error("browser runs are not set up on this workspace yet, so this step could not run");
 		}
 		const fetchFn = cfg.fetch ?? fetch;
 		// Run signal + timeout in one signal, held open across the SSE STREAM (the
@@ -365,10 +476,15 @@ export function buildCapabilities(cfg: CapabilityConfig = {}): CapabilityTree {
 	if (cfg.brokerUrl && cfg.brokerToken) {
 		nex.browser = realBrowser(cfg);
 		tree.integrations = realIntegrations(cfg);
+		// Bind data.* to the app's real store when we know which app we are
+		// running for; without an appId it stays the honest empty simulation.
+		if (cfg.appId) {
+			tree.data = realData(cfg);
+		}
 	} else {
 		tree.integrations = {
 			call: async () => {
-				throw new Error("integrations are not connected on this host (set WUPHF_BROKER_URL and WUPHF_BROKER_TOKEN)");
+				throw new Error("your integrations are not connected yet, so this step could not run — connect them from the agent's Integrations tab and try again");
 			},
 		};
 	}

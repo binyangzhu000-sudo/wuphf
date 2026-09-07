@@ -54,7 +54,7 @@ func TestProcessDueWorkflowJobUsesComposioProvider(t *testing.T) {
 	})
 	mux.HandleFunc("/api/developers/v1/context/ask", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"answer": "Executive Summary\n- Digest generated.\n\nWhy This Matters\n- It keeps the office current.\n\nWhat To Do Next\n- Read the highlights.\n\nEmail Highlights\n- support@example.com | Digest source email\n\nRelevant Nex Insights\n- Insight included.",
+			"answer": "Executive Summary\n- Digest generated.\n\nWhy This Matters\n- It keeps the team current.\n\nWhat To Do Next\n- Read the highlights.\n\nEmail Highlights\n- support@example.com | Digest source email\n\nRelevant Nex Insights\n- Insight included.",
 		})
 	})
 	mux.HandleFunc("/api/developers/v1/insights", func(w http.ResponseWriter, r *http.Request) {
@@ -94,15 +94,9 @@ func TestProcessDueWorkflowJobUsesComposioProvider(t *testing.T) {
 				},
 			},
 			{
-				"id":             "recent_insights",
-				"type":           "nex_insights",
-				"lookback_hours": "{{ .inputs.window_hours }}",
-				"insight_limit":  "{{ .inputs.insight_limit }}",
-			},
-			{
-				"id":             "compose_digest",
-				"type":           "nex_ask",
-				"query_template": "Build a digest email with Executive Summary, Why This Matters, What To Do Next, Email Highlights, and Relevant Nex Insights. Emails: {{ toJSON .steps.fetch_emails.response.data.messages }} Insights: {{ toJSON .steps.recent_insights.insights }}",
+				"id":       "compose_digest",
+				"type":     "template",
+				"template": "Executive Summary\n\nWhy This Matters\n\nEmails: {{ toJSON .steps.fetch_emails.response.data.messages }}",
 			},
 			{
 				"id":             "send_email",
@@ -113,7 +107,7 @@ func TestProcessDueWorkflowJobUsesComposioProvider(t *testing.T) {
 				"data": map[string]any{
 					"recipient_email": "{{ .inputs.recipient_email }}",
 					"subject":         "{{ .inputs.subject }}",
-					"body":            "{{ .steps.compose_digest.answer }}",
+					"body":            "{{ .steps.compose_digest.result }}",
 				},
 			},
 		},
@@ -140,16 +134,16 @@ func TestProcessDueWorkflowJobUsesComposioProvider(t *testing.T) {
 		"workflow_key":  "daily-digest",
 		"inputs":        map[string]any{},
 		"schedule_expr": "daily",
-		"channel":       "general",
+		"channel":       "team",
 		"skill_name":    "daily-digest",
 	})
 	job := schedulerJob{
-		Slug:         "composio-workflow:general:daily-digest",
+		Slug:         "composio-workflow:team:daily-digest",
 		Kind:         "composio_workflow",
 		Label:        "Run Daily Digest",
 		TargetType:   "workflow",
 		TargetID:     "daily-digest",
-		Channel:      "general",
+		Channel:      "team",
 		Provider:     "composio",
 		ScheduleExpr: "daily",
 		WorkflowKey:  "daily-digest",

@@ -17,7 +17,7 @@ import { TaskDescription } from "./TaskDescription";
 //     literal text out of the body either way; the embed simply degrades to
 //     nothing visible.
 //
-//  4. Multiple markers embed in document order so the agent can interleave
+//  4. Multiple markers embed in document order so the bot can interleave
 //     several artifacts without the FE collapsing them.
 
 const DRAFT_DETAIL = (
@@ -32,7 +32,7 @@ const DRAFT_DETAIL = (
     trustLevel: "draft",
     representation: "html",
     htmlPath: `wiki/visual-artifacts/${id}.html`,
-    createdBy: "ceo",
+    createdBy: "cos",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     contentHash: `hash-${id}`,

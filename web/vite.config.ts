@@ -19,15 +19,15 @@ const proxyTarget =
 
 const proxyEntry = { target: proxyTarget, changeOrigin: true };
 
-// The pi-mono build agent (agent/ service). Its /tools/build endpoint authors the
+// The pi-mono build bot (bot/ service). Its /tools/build endpoint authors the
 // tools the app's chat calls. Overridable so a worktree can point at its own
-// agent; defaults to the agent dev port (8820). The /agent prefix is stripped so
+// bot; defaults to the bot dev port (8820). The /bot prefix is stripped so
 // the service sees /tools/build.
-const agentTarget =
+const botTarget =
   process.env.WUPHF_AGENT_TARGET ||
   `http://127.0.0.1:${process.env.WUPHF_AGENT_PORT || "8820"}`;
-const agentEntry = {
-  target: agentTarget,
+const botEntry = {
+  target: botTarget,
   changeOrigin: true,
   rewrite: (p: string) => p.replace(/^\/agent/, ""),
 };
@@ -47,7 +47,15 @@ export default defineConfig({
       "/api": proxyEntry,
       "/api-token": proxyEntry,
       "/onboarding": proxyEntry,
-      "/agent": agentEntry,
+      // Anchored regex, NOT the bare "/bot" string. Vite proxy keys are
+      // prefix matches, so "/bot" also swallowed "/bots" — the app's
+      // own route — and hitting http://localhost:PORT/bots in dev
+      // returned the bot service's {"error":"not found"} instead of the
+      // SPA. Production was always fine (the Go server serves the SPA for
+      // unknown paths), so this only ever broke dev, quietly.
+      // The lookahead keeps /bot and /bot/... matching while leaving
+      // /bots, /bot-logs and friends to the SPA fallback.
+      "^/agent(?=/|$)": botEntry,
     },
   },
   build: {
@@ -57,6 +65,27 @@ export default defineConfig({
   test: {
     environment: "happy-dom",
     globals: true,
+    // Same failure family as the stubbed `fetch` and the disabled
+    // `EventSource` in tests/setup.ts: a handle that outlives the test and
+    // keeps the worker pool alive. Those two cover the global fetch and SSE
+    // paths, but happy-dom loads SUBRESOURCES through its own internal HTTP
+    // client, which neither stub can reach. An <iframe src="http://..."> is
+    // therefore a real socket. CustomAppFrame.sandbox.test.tsx renders one
+    // pointing at localhost:5599 purely to assert the `sandbox` attribute —
+    // it never needs the frame to load — and with nothing listening there
+    // the connection kept the pool open. The file passed alone and stalled
+    // the full run, which is what made "the suite is green" unverifiable.
+    // Turned off at the environment level rather than in the test so the
+    // next iframe/script/stylesheet test cannot reintroduce it.
+    environmentOptions: {
+      happyDOM: {
+        settings: {
+          disableIframePageLoading: true,
+          disableJavaScriptFileLoading: true,
+          disableCSSFileLoading: true,
+        },
+      },
+    },
     setupFiles: ["./tests/setup.ts"],
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
     // Hard timeouts so a runaway test/teardown fails the suite instead of

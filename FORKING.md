@@ -15,35 +15,19 @@ git checkout v0.0.2.0   # or the latest tag: git describe --tags --abbrev=0
 git checkout -b your-fork
 ```
 
-## 1. Run it without Nex (read-only, no vendor coupling)
+## 1. No vendor coupling to remove
 
-WUPHF ships with optional Nex context graph integration. If you want a clean, vendor-free baseline:
+Earlier versions shipped an optional hosted context-graph integration and a
+`--no-nex` flag to switch it off. That integration is gone: nothing in this
+runtime calls a first-party hosted service, so a fresh fork is already
+vendor-free with no edits and no flags.
 
-```bash
-./wuphf --no-nex
-```
+`--no-nex` is still accepted so existing scripts and launchers keep starting,
+but it suppresses nothing.
 
-That's the whole fix. The `--no-nex` flag skips all Nex wiring at startup. No code edits needed.
-
-If you want Nex gone from your fork entirely, there are four integration points to remove:
-
-```bash
-# 1. Delete the Nex MCP server (if present)
-rm -f mcp/nex*
-
-# 2. Delete the Nex API client
-rm internal/action/nex_client.go
-
-# 3. Remove the nex-mcp lookPath blocks (2 places)
-#    internal/team/launcher.go      ~ line 3069  (search: nex-mcp)
-#    internal/team/headless_codex.go ~ line 555   (search: nex-mcp)
-
-# 4. Remove nex types from launcher context
-#    internal/team/launcher.go ~ line 55   (nexFeedItemContentItem)
-#    internal/team/launcher.go ~ line 1489 (selectImportantInsights / nexInsight)
-```
-
-Then in `cmd/wuphf/main.go`: delete the `--no-nex` flag and the import blocks that reference `nex`. The `ResolveNoNex()` calls in `cmd/wuphf/channel.go` and `internal/config/config.go` can be deleted or replaced with a constant `true`.
+Third-party integrations that remain are opt-in and use your own credentials:
+Composio (`COMPOSIO_API_KEY`), Telegram, Slack, and OpenClaw. None of them are
+required to run the office.
 
 ## 2. Strip the Office branding
 
@@ -55,7 +39,7 @@ WUPHF uses *The Office* (US) references throughout the UI and copy. If you're sh
 | `web/index.html` | Any "WUPHF" branding in the office UI |
 | `cmd/wuphf/channel.go` | Welcome messages, slash command copy |
 | `cmd/wuphf/channel_render.go` | Office-themed status lines |
-| `internal/team/template.go` | Agent prompt templates that reference Office tone |
+| `internal/team/template.go` | Bot prompt templates that reference Office tone |
 | `internal/teammcp/actions.go` | Action descriptions |
 
 A fast pass scoped to source files only:
@@ -86,7 +70,7 @@ If you rename the module in `go.mod`, rewrite all import paths in one pass:
 find . -name '*.go' | xargs sed -i 's|github.com/nex-crm/wuphf|github.com/your-org/your-fork|g'
 ```
 
-## 3. Add your own agent pack
+## 3. Add your own bot pack
 
 Packs live in Go (`internal/agent/packs.go`) as a static slice. Not YAML — yet. Recompile after editing.
 
@@ -118,7 +102,7 @@ go build -o wuphf ./cmd/wuphf
 ./wuphf --pack my-team
 ```
 
-Permissions: `plan` means every tool call needs human approval in the Requests panel. `auto` lets the agent run but you can scope with `AllowedTools` (see existing `starter` pack for examples).
+Permissions: `plan` means every tool call needs human approval in the Requests panel. `auto` lets the bot run but you can scope with `AllowedTools` (see existing `starter` pack for examples).
 
 ## 4. Swap the action layer
 
@@ -139,7 +123,7 @@ goreleaser release --clean
 
 - **Broker push model.** It's the architectural spine. Replacing it means rewriting the project.
 - **Per-turn fresh sessions.** This is the reason for the benchmark win. If you switch to `--resume`, you lose the 9× cost advantage.
-- **Git worktree isolation.** Each agent works in its own branch. Removing this means agents share a working directory and can corrupt each other's in-progress files.
+- **Git worktree isolation.** Each bot works in its own branch. Removing this means bots share a working directory and can corrupt each other's in-progress files.
 
 Fork anything above the broker freely. Fork the broker and you're building a different project.
 

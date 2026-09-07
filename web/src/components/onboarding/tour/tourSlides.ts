@@ -3,7 +3,7 @@
  *
  * This module owns the slide CONTRACT and the slide COPY. The modal host
  * (`OfficeTour.tsx`) and the four slide components (`SlideIntro`,
- * `SlideAgents`, `SlideIssues`, `SlideWiki`, authored by a sibling task)
+ * `SlideBots`, `SlideIssues`, `SlideWiki`, authored by a sibling task)
  * both conform to the types and ids declared here so neither side can
  * drift from the other.
  *
@@ -12,7 +12,7 @@
  * a headline means editing this file, not hunting through JSX.
  */
 
-/** Ordered slide ids. The tour always runs intro → agents → issues → wiki. */
+/** Ordered slide ids. The tour always runs intro → bots → issues → wiki. */
 export type OfficeTourSlideId = "intro" | "agents" | "issues" | "wiki";
 
 /**
@@ -43,7 +43,7 @@ export const OFFICE_TOUR_SLIDE_IDS: OfficeTourSlideId[] = [
  * Per-slide copy. `eyebrow` is the small caps kicker above the headline
  * (the intro slide has none). `caption` is the short instructional line under
  * the body that tells the user what the slide's visual is showing them; not
- * every slide needs one. All strings are WUPHF voice: no em-dashes, no
+ * every slide needs one. All strings are gawkbot voice: no em-dashes, no
  * contractions, Oxford comma. Verbatim from spec section 6.
  */
 export const OFFICE_TOUR_COPY: Record<
@@ -60,28 +60,28 @@ export const OFFICE_TOUR_COPY: Record<
     // `lead` is the CEO hand-off line. The tour opens as a continuation of the
     // onboarding chat you just finished, so it reads as one arc rather than a
     // second, separate intro: the CEO walks you into your new office.
-    lead: "Your office is ready. Let me show you around.",
-    headline: "This is your office.",
-    body: "A team of agents lives here. They claim work, they ship, and they actually answer your messages.",
+    lead: "Your team is ready. Let me show you around.",
+    headline: "This is your team.",
+    body: "A team of bots lives here. They claim work, they ship, and they actually answer your messages.",
     caption:
       "This mock office assembles itself on the right. Yours is already real, one panel over.",
   },
   agents: {
     eyebrow: "MEET THE TEAM",
     headline: "Your team, on the clock.",
-    body: "Every agent has a role, a heartbeat that keeps it checking in, and a memory that does not reset. Unlike Ryan Howard, they actually ship.",
+    body: "Every bot has a role, a heartbeat that keeps it checking in, and a memory that does not reset. They notice things you did not ask them to notice.",
   },
   issues: {
     eyebrow: "FILE AN ISSUE",
     headline: "File it. They ship it.",
-    body: "Mention an agent with @, hand off a problem, and the work fans out into tasks across the team while you watch.",
+    body: "Mention a bot with @, hand off a problem, and the work fans out into tasks across the team while you watch.",
     caption:
-      "Watch one message fan out into a task per agent, then land back in a channel you can see.",
+      "Watch one message fan out into a task per bot, then land back in a channel you can see.",
   },
   wiki: {
     eyebrow: "YOUR CONTEXT GRAPH",
     headline: "Write it once. The whole office knows.",
-    body: "Your company brain holds the rules your agents run on. Agents read it as first-class citizens, so context you capture once never has to be repeated.",
+    body: "Your company brain holds the rules your bots run on. Bots read it as first-class citizens, so context you capture once never has to be repeated.",
   },
 };
 
@@ -93,11 +93,11 @@ export const OFFICE_TOUR_COPY: Record<
  * unavailable or motion is reduced. Verbatim from spec section 6.
  */
 export const OFFICE_TOUR_LABELS = {
-  dialog: "A quick tour of your office",
+  dialog: "A quick tour of your team",
   skip: "Skip the tour",
   next: "Next",
   back: "Back",
   finish: "Write your first issue",
   transitionFallback: "Setting up the next room of the tour.",
-  replay: "Replay the office tour",
+  replay: "Replay the team tour",
 } as const;

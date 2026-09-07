@@ -19,19 +19,27 @@ export function appTitle(app: string): string {
 }
 
 /**
- * Roster slug of the built-in App Builder agent (mirrors
+ * Roster slug of the built-in App Builder bot (mirrors
  * company.AppBuilderSlug / team's appBuilderSlug on the Go side). Tasks owned
  * by this slug get the live app-build preview surface.
  */
 export const APP_BUILDER_SLUG = "app-builder";
 
+/**
+ * The lead's roster slug. The DISPLAY name is "Chief of Staff"; the slug stays
+ * "cos" because it is an identifier that owns DMs (cos__human), task
+ * ownership, and message history on existing disks. Rename the copy, never
+ * the slug.
+ */
+export const CHIEF_OF_STAFF_SLUG = "cos";
+
 export const ONBOARDING_COPY = {
   step1_headline: "AI employees with a shared brain",
   step1_subhead:
-    "A collaborative office where AI agents like Claude Code, Codex, and Opencode learn your work playbooks, build personalized skills, and execute, 24x7.\nEach agent is backed by its own knowledge graph.",
+    "A collaborative office where AI bots like Claude Code, Codex, and Opencode learn your work playbooks, build personalized skills, and execute, 24x7.\nEach bot is backed by its own knowledge graph.",
   step1_cta: "Continue",
-  step2_headline: "Name your office",
-  step2_subhead: "This becomes the workspace your agents call home.",
+  step2_headline: "Name your team",
+  step2_subhead: "This becomes the workspace your bots call home.",
   step2_cta: "Continue",
   step3_headline: "Pick a blueprint",
   step3_subhead: "Pre-built teams and workflows. Start here, customize later.",
@@ -42,7 +50,7 @@ export const ONBOARDING_COPY = {
   step4_cta: "Continue",
   step5_headline: "Connect a provider",
   step5_subhead:
-    "Pick one or more providers your agents can use. Drag to set fallback order.",
+    "Pick one or more providers your bots can use. Drag to set fallback order.",
   step5_cta: "Continue",
   step6_headline: "Power up with Nex",
   step6_subhead:
@@ -62,3 +70,22 @@ export const DISCONNECT_THRESHOLD = 3;
 export const MESSAGE_POLL_INTERVAL = 2000;
 export const MEMBER_POLL_INTERVAL = 5000;
 export const REQUEST_POLL_INTERVAL = 3000;
+
+/**
+ * Named-channel retirement, web half.
+ *
+ * Conversations are moving to per-bot DMs, so ordinary named rooms (#product,
+ * #planning, anything a human creates) are switched off. This constant hides
+ * the affordance; the broker independently 409s the create call, so the two are
+ * belt and braces rather than one guard split across a wire.
+ *
+ * MIRRORS internal/channel/general.go's namedChannelsEnabled. There is no wire
+ * field carrying it, so THESE TWO CAN DRIFT — if you flip one, flip the other.
+ * A stale `true` here shows a button that fails with a 409, which is ugly but
+ * honest; a stale `false` hides a working feature, which is worse. Prefer
+ * flipping the web one last when enabling, first when disabling.
+ *
+ * Typed `boolean` rather than left to literal inference so the disabled branch
+ * stays live code for the type checker.
+ */
+export const NAMED_CHANNELS_ENABLED: boolean = false;

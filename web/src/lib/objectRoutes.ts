@@ -77,7 +77,7 @@ export function resolveObjectRoute(ref: ObjectRef): ObjectRouteResolution {
       if (!ref.slug) return missingIdFallback("slug", "agent");
       return {
         href: `#/agents/${encodeURIComponent(ref.slug)}`,
-        label: `Agent: ${ref.slug}`,
+        label: `Bot: ${ref.slug}`,
         appAction: { app: "agents", channel: ref.slug },
       };
     }
@@ -108,7 +108,7 @@ export function resolveObjectRoute(ref: ObjectRef): ObjectRouteResolution {
       const encodedPath = ref.path.split("/").map(encodeURIComponent).join("/");
       return {
         href: `#/wiki/${encodedPath}`,
-        label: `Company Brain: ${ref.path}`,
+        label: `Wiki: ${ref.path}`,
         appAction: { app: "wiki" },
       };
     }

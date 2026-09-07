@@ -27,6 +27,14 @@ import {
   useArtifactSkeletonTrigger,
 } from "./ArtifactSkeleton";
 import {
+  ConsultRelayMarker,
+  parseConsultRelayPayload,
+} from "./cards/ConsultRelayMarker";
+import {
+  HumanRequestCard,
+  parseHumanRequestRaisedPayload,
+} from "./cards/HumanRequestCard";
+import {
   parseSystemAuthErrorPayload,
   SystemErrorCard,
 } from "./cards/SystemErrorCard";
@@ -83,7 +91,15 @@ export function MessageBubble({
   channel,
 }: MessageBubbleProps) {
   const routeChannel = useChannelSlug();
-  const currentChannel = channel ?? routeChannel ?? "general";
+  // A bubble's channel comes from the MESSAGE it renders before it comes from
+  // the URL, and never from a "general" default. The old
+  // `channel ?? routeChannel ?? "general"` is two bugs: `??` is nullish, so an
+  // empty string passed through, and the tail sent reactions to #general from
+  // any surface where useChannelSlug() is null — which already happened once
+  // on the task-detail chat (see TaskChannelChat's comment). message.channel
+  // is a required field, so this is also strictly more correct than the URL.
+  const currentChannel =
+    channel?.trim() || message.channel?.trim() || routeChannel?.trim() || "";
   // When the chat is rendered inside a task-detail route, this is that
   // task's id. Task-pointer cards (created / lifecycle) use it to detect a
   // self-reference: a card pointing at the very task you are already viewing
@@ -91,12 +107,15 @@ export function MessageBubble({
   // dispatch below). Null on every non-task-detail surface.
   const currentTaskId = useCurrentTaskId();
   const { data: members = [] } = useOfficeMembers();
-  const setActiveAgentSlug = useAppStore((s) => s.setActiveAgentSlug);
+  const setActiveBotSlug = useAppStore((s) => s.setActiveBotSlug);
   const isHuman =
     message.from === "you" ||
     message.from === "human" ||
     message.from.startsWith("human:");
-  const isLocalUser = message.from === "you";
+  // A bare "human" sender is the person at this keyboard (onboarding seeds
+  // and single-person offices post as "human"); only "human:<slug>" names a
+  // different team member.
+  const isLocalUser = message.from === "you" || message.from === "human";
   const teamMemberDisplayName =
     isHuman && !isLocalUser
       ? message.from.startsWith("human:")
@@ -105,8 +124,24 @@ export function MessageBubble({
         : "Human"
       : null;
   const agent = members.find((m) => m.slug === message.from);
+  // A sender that is neither the human nor anyone on the roster is not an
+  // bot, and must not be dressed as one.
+  //
+  // The broker posts a handful of messages as "system" (a delivery landing, an
+  // onboarding welcome, a runtime error). Because the check above only asks
+  // "is this the human?", every one of them fell through to the bot branch
+  // and rendered as a colleague: a generated pixel face, an author line reading
+  // literally "system", and a button opening a bot profile panel for an
+  // bot that does not exist. The office appeared to contain a teammate
+  // nobody hired.
+  //
+  // Those senders are being removed at the source, but this is the safety net:
+  // whatever the broker sends, the UI must never invent a teammate out of an
+  // unknown slug.
+  const isSyntheticSender = !(isHuman || agent);
+  const isRosterBot = !isHuman && Boolean(agent);
   const defaultHarness = useDefaultHarness();
-  const harness = !isHuman
+  const harness = isRosterBot
     ? resolveHarness(agent?.provider, defaultHarness)
     : null;
 
@@ -119,7 +154,7 @@ export function MessageBubble({
         }))
     : [];
 
-  // SECURITY: agent messages render through ReactMarkdown with a remark and
+  // SECURITY: bot messages render through ReactMarkdown with a remark and
   // components pipeline (../../lib/messageMarkdown). ReactMarkdown's default
   // urlTransform strips javascript:/vbscript:/data: URIs; the anchor renderer
   // adds a second-layer scheme allowlist. The legacy regex-based formatMarkdown
@@ -128,7 +163,7 @@ export function MessageBubble({
   // durable: react-markdown is a battle-tested mdast pipeline, and the
   // dedicated XSS test file web/src/lib/messageMarkdown.test.tsx (23 tests)
   // covers javascript:/data:/vbscript:, image src, GFM autolinks, and raw
-  // HTML. Local-LLM agent content (mlx-lm, ollama, exo) flows through the
+  // HTML. Local-LLM bot content (mlx-lm, ollama, exo) flows through the
   // same path so the XSS posture applies uniformly. Human input takes the
   // safe ReactNode path via renderMentions.
   const messageText = message.content || "";
@@ -142,7 +177,7 @@ export function MessageBubble({
   );
 
   // Turn human text like "@pm when are you free?" into mention chips for
-  // registered agent slugs. Non-agent @-references stay plain text. The
+  // registered bot slugs. Non-bot @-references stay plain text. The
   // memo keys on content + the slug list so rapid renders don't re-parse.
   const knownSlugs = useMemo(() => members.map((m) => m.slug), [members]);
   const humanRendered = useMemo(
@@ -151,7 +186,7 @@ export function MessageBubble({
   );
 
   // Skeletal loader between "gist" message and the eventual visual-artifact
-  // card. Only candidates: agent-authored top-level messages (not replies,
+  // card. Only candidates: bot-authored top-level messages (not replies,
   // not humans). We subscribe to the channel feed + a coarse ticker so the
   // skeleton ages out (60s window) without waiting for the next refetch.
   const skeletonCandidate = !(
@@ -176,9 +211,30 @@ export function MessageBubble({
     return <div className="message-status animate-fade">{statusText}</div>;
   }
 
+  // Consult relay: your bot messaged another bot, or heard back. Rendered
+  // as a centered divider, never as a bubble — it has no author, because
+  // nobody said it. Derived server-side from the real bot-to-bot message
+  // (internal/team/broker_consult_relay.go), so it cannot be faked by a bot
+  // claiming a consult it never had.
+  // Seed markers for the bots (which operation was synthesized, and the
+  // run-it-for-real contract) are context for the bot, not conversation.
+  // They stay in the channel history the bot reads and never render as
+  // an "Office" speaker.
+  if (
+    message.kind === "synthesized_blueprint" ||
+    message.kind === "from_scratch_contract"
+  ) {
+    return null;
+  }
+  if (message.kind === "consult_relay") {
+    return (
+      <ConsultRelayMarker payload={parseConsultRelayPayload(message.payload)} />
+    );
+  }
+
   // Issue #933: system-authored auth-failure card. Renders OUTSIDE the
   // standard message-bubble container so it's visually distinct from
-  // agent chat — banner-style with a sign-in CTA rather than an avatar +
+  // bot chat — banner-style with a sign-in CTA rather than an avatar +
   // speech bubble. The broker emits these in place of the legacy
   // agent_issue bubble when a provider returns "Not logged in".
   if (message.kind === "system_auth_error") {
@@ -189,7 +245,7 @@ export function MessageBubble({
   // System-authored issue card. Broker emits one per team_task
   // action=create with task_type=issue. Renders OUTSIDE the standard
   // message-bubble so it visually reads as a system event, not an
-  // agent line — same pattern as SystemErrorCard.
+  // bot line — same pattern as SystemErrorCard.
   if (message.kind === "issue_created") {
     const payload = parseTaskCreatedPayload(message.payload);
     // Suppress the card entirely when it points at the task whose channel
@@ -202,7 +258,7 @@ export function MessageBubble({
 
   // PR-style Issue comment card. Broker emits one per
   // POST /tasks/{id}/comment with a brief instructional content the
-  // agent loop wakes on; the card body shows the actual comment as a
+  // bot loop wakes on; the card body shows the actual comment as a
   // distinct chat surface so the human's question on the Issue does
   // not look like a free-form chat ask.
   if (message.kind === "issue_comment") {
@@ -224,6 +280,18 @@ export function MessageBubble({
     return <TaskLifecycleCard payload={payload} sameTask={sameTask} />;
   }
 
+  // A bot's blocking ask, rendered as an interactive card in the thread —
+  // the options as real buttons, answered in place. Rendered OUTSIDE the
+  // standard message-bubble so it carries no author row: the wire message is
+  // sent by "system" (so it cannot wake other bots) and a byline would print
+  // a phantom "Office" speaker. The card names the real asker instead.
+  if (message.kind === "human_request_raised") {
+    const payload = parseHumanRequestRaisedPayload(message.payload);
+    return (
+      <HumanRequestCard payload={payload} fallbackText={message.content} />
+    );
+  }
+
   // Wiki surface card. Broker emits this in #general when a new wiki
   // article is created; the card is a clickable banner that routes to
   // the underlying wiki article.
@@ -237,19 +305,21 @@ export function MessageBubble({
       className={`message animate-fade${grouped ? " message-grouped" : ""}${isReply ? " message-reply" : ""}`}
       data-msg-id={message.id}
       // Precise author selectors so e2e specs can filter without parsing
-      // textContent. `data-author-kind` is "human" | "agent"; `data-author-slug`
-      // carries the raw `from` (e.g. "you", "human", or an agent slug like "planner").
-      data-author-kind={isHuman ? "human" : "agent"}
+      // textContent. `data-author-kind` is "human" | "bot"; `data-author-slug`
+      // carries the raw `from` (e.g. "you", "human", or a bot slug like "planner").
+      data-author-kind={
+        isHuman ? "human" : isSyntheticSender ? "system" : "agent"
+      }
       data-author-slug={message.from}
     >
       {/* Avatar */}
-      {!isHuman ? (
+      {isRosterBot ? (
         <button
           type="button"
           className="message-avatar avatar-with-harness message-avatar-btn"
-          data-agent-slug={message.from}
-          aria-label={`Open agent panel for ${agent?.name || message.from}`}
-          onClick={() => setActiveAgentSlug(message.from)}
+          data-bot-slug={message.from}
+          aria-label={`Open bot panel for ${agent?.name || message.from}`}
+          onClick={() => setActiveBotSlug(message.from)}
         >
           <PixelAvatar slug={message.from} size={24} />
           {harness ? (
@@ -270,11 +340,13 @@ export function MessageBubble({
             fontWeight: 600,
           }}
         >
-          {isLocalUser
-            ? "You"
-            : teamMemberDisplayName
-              ? teamMemberDisplayName.slice(0, 1).toUpperCase()
-              : null}
+          {isSyntheticSender
+            ? null
+            : isLocalUser
+              ? "You"
+              : teamMemberDisplayName
+                ? teamMemberDisplayName.slice(0, 1).toUpperCase()
+                : null}
         </div>
       )}
 
@@ -282,21 +354,23 @@ export function MessageBubble({
       <div className="message-content">
         {/* Header */}
         <div className="message-header">
-          {!isHuman ? (
+          {isRosterBot ? (
             <button
               type="button"
               className="message-author message-author-btn"
-              data-agent-slug={message.from}
-              aria-label={`Open agent panel for ${agent?.name || message.from}`}
-              onClick={() => setActiveAgentSlug(message.from)}
+              data-bot-slug={message.from}
+              aria-label={`Open bot panel for ${agent?.name || message.from}`}
+              onClick={() => setActiveBotSlug(message.from)}
             >
               {agent?.name || message.from}
             </button>
           ) : (
             <span className="message-author">
-              {isLocalUser
-                ? "You"
-                : teamMemberDisplayName || agent?.name || message.from}
+              {isSyntheticSender
+                ? "Office"
+                : isLocalUser
+                  ? "You"
+                  : teamMemberDisplayName || agent?.name || message.from}
             </span>
           )}
           {isHuman ? (
@@ -310,7 +384,7 @@ export function MessageBubble({
         </div>
 
         {/* Text — humans render mention chips via safe ReactNode children;
-            agent messages render through ReactMarkdown (no raw HTML). */}
+            bot messages render through ReactMarkdown (no raw HTML). */}
         <MessageBodyText
           isHuman={isHuman}
           renderedText={renderedText}
@@ -338,6 +412,15 @@ export function MessageBubble({
                 key={r.emoji}
                 className="reaction-pill"
                 onClick={() => {
+                  // No channel means no room to react in. Say so rather than
+                  // posting the reaction into whatever #general resolves to.
+                  if (!currentChannel) {
+                    showNotice(
+                      "This message has no channel, so the reaction has nowhere to go.",
+                      "error",
+                    );
+                    return;
+                  }
                   toggleReaction(message.id, r.emoji, currentChannel).catch(
                     (e: Error) =>
                       showNotice(`Reaction failed: ${e.message}`, "error"),

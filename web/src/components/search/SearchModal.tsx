@@ -31,7 +31,7 @@ function navigateToWikiArticle(path: string): void {
 
 interface PaletteItem {
   id: string;
-  group: "Channels" | "Agents" | "Commands" | "Messages" | "Company Brain";
+  group: "Channels" | "Bots" | "Commands" | "Messages" | "Wiki";
   icon: string;
   label: string;
   desc?: string;
@@ -76,7 +76,7 @@ function prettyWikiPath(path: string): string {
 export function SearchModal() {
   const searchOpen = useAppStore((s) => s.searchOpen);
   const setSearchOpen = useAppStore((s) => s.setSearchOpen);
-  const setActiveAgentSlug = useAppStore((s) => s.setActiveAgentSlug);
+  const setActiveBotSlug = useAppStore((s) => s.setActiveBotSlug);
   const composerSearchInitialQuery = useAppStore(
     (s) => s.composerSearchInitialQuery,
   );
@@ -231,13 +231,13 @@ export function SearchModal() {
       if (q && !hay.includes(q.replace(/^@/, ""))) continue;
       list.push({
         id: `ag:${m.slug}`,
-        group: "Agents",
+        group: "Bots",
         icon: m.emoji || "🤖",
         label: m.name || m.slug,
         desc: m.role,
         meta: `@${m.slug}`,
         run: () => {
-          setActiveAgentSlug(m.slug);
+          setActiveBotSlug(m.slug);
           close();
         },
       });
@@ -281,7 +281,7 @@ export function SearchModal() {
       for (const hit of wikiHits) {
         list.push({
           id: `wiki:${hit.path}:${hit.line}`,
-          group: "Company Brain",
+          group: "Wiki",
           icon: "📖",
           label: prettyWikiPath(hit.path),
           desc: hit.snippet.trim().slice(0, 120),
@@ -301,7 +301,7 @@ export function SearchModal() {
     members,
     messageHits,
     wikiHits,
-    setActiveAgentSlug,
+    setActiveBotSlug,
     setSearchOpen,
     close,
   ]);
@@ -389,7 +389,7 @@ export function SearchModal() {
             ref={inputRef}
             className="search-input"
             type="text"
-            placeholder="Search channels, agents, commands, messages, wiki..."
+            placeholder="Search channels, bots, commands, messages, wiki..."
             value={query}
             onChange={(e) => handleQueryChange(e.target.value)}
           />
@@ -419,13 +419,13 @@ export function SearchModal() {
                     <span className="cmd-palette-item-icon">{item.icon}</span>
                     <span className="cmd-palette-item-text">
                       <span className="cmd-palette-item-label">
-                        {item.group === "Messages" || item.group === "Company Brain"
+                        {item.group === "Messages" || item.group === "Wiki"
                           ? highlightMatch(item.label, query.trim())
                           : item.label}
                       </span>
                       {item.desc ? (
                         <span className="cmd-palette-item-desc">
-                          {item.group === "Company Brain"
+                          {item.group === "Wiki"
                             ? highlightMatch(item.desc, query.trim())
                             : item.desc}
                         </span>
@@ -518,13 +518,13 @@ function dispatchPaletteCommand(name: string, deps: CommandDeps) {
         );
       return;
     case "/pause":
-      post("/signals", { kind: "pause", summary: "Human paused all agents" })
-        .then(() => showNotice("All agents paused", "success"))
+      post("/signals", { kind: "pause", summary: "Human paused all bots" })
+        .then(() => showNotice("All bots paused", "success"))
         .catch((e: Error) => showNotice(`Pause failed: ${e.message}`, "error"));
       return;
     case "/resume":
-      post("/signals", { kind: "resume", summary: "Human resumed agents" })
-        .then(() => showNotice("Agents resumed", "success"))
+      post("/signals", { kind: "resume", summary: "Human resumed bots" })
+        .then(() => showNotice("Bots resumed", "success"))
         .catch((e: Error) =>
           showNotice(`Resume failed: ${e.message}`, "error"),
         );
@@ -532,7 +532,8 @@ function dispatchPaletteCommand(name: string, deps: CommandDeps) {
     case "/reset":
       post("/reset", {})
         .then(() => {
-          navigateToChannel("general");
+          // Home, not the retired #general.
+          void router.navigate({ to: "/" });
           showNotice("Office reset", "success");
         })
         .catch((e: Error) => showNotice(`Reset failed: ${e.message}`, "error"));

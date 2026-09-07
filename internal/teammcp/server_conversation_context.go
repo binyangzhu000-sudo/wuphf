@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/nex-crm/wuphf/internal/channel"
 )
 
 func normalizeChannelInput(input string) string {
@@ -29,12 +31,49 @@ func resolveChannelHint(input string) string {
 	return channel
 }
 
+// resolveChannel answers "which channel does this MCP call address?" when the
+// caller gave no explicit one.
+//
+// It used to answer "general". That is the single highest-fanout wrong answer
+// in this package — it is the destination resolver behind every bot-initiated
+// write here (actions.go, the channel tools, the wiki tools, the audit log), and
+// with the shared room retired all of them addressed a channel that no longer
+// exists.
+//
+// The right answer is the bot's OWN DM with the human. This process IS one
+// bot: the launcher stamps its identity into WUPHF_AGENT_SLUG, so the
+// conversation it belongs to is never ambiguous.
+//
+// When even that is unknown the answer is "" — not a guessed room. An empty
+// channel is refused by the broker with a clear error, which is the correct
+// outcome for a write nobody can address; inventing a room would put it
+// somewhere nobody reads, which is the leak the retirement closes.
 func resolveChannel(input string) string {
-	channel := resolveChannelHint(input)
-	if channel == "" {
-		channel = "general"
+	if hint := resolveChannelHint(input); hint != "" {
+		return hint
 	}
-	return channel
+	if slug := trustedEnvBotSlug(); slug != "" {
+		return channel.DirectSlug("human", slug)
+	}
+	return ""
+}
+
+// resolveChannelForBot is resolveChannel for callers that already know WHICH
+// bot they are resolving for.
+//
+// resolveChannel can only consult WUPHF_AGENT_SLUG, which the launcher sets on
+// a real bot process but which is absent whenever the slug arrives as a tool
+// ARGUMENT instead (my_slug=...). In that case resolveChannel has no identity
+// to work from and correctly returns "" — but the caller here does have one, so
+// falling back to the env would throw away the better answer.
+func resolveChannelForBot(input, slug string) string {
+	if hint := resolveChannelHint(input); hint != "" {
+		return hint
+	}
+	if s := strings.TrimSpace(slug); s != "" {
+		return channel.DirectSlug("human", s)
+	}
+	return resolveChannel(input)
 }
 
 func resolveConversationChannel(ctx context.Context, slug string, requestedChannel string) string {
@@ -60,7 +99,7 @@ func resolveConversationContext(ctx context.Context, slug, requestedChannel, req
 	}
 
 	if isOneOnOneMode() {
-		channel = resolveChannel("")
+		channel = resolveChannelForBot("", slug)
 		if replyTo == "" {
 			replyTo = inferDirectReplyTarget(ctx, slug, channel)
 		}
@@ -87,24 +126,63 @@ func resolveConversationContext(ctx context.Context, slug, requestedChannel, req
 		return inferred
 	}
 
-	channel = resolveChannel("")
+	channel = resolveChannelForBot("", slug)
 	if replyTo == "" {
 		replyTo = defaultReplyTargetForChannel(ctx, slug, channel)
 	}
 	return conversationContext{Channel: channel, ReplyToID: replyTo, Source: "fallback"}
 }
 
+// fetchAccessibleChannels lists the channels a bot can see, DMs included.
+//
+// Two calls, not one. GET /channels treats `type` as an EXCLUSIVE filter
+// (broker_office_channels.go handleChannels): the default listing returns only
+// non-DM channels and `?type=dm` returns only DMs. Without the second call an
+// bot woken in a DM could not see the DM it was standing in — it had no way
+// to name its own conversation. Asking for `?type=dm` alone would have swapped
+// one blind spot for a worse one, dropping every real channel from wiki-link
+// resolution and channel inference.
 func fetchAccessibleChannels(ctx context.Context, slug string) []brokerChannelSummary {
+	var channels []brokerChannelSummary
 	var result brokerChannelsResponse
-	if err := brokerGetJSON(ctx, "/channels", &result); err != nil {
+	regularErr := brokerGetJSON(ctx, "/channels", &result)
+	if regularErr == nil {
+		channels = append(channels, result.Channels...)
+	}
+
+	var dmResult brokerChannelsResponse
+	dmErr := brokerGetJSON(ctx, "/channels?type=dm", &dmResult)
+	if dmErr == nil {
+		channels = append(channels, dmResult.Channels...)
+	}
+
+	// Both legs failing is a broker problem, and returning nil keeps the old
+	// contract callers already handle. One leg failing still yields a usable
+	// (if partial) view, which beats blanking the bot's whole world.
+	if regularErr != nil && dmErr != nil {
 		return nil
 	}
-	slug = strings.TrimSpace(slug)
-	if slug == "" || slug == "ceo" {
-		return result.Channels
+
+	// The two listings are disjoint today (the handler's filter is exclusive),
+	// but dedupe by slug so a future handler change cannot double-list a
+	// channel into the bot's context packet.
+	seen := make(map[string]bool, len(channels))
+	deduped := make([]brokerChannelSummary, 0, len(channels))
+	for _, ch := range channels {
+		key := strings.ToLower(strings.TrimSpace(ch.Slug))
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		deduped = append(deduped, ch)
 	}
-	out := make([]brokerChannelSummary, 0, len(result.Channels))
-	for _, ch := range result.Channels {
+
+	slug = strings.TrimSpace(slug)
+	if slug == "" || slug == "cos" {
+		return deduped
+	}
+	out := make([]brokerChannelSummary, 0, len(deduped))
+	for _, ch := range deduped {
 		if !contains(ch.Members, slug) || contains(ch.Disabled, slug) {
 			continue
 		}
@@ -177,15 +255,19 @@ func latestRelevantMessageContext(messages []brokerMessage, slug, fallbackChanne
 		if err != nil {
 			continue
 		}
-		channel := normalizeChannelInput(msg.Channel)
-		if channel == "" {
-			channel = normalizeChannelInput(fallbackChannel)
+		// Local is `ch`, not `channel`, so the channel package stays reachable.
+		ch := normalizeChannelInput(msg.Channel)
+		if ch == "" {
+			ch = normalizeChannelInput(fallbackChannel)
 		}
-		if channel == "" {
-			channel = "general"
+		if ch == "" && strings.TrimSpace(slug) != "" {
+			// This bot's own DM with the human. Was "general": a reply to a
+			// message whose channel we could not read went to the retired
+			// shared room instead of back to the conversation it came from.
+			ch = channel.DirectSlug("human", strings.TrimSpace(slug))
 		}
 		return conversationContext{
-			Channel:   channel,
+			Channel:   ch,
 			ReplyToID: threadTargetForMessage(msg, byID),
 			Source:    "recent_message",
 		}, stamp

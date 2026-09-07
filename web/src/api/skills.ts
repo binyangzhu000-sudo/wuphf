@@ -20,7 +20,7 @@ export interface SkillMetadata {
   };
 }
 
-export type OwnerAgents = string[];
+export type OwnerBots = string[];
 
 export interface Skill {
   name: string;
@@ -34,8 +34,11 @@ export interface Skill {
   created_by?: string;
   created_at?: string;
   updated_at?: string;
-  /** Per-agent scoping (PR 7). Empty/missing = lead-routable shared skill. */
-  owner_agents?: OwnerAgents;
+  /** Per-bot scoping (PR 7). Empty/missing = lead-routable shared skill. */
+  owner_agents?: OwnerBots;
+  /** System skills (app building, wiki maintenance) always exist and stay
+   * active. They can be disabled per bot, never archived or removed. */
+  system?: boolean;
   /** Set by the similarity gate when this skill resembles another (legacy records). */
   similar_to_existing?: SkillSimilarRef;
   metadata?: SkillMetadata;
@@ -98,12 +101,12 @@ export interface SkillOwnerToggleResponse {
 }
 
 /**
- * Assign a specific skill to a specific agent. Adds the agent slug to
- * the skill's owner_agents list (idempotent). Only OwnerAgents members
+ * Assign a specific skill to a specific bot. Adds the bot slug to
+ * the skill's owner_agents list (idempotent). Only OwnerBots members
  * see the skill in their AVAILABLE SKILLS prompt block and can invoke
  * it via team_skill_run.
  */
-export function enableSkillForAgent(
+export function enableSkillForBot(
   name: string,
   agent: string,
 ): Promise<SkillOwnerToggleResponse> {
@@ -117,8 +120,8 @@ export function enableSkillForAgent(
   );
 }
 
-/** Remove an agent from the skill's owner_agents list (idempotent). */
-export function disableSkillForAgent(
+/** Remove a bot from the skill's owner_agents list (idempotent). */
+export function disableSkillForBot(
   name: string,
   agent: string,
 ): Promise<SkillOwnerToggleResponse> {

@@ -8,14 +8,14 @@ import (
 )
 
 // ReviewerHumanOnly is the sentinel DefaultReviewer / ReviewerPaths value
-// that disables agent approval for a promotion. When the resolver returns
+// that disables bot approval for a promotion. When the resolver returns
 // this value, Lane C keeps the promotion in Pending until a human clicks
 // Approve in the web UI.
 const ReviewerHumanOnly = "human-only"
 
 // ReviewerFallback is the final fallback when a blueprint declares no
 // default_reviewer and no matching reviewer_paths entry.
-const ReviewerFallback = "ceo"
+const ReviewerFallback = "cos"
 
 // ReviewerPathRule is a single entry in a blueprint's reviewer_paths map,
 // preserving declaration order so "first match wins" is deterministic.

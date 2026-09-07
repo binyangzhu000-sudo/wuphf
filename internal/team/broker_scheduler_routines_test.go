@@ -57,12 +57,12 @@ func validRoutineBody() map[string]any {
 		"channel":    "general",
 		"owner":      "eng",
 		"prompt":     "Pull renewals within 60 days and post a risk summary.",
-		"created_by": "ceo",
+		"created_by": "cos",
 	}
 }
 
 // TestRegisterRoutine_CreatesPersistentVisibleJob pins the full D1
-// contract on the create path: 201, agent-targeted user routine (the
+// contract on the create path: 201, bot-targeted user routine (the
 // Scheduled Tasks classification), persisted to disk so a reloaded broker
 // still has it.
 func TestRegisterRoutine_CreatesPersistentVisibleJob(t *testing.T) {
@@ -136,7 +136,7 @@ func TestRegisterRoutine_CreatesPersistentVisibleJob(t *testing.T) {
 }
 
 // TestRegisterRoutine_DedupesSamePurposeAndSchedule pins the v3 failure
-// fix: a second agent registering the same automation with different
+// fix: a second bot registering the same automation with different
 // wording converges onto the existing job — one ask, one routine.
 func TestRegisterRoutine_DedupesSamePurposeAndSchedule(t *testing.T) {
 	b := newTestBroker(t)
@@ -154,7 +154,7 @@ func TestRegisterRoutine_DedupesSamePurposeAndSchedule(t *testing.T) {
 		t.Fatalf("decode first: %v", err)
 	}
 
-	// Different agent, different word order/punctuation, same schedule.
+	// Different bot, different word order/punctuation, same schedule.
 	second := validRoutineBody()
 	second["purpose"] = "Monday 9am weekly renewal-risk summary to #general!"
 	second["prompt"] = "Include champion stability in the score."
@@ -180,13 +180,13 @@ func TestRegisterRoutine_DedupesSamePurposeAndSchedule(t *testing.T) {
 	b.mu.Lock()
 	count := 0
 	for _, j := range b.scheduler {
-		if isAgentRoutineJob(j) {
+		if isBotRoutineJob(j) {
 			count++
 		}
 	}
 	b.mu.Unlock()
 	if count != 1 {
-		t.Fatalf("expected exactly 1 agent routine after dedupe, got %d", count)
+		t.Fatalf("expected exactly 1 bot routine after dedupe, got %d", count)
 	}
 }
 
@@ -211,7 +211,7 @@ func TestRegisterRoutine_DifferentScheduleCreatesSecondJob(t *testing.T) {
 	b.mu.Lock()
 	count := 0
 	for _, j := range b.scheduler {
-		if isAgentRoutineJob(j) {
+		if isBotRoutineJob(j) {
 			count++
 		}
 	}
@@ -222,7 +222,7 @@ func TestRegisterRoutine_DifferentScheduleCreatesSecondJob(t *testing.T) {
 }
 
 // TestRegisterRoutine_DoesNotResurrectHumanPausedRoutine pins human
-// sovereignty: an agent re-registering a routine the human paused in
+// sovereignty: a bot re-registering a routine the human paused in
 // Scheduled Tasks must not flip it back on.
 func TestRegisterRoutine_DoesNotResurrectHumanPausedRoutine(t *testing.T) {
 	b := newTestBroker(t)
@@ -264,7 +264,7 @@ func TestRegisterRoutine_DoesNotResurrectHumanPausedRoutine(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	if dedup.Job.Enabled {
-		t.Fatal("agent re-registration must not resurrect a human-paused routine")
+		t.Fatal("bot re-registration must not resurrect a human-paused routine")
 	}
 }
 
@@ -358,8 +358,8 @@ func TestRegisterRoutine_FiresThroughScheduler(t *testing.T) {
 	b := newTestBroker(t)
 	defer b.Stop()
 	b.mu.Lock()
-	b.members = []officeMember{{Slug: "ceo", Name: "CEO"}, {Slug: "eng", Name: "Engineer"}}
-	b.channels = []teamChannel{{Slug: "general", Name: "general", Members: []string{"human", "ceo", "eng"}}}
+	b.members = []officeMember{{Slug: "cos", Name: "CEO"}, {Slug: "eng", Name: "Engineer"}}
+	b.channels = []teamChannel{{Slug: "general", Name: "general", Members: []string{"human", "cos", "eng"}}}
 	b.mu.Unlock()
 	srv := newRoutineTestServer(t, b)
 

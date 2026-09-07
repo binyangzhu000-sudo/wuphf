@@ -1,5 +1,6 @@
 import { type Channel, useChannels } from "../../hooks/useChannels";
 import { useOverflow } from "../../hooks/useOverflow";
+import { NAMED_CHANNELS_ENABLED } from "../../lib/constants";
 import { router } from "../../lib/router";
 import { useCurrentRoute } from "../../routes/useCurrentRoute";
 import { useAppStore } from "../../stores/app";
@@ -64,6 +65,21 @@ function ChannelRow({
 
 export function ChannelList() {
   const { data: channels = [] } = useChannels();
+  // Rooms only. A DM belongs to the bot it is with, and `task-<id>` channels
+  // are legacy: tasks now live in the channel they were created from, so a task
+  // is never a place you navigate to. Showing either here would put a per-task
+  // room back in the sidebar the moment an old workspace loads.
+  //
+  // `app-<appid>` channels are hidden for a different reason: they are real and
+  // current, but they are an app's private build log, rendered inside that app's
+  // own Edit panel (CustomAppView). They are not a room the team meets in, so
+  // listing them would grow the sidebar by one dead entry per app.
+  const rooms = channels.filter(
+    (c) =>
+      c.type !== "dm" &&
+      !c.slug.startsWith("task-") &&
+      !c.slug.startsWith("app-"),
+  );
   const route = useCurrentRoute();
   const unreadByChannel = useAppStore((s) => s.unreadByChannel);
   const wizard = useChannelWizard();
@@ -74,7 +90,7 @@ export function ChannelList() {
     <>
       <div className="sidebar-scroll-wrap is-channels">
         <div className="sidebar-channels" ref={overflowRef}>
-          {channels.map((ch, idx) => {
+          {rooms.map((ch, idx) => {
             const isActive = activeChannelSlug === ch.slug;
             const unreadCount = unreadByChannel[ch.slug] ?? 0;
             return (
@@ -88,15 +104,20 @@ export function ChannelList() {
               />
             );
           })}
-          <SidebarItem
-            variant="add"
-            icon="+"
-            label="New Channel"
-            onClick={wizard.show}
-            title="Create a new channel"
-          />
+          {NAMED_CHANNELS_ENABLED ? (
+            <SidebarItem
+              variant="add"
+              icon="+"
+              label="New Channel"
+              onClick={wizard.show}
+              title="Create a new channel"
+            />
+          ) : null}
         </div>
       </div>
+      {/* Kept mounted so re-enabling is one constant, not a re-wire. With
+          NAMED_CHANNELS_ENABLED off nothing can call wizard.show, so `open`
+          stays false and this renders nothing. */}
       <ChannelWizard open={wizard.open} onClose={wizard.hide} />
     </>
   );

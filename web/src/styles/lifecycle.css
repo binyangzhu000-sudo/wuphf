@@ -26,8 +26,15 @@
   --yellow-aa-500: #806010;
   --yellow-aa-200: #fbecc6;
   --yellow-aa-on-pill: #ffffff;
-  /* cyan-500 (#069de4) is theme-invariant; 5.3:1 AA on white. */
-  --cyan-on-pill: #ffffff;
+  /* Ink for pills filled with --cyan-500. This was #ffffff on the stated
+     grounds of "5.3:1 AA on white", and that number was wrong: measured in
+     the browser, white on #069de4 is 3.02:1, and on noir-gold's #b8881e it
+     is 3.19:1. Both fail the 4.5:1 body-text bar its consumers need (11px
+     and 13.5px). A near-black tinted toward the fill's own hue clears it in
+     every theme — 5.50 / 5.50 / 5.20 / 5.50 — and reads softer than pure
+     black (6.95). One value, not a per-theme flip, because --cyan-500 is
+     near theme-invariant. */
+  --cyan-on-pill: #06212e;
 }
 
 html[data-theme="nex-dark"] {
@@ -1007,7 +1014,14 @@ html[data-theme="noir-gold"] {
 .inbox-mail-detail-body--embed .nb-review-drawer-approve {
   background: var(--accent);
   border-color: var(--accent);
-  color: #ffffff;
+  /* Was a #ffffff literal. Measured on --accent: 4.90:1 in nex/nex-dark
+     but 2.42:1 in noir-gold and 3.53:1 in nex-shell, against a 4.5 bar
+     (this is 13px-class body text, not WCAG large text). --accent-fg is
+     the token for ink on an accent fill and carries noir-gold's flip to
+     --gold-950, which measures 7.66:1. NOTE: nex-shell has no
+     --accent-fg override, so it still resolves to #ffffff and still
+     fails at 3.53 — that theme needs a value, see the report. */
+  color: var(--accent-fg);
 }
 
 .inbox-mail-detail-body--embed .nb-review-drawer-approve:hover {
@@ -1656,7 +1670,14 @@ html[data-theme="noir-gold"] {
 .inbox-detail-action--primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #ffffff;
+  /* Was a #ffffff literal. Measured on --accent: 4.90:1 in nex/nex-dark
+     but 2.42:1 in noir-gold and 3.53:1 in nex-shell, against a 4.5 bar
+     (this is 13px-class body text, not WCAG large text). --accent-fg is
+     the token for ink on an accent fill and carries noir-gold's flip to
+     --gold-950, which measures 7.66:1. NOTE: nex-shell has no
+     --accent-fg override, so it still resolves to #ffffff and still
+     fails at 3.53 — that theme needs a value, see the report. */
+  color: var(--accent-fg);
 }
 
 .inbox-detail-action--primary:hover {
@@ -1813,7 +1834,10 @@ html[data-theme="noir-gold"] {
 
 .inbox-filter--chip.active .num {
   background: var(--cyan-500);
-  color: #ffffff;
+  /* Was a #ffffff literal: 3.02:1 here (11px/600, so the bar is 4.5). The
+     --cyan-on-pill token already existed for exactly this fill; this site
+     just was not using it. */
+  color: var(--cyan-on-pill);
 }
 
 .inbox-filter--chip:focus-visible {
@@ -2099,7 +2123,7 @@ button.verification-badge {
 }
 
 .verification-badge--unverified {
-  border-color: var(--border-subtle);
+  border-color: var(--border);
   color: var(--text-tertiary);
 }
 
@@ -2158,7 +2182,7 @@ button.verification-badge {
   gap: 2px;
   margin-bottom: var(--space-2);
   padding-bottom: var(--space-2);
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border);
 }
 
 .task-verification-dod-label {
@@ -2183,7 +2207,7 @@ button.verification-badge {
   gap: var(--space-2);
   margin-bottom: var(--space-2);
   padding-bottom: var(--space-2);
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border);
 }
 
 .task-definition-group {
@@ -2399,6 +2423,11 @@ button.verification-badge {
   gap: 8px;
   padding: 10px 16px;
   background: var(--accent);
+  /* DEAD DECLARATION — kept only so the diff stays narrow. A later
+     .btn-primary rule wins in every theme, so the computed ink here is
+     already --accent-fg (measured: 4.90 / 4.90 / 7.66 / 11.39, all pass).
+     It reads like an active choice and is not one; do not measure this
+     literal and conclude the button is broken. */
   color: white;
   border-radius: var(--radius-full);
   text-decoration: none;
@@ -3075,7 +3104,14 @@ button.verification-badge {
 
 .packet-action--approve {
   background: var(--accent);
-  color: white;
+  /* Was a #ffffff literal. Measured on --accent: 4.90:1 in nex/nex-dark
+     but 2.42:1 in noir-gold and 3.53:1 in nex-shell, against a 4.5 bar
+     (this is 13px-class body text, not WCAG large text). --accent-fg is
+     the token for ink on an accent fill and carries noir-gold's flip to
+     --gold-950, which measures 7.66:1. NOTE: nex-shell has no
+     --accent-fg override, so it still resolves to #ffffff and still
+     fails at 3.53 — that theme needs a value, see the report. */
+  color: var(--accent-fg);
   font-weight: 600;
 }
 
@@ -3314,7 +3350,7 @@ button.verification-badge {
 }
 
 .packet-discussion-item {
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 10px 12px;
   background: var(--bg-card);
@@ -3330,7 +3366,7 @@ button.verification-badge {
 
 .packet-discussion-author {
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--text);
 }
 
 .packet-discussion-time {
@@ -3361,8 +3397,8 @@ button.verification-badge {
 .issue-document {
   display: flex;
   flex-direction: column;
-  background: var(--bg-primary);
-  color: var(--text-primary);
+  background: var(--bg-card);
+  color: var(--text);
 }
 
 .issue-doc-header {
@@ -3370,8 +3406,8 @@ button.verification-badge {
   flex-direction: column;
   gap: 12px;
   padding: 18px 24px 16px;
-  background: var(--bg-primary);
-  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
 }
 
 .issue-doc-header--sticky {
@@ -3390,7 +3426,7 @@ button.verification-badge {
 .issue-doc-title {
   margin: 0;
   min-width: 0;
-  color: var(--text-primary);
+  color: var(--text);
   font-size: 20px;
   font-weight: 650;
   line-height: 1.25;
@@ -3445,7 +3481,7 @@ button.verification-badge {
   flex-direction: column;
   gap: 8px;
   padding: 12px 14px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-card);
 }
@@ -3469,7 +3505,7 @@ button.verification-badge {
 }
 .issue-doc-sub-issues-add {
   appearance: none;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border);
   background: transparent;
   color: var(--text-secondary);
   padding: 4px 10px;
@@ -3552,7 +3588,7 @@ button.verification-badge {
   flex-direction: column;
   gap: 6px;
   padding: 4px 0 0;
-  border-top: 1px dashed var(--border-subtle);
+  border-top: 1px dashed var(--border);
   margin-top: 4px;
 }
 .issue-doc-sub-issues-input {
@@ -3562,9 +3598,9 @@ button.verification-badge {
   font: inherit;
   font-size: var(--text-sm);
   color: var(--text);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--bg-primary);
+  background: var(--bg-card);
 }
 .issue-doc-sub-issues-input:focus {
   outline: none;
@@ -3578,7 +3614,7 @@ button.verification-badge {
 .issue-doc-sub-issues-submit,
 .issue-doc-sub-issues-cancel {
   appearance: none;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border);
   background: transparent;
   color: var(--text-secondary);
   padding: 4px 12px;
@@ -3590,7 +3626,7 @@ button.verification-badge {
 .issue-doc-sub-issues-submit {
   background: var(--accent);
   border-color: var(--accent);
-  color: var(--bg-primary, white);
+  color: var(--accent-fg);
 }
 .issue-doc-sub-issues-submit:disabled,
 .issue-doc-sub-issues-cancel:disabled {
@@ -3600,7 +3636,7 @@ button.verification-badge {
 .issue-doc-sub-issues-error {
   margin: 0;
   font-size: var(--text-sm);
-  color: var(--text-danger, #b42318);
+  color: var(--red);
 }
 
 .issue-doc-sub-issues-owner-label {
@@ -3616,8 +3652,8 @@ button.verification-badge {
   font: inherit;
   font-size: var(--text-sm);
   color: var(--text);
-  background: var(--bg-primary);
-  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   flex: 1;
 }
@@ -3643,8 +3679,8 @@ button.verification-badge {
   padding: 4px 10px;
   font: inherit;
   font-size: var(--text-sm);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
   background: var(--bg-card);
   color: var(--text-secondary);
   cursor: pointer;
@@ -3689,13 +3725,13 @@ button.verification-badge {
   font: inherit;
   font-size: var(--text-sm);
   color: var(--text);
-  background: var(--bg-primary);
-  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
 }
 .issue-doc-owner-editor-cancel {
   appearance: none;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border);
   background: transparent;
   color: var(--text-secondary);
   padding: 4px 10px;
@@ -3706,7 +3742,7 @@ button.verification-badge {
 }
 .issue-doc-owner-editor-error {
   font-size: var(--text-sm);
-  color: var(--text-danger, #b42318);
+  color: var(--red);
 }
 
 /* ─── Parent issue breadcrumb (sub-issue header) ────────────────────── */
@@ -3721,8 +3757,8 @@ button.verification-badge {
   font-size: var(--text-sm);
   color: var(--text-secondary);
   background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
   cursor: pointer;
   transition:
     border-color 120ms ease,
@@ -3778,7 +3814,7 @@ button.verification-badge {
     background 120ms ease,
     border-color 120ms ease,
     color 120ms ease;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border);
   background: var(--bg-card);
   color: var(--text);
   white-space: nowrap;
@@ -3793,21 +3829,17 @@ button.verification-badge {
 .issue-action-button--primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: var(--bg-primary, white);
+  color: var(--accent-fg);
 }
 .issue-action-button--primary:hover:not(:disabled) {
   filter: brightness(1.05);
 }
 .issue-action-button--danger {
-  border-color: color-mix(
-    in srgb,
-    var(--text-danger, #b42318) 60%,
-    var(--border-subtle)
-  );
-  color: var(--text-danger, #b42318);
+  border-color: color-mix(in srgb, var(--red) 60%, var(--border));
+  color: var(--red);
 }
 .issue-action-button--danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--text-danger, #b42318) 10%, transparent);
+  background: color-mix(in srgb, var(--red) 10%, transparent);
 }
 .issue-action-button--neutral {
   /* default styling already covers neutral */
@@ -3826,8 +3858,8 @@ button.verification-badge {
   font: inherit;
   font-size: var(--text-sm);
   color: var(--text);
-  background: var(--bg-primary);
-  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
 }
 .issue-action-reason-input:focus {
@@ -3838,7 +3870,7 @@ button.verification-badge {
 .issue-action-error {
   flex: 1 1 100%;
   font-size: var(--text-sm);
-  color: var(--text-danger, #b42318);
+  color: var(--red);
 }
 
 /* ─── Reopen button ─────────────────────────────────────────────────── */
@@ -3868,12 +3900,12 @@ button.verification-badge {
 }
 .issue-doc-reopen-error {
   font-size: var(--text-sm);
-  color: var(--text-danger, #b42318);
+  color: var(--red);
 }
 
 .issue-doc-comments,
 .issue-doc-error-card {
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-card);
 }
@@ -3936,7 +3968,7 @@ button.verification-badge {
   flex-direction: column;
   gap: 4px;
   padding: 12px;
-  border: 1px dashed var(--border-subtle);
+  border: 1px dashed var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-warm, var(--bg-card));
 }
@@ -3960,24 +3992,16 @@ button.verification-badge {
   flex-direction: column;
   gap: 8px;
   padding: 10px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--bg-primary);
+  background: var(--bg-card);
 }
 
 /* [SUGGESTION] comments stand out so CEO can scan them. Amber border +
  * subtle tint, "Suggestion" badge next to the author. */
 .issue-comment--suggestion {
-  border-color: color-mix(
-    in srgb,
-    var(--amber-600, #d97706) 60%,
-    var(--border-subtle)
-  );
-  background: color-mix(
-    in srgb,
-    var(--amber-600, #d97706) 5%,
-    var(--bg-primary)
-  );
+  border-color: color-mix(in srgb, var(--yellow) 60%, var(--border));
+  background: color-mix(in srgb, var(--yellow) 5%, var(--bg-card));
 }
 .issue-comment-suggestion-badge {
   display: inline-flex;
@@ -3987,9 +4011,25 @@ button.verification-badge {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--bg-primary, white);
-  background: var(--amber-600, #d97706);
-  border-radius: var(--radius-pill, 999px);
+  /* Outline chip, deliberately NOT a solid fill. The bar here is 4.5:1, not
+     3:1 — at 10px/700 this is body text, since WCAG large text starts at
+     18.66px bold. Measured against that bar:
+       - the old white ink on a solid --yellow fill was 3.66:1 on
+         nex / nex-dark / nex-shell (#ce6b09) and 2.85:1 on noir-gold
+         (#c98e1e). Both fail. (It read `var(--bg-primary, white)`, and
+         --bg-primary is defined nowhere, so it was a white literal.)
+       - a warning-COLOURED outline fails too, and less obviously: on the
+         tinted suggestion surface --warning-500 passes only in the light
+         theme while --yellow passes only in the dark ones. They are near
+         complements, so that version needs a per-theme ink flip — the same
+         unflipped -500 ramp that stalled this decision in the first place.
+     Keeping the colour in the BORDER and the ink as plain --text sidesteps
+     the ramp entirely and clears 4.5:1 in all four themes. Do not "restore"
+     the fill, and do not reach for a semantic ink here without re-measuring. */
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--yellow);
+  border-radius: var(--radius-full);
 }
 
 .issue-comment-meta {
@@ -4005,7 +4045,7 @@ button.verification-badge {
 
 .issue-comment-author {
   min-width: 0;
-  color: var(--text-primary);
+  color: var(--text);
   font-size: var(--text-sm);
   font-weight: 650;
   overflow: hidden;
@@ -4021,7 +4061,7 @@ button.verification-badge {
 }
 
 .issue-comment-body {
-  color: var(--text-primary);
+  color: var(--text);
   font-size: var(--text-sm);
   line-height: 1.5;
   overflow-wrap: anywhere;
@@ -4032,7 +4072,7 @@ button.verification-badge {
   flex-direction: column;
   gap: 8px;
   padding-top: 12px;
-  border-top: 1px solid var(--border-subtle);
+  border-top: 1px solid var(--border);
 }
 
 .issue-comment-form-label {
@@ -4052,13 +4092,13 @@ button.verification-badge {
   width: 100%;
   resize: vertical;
   padding: 9px 10px;
-  color: var(--text-primary);
+  color: var(--text);
   font: inherit;
   font-size: var(--text-sm);
   line-height: 1.45;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--bg-primary);
+  background: var(--bg-card);
 }
 
 .issue-comment-input:focus {
@@ -4074,7 +4114,7 @@ button.verification-badge {
 
 .issue-comment-error {
   margin: 0;
-  color: var(--text-danger, #b42318);
+  color: var(--red);
   font-size: var(--text-sm);
   line-height: 1.4;
 }
@@ -4083,7 +4123,7 @@ button.verification-badge {
   align-self: flex-end;
   min-height: 32px;
   padding: 6px 12px;
-  color: var(--bg-primary, #fff);
+  color: var(--accent-fg);
   font-size: var(--text-sm);
   font-weight: 600;
   border: 0;
@@ -4100,18 +4140,18 @@ button.verification-badge {
 .issue-doc-retry-btn {
   align-self: flex-start;
   padding: 6px 10px;
-  color: var(--text-primary);
+  color: var(--text);
   font-size: var(--text-sm);
   font-weight: 500;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--bg-primary);
+  background: var(--bg-card);
   cursor: pointer;
 }
 
 .issue-doc-retry-btn:hover {
   border-color: var(--border);
-  background: var(--bg-secondary);
+  background: var(--overlay-soft);
 }
 
 .issue-approve-and-start {
@@ -4124,11 +4164,11 @@ button.verification-badge {
 .issue-approve-error {
   max-width: 420px;
   padding: 8px 10px;
-  color: var(--text-danger, #b42318);
+  color: var(--red);
   font-size: var(--text-sm);
-  border: 1px solid var(--danger-border, rgba(180, 35, 24, 0.24));
+  border: 1px solid color-mix(in srgb, var(--red) 24%, transparent);
   border-radius: var(--radius-sm);
-  background: var(--danger-bg, rgba(180, 35, 24, 0.08));
+  background: color-mix(in srgb, var(--red) 8%, transparent);
 }
 
 .issue-approve-btn {
@@ -4159,9 +4199,9 @@ button.verification-badge {
   border-radius: var(--radius-sm);
   background: linear-gradient(
     90deg,
-    var(--bg-secondary, rgba(0, 0, 0, 0.04)),
+    var(--overlay-soft),
     var(--bg-card, rgba(0, 0, 0, 0.08)),
-    var(--bg-secondary, rgba(0, 0, 0, 0.04))
+    var(--overlay-soft)
   );
   background-size: 200% 100%;
   animation: issues-skel 1.6s ease-in-out infinite;
@@ -4242,9 +4282,9 @@ button.verification-badge {
   max-width: 320px;
   padding: 6px 10px;
   font-size: var(--text-base);
-  background: var(--bg-input, var(--bg-card));
-  color: var(--text-primary);
-  border: 1px solid var(--border-subtle);
+  background: var(--input-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
 }
 
@@ -4257,7 +4297,7 @@ button.verification-badge {
   padding: 6px 12px;
   font-size: var(--text-base);
   background: var(--accent, #5b8def);
-  color: var(--bg-primary, #fff);
+  color: var(--accent-fg);
   border: none;
   border-radius: var(--radius-md);
   cursor: pointer;
@@ -4290,8 +4330,8 @@ button.verification-badge {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  background: var(--bg-secondary, rgba(0, 0, 0, 0.02));
-  border: 1px solid var(--border-subtle);
+  background: var(--overlay-soft);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 10px;
   gap: 6px;
@@ -4346,8 +4386,8 @@ button.verification-badge {
 }
 
 .issues-kanban-card {
-  background: var(--bg-card, var(--bg-primary, #fff));
-  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   color: inherit;
   padding: 10px;
@@ -4373,7 +4413,7 @@ button.verification-badge {
 .issues-kanban-card-title {
   font-size: 13.5px;
   font-weight: 500;
-  color: var(--text-primary);
+  color: var(--text);
   line-height: 1.35;
 }
 
@@ -4415,7 +4455,7 @@ button.verification-badge {
   margin: 2px 0 0;
   padding: 0 0 0 12px;
   margin-left: 7px;
-  border-left: 2px solid var(--border-subtle);
+  border-left: 2px solid var(--border);
 }
 
 /* Compact, recessed variant for a sub-task card nested under its parent, so
@@ -4423,7 +4463,7 @@ button.verification-badge {
 .issues-kanban-card--subtask {
   padding: 7px 9px;
   gap: 5px;
-  background: var(--bg-card-soft, var(--bg-card, var(--bg-primary, #fff)));
+  background: var(--bg-card);
 }
 
 .issues-kanban-card--subtask .issues-kanban-card-title {
@@ -4470,11 +4510,11 @@ button.verification-badge {
 .issues-list-retry-btn {
   padding: 6px 12px;
   font-size: var(--text-base);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border);
   background: transparent;
   border-radius: var(--radius-md);
   cursor: pointer;
-  color: var(--text-primary);
+  color: var(--text);
 }
 
 .issues-list--loading {
@@ -4488,9 +4528,9 @@ button.verification-badge {
   height: 14px;
   background: linear-gradient(
     90deg,
-    var(--bg-secondary, rgba(0, 0, 0, 0.04)),
+    var(--overlay-soft),
     var(--bg-card, rgba(0, 0, 0, 0.08)),
-    var(--bg-secondary, rgba(0, 0, 0, 0.04))
+    var(--overlay-soft)
   );
   background-size: 200% 100%;
   border-radius: 4px;
@@ -4523,8 +4563,8 @@ button.verification-badge {
   max-width: 640px;
   margin: 24px auto;
   padding: 24px;
-  background: var(--bg-card, var(--bg-primary, #fff));
-  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
 }
 
@@ -4561,10 +4601,10 @@ button.verification-badge {
   font: inherit;
   font-size: var(--text-md);
   padding: 8px 10px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--bg-input, var(--bg-primary, #fff));
-  color: var(--text-primary);
+  background: var(--input-bg);
+  color: var(--text);
 }
 
 .issue-new-form-field textarea {
@@ -4587,7 +4627,7 @@ button.verification-badge {
 }
 
 .issue-new-form-error {
-  color: var(--text-danger, #c0392b);
+  color: var(--red);
   font-size: var(--text-base);
   margin: 0;
 }
@@ -4598,7 +4638,7 @@ button.verification-badge {
   display: flex;
   gap: 6px;
   padding: 8px 16px;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border);
   overflow-x: auto;
 }
 
@@ -4607,7 +4647,7 @@ button.verification-badge {
   font-size: var(--text-sm);
   background: transparent;
   color: var(--text-secondary);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border);
   border-radius: 999px;
   cursor: pointer;
   white-space: nowrap;
@@ -4619,12 +4659,12 @@ button.verification-badge {
 
 .inbox-filter-chip:hover {
   border-color: var(--accent, #5b8def);
-  color: var(--text-primary);
+  color: var(--text);
 }
 
 .inbox-filter-chip[aria-pressed="true"] {
   background: var(--accent, #5b8def);
-  color: var(--bg-primary, #fff);
+  color: var(--accent-fg);
   border-color: var(--accent, #5b8def);
 }
 
@@ -4794,7 +4834,7 @@ button.verification-badge {
 .issue-create-error {
   padding: 0 20px 12px;
   margin: 0;
-  color: var(--red-600, var(--destructive, #dc2626));
+  color: var(--red);
   font-size: 13px;
 }
 
@@ -4939,7 +4979,7 @@ button.verification-badge {
 }
 
 .issue-create-submit:hover:not(:disabled) {
-  background: var(--accent-hover, var(--accent));
+  background: var(--accent);
   filter: brightness(0.95);
 }
 
@@ -5010,15 +5050,15 @@ button.verification-badge {
 }
 
 .issue-activity-dot--running {
-  background: var(--green-500, #16a34a);
+  background: var(--green);
 }
 
 .issue-activity-dot--blocked {
-  background: var(--red-500, var(--destructive, #dc2626));
+  background: var(--red);
 }
 
 .issue-activity-dot--needs-input {
-  background: var(--orange-500, #f97316);
+  background: var(--yellow);
 }
 
 .issue-activity-dot--idle {
@@ -5066,23 +5106,15 @@ button.verification-badge {
 }
 
 .issue-activity-stream[data-state="running"] {
-  border-color: color-mix(
-    in srgb,
-    var(--green-500, #16a34a) 30%,
-    var(--border)
-  );
+  border-color: color-mix(in srgb, var(--green) 30%, var(--border));
 }
 
 .issue-activity-stream[data-state="blocked"] {
-  border-color: color-mix(in srgb, var(--red-500, #dc2626) 30%, var(--border));
+  border-color: color-mix(in srgb, var(--red) 30%, var(--border));
 }
 
 .issue-activity-stream[data-state="needs-input"] {
-  border-color: color-mix(
-    in srgb,
-    var(--orange-500, #f97316) 30%,
-    var(--border)
-  );
+  border-color: color-mix(in srgb, var(--yellow) 30%, var(--border));
 }
 
 .issue-activity-stream .issue-activity-dot {
@@ -5228,9 +5260,9 @@ button.verification-badge {
 }
 
 .issue-activity-feed-empty--error {
-  color: var(--red-600, var(--destructive, #dc2626));
+  color: var(--red);
   border-style: solid;
-  border-color: var(--red-600, var(--destructive, #dc2626));
+  border-color: var(--red);
 }
 
 .issue-activity-feed-retry {
@@ -5306,13 +5338,13 @@ button.verification-badge {
 }
 
 .issue-activity-feed-icon--request {
-  background: color-mix(in srgb, var(--orange-500, #f97316) 12%, transparent);
-  color: var(--orange-500, #f97316);
+  background: color-mix(in srgb, var(--yellow) 12%, transparent);
+  color: var(--yellow);
 }
 
 .issue-activity-feed-icon--sub_issue {
-  background: color-mix(in srgb, var(--green-500, #16a34a) 12%, transparent);
-  color: var(--green-500, #16a34a);
+  background: color-mix(in srgb, var(--green) 12%, transparent);
+  color: var(--green);
 }
 
 .issue-activity-feed-icon--turn {
@@ -5405,7 +5437,7 @@ button.verification-badge {
 }
 
 .issue-activity-feed-resolution--answered {
-  color: var(--green-600, #15803d);
+  color: var(--green);
 }
 
 .issue-activity-feed-resolution--canceled {
@@ -5413,7 +5445,7 @@ button.verification-badge {
 }
 
 .issue-activity-feed-resolution--open {
-  color: var(--orange-500, #f97316);
+  color: var(--yellow);
 }
 
 /* ── Chat-primary task detail (chat main column + right context rail) ──────
@@ -5645,4 +5677,259 @@ button.verification-badge {
 .issues-kanban-card-owner--unassigned {
   color: var(--text-secondary);
   font-style: italic;
+}
+
+/* Stalled: the owner has gone quiet. Distinct from the running activity line
+   so "stuck" and "merely slow" stop looking identical — that was the whole
+   defect. Warning-toned rather than error-toned on purpose: the watchdog
+   detects ABSENCE of visible activity, which is not proof of failure, and
+   colouring it like an error would overclaim. */
+.issues-kanban-card-stalled {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: var(--text-xs);
+  color: var(--warning-500);
+}
+.issues-kanban-card-stalled-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--warning-500);
+}
+
+/* "N unassigned" toggle in the board header. Nothing else on the board says
+   how much work nobody owns; a card reads "Unassigned" one at a time. */
+.issues-unassigned-chip {
+  flex: 0 0 auto;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.issues-unassigned-chip:hover {
+  color: var(--text);
+}
+.issues-unassigned-chip[aria-pressed="true"] {
+  border-color: var(--warning-500);
+  color: var(--warning-500);
+}
+
+/* ── Task modal ──────────────────────────────────────────────────────
+ * The one surface every task affordance opens. Token-only so it reads
+ * correctly in Nex Light, Nex Dark, and Noir Gold; the shared Dialog
+ * primitive supplies positioning + animation, these rules supply the
+ * surface (they load after the tailwind utilities, same as
+ * .issue-create-dialog above).
+ */
+.task-modal {
+  background: var(--bg-card, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  padding: 0;
+  gap: 0;
+  width: 100%;
+  max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.task-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px 20px 20px;
+  /* A long description must scroll inside the dialog, not push the
+   * footer buttons off a short viewport. */
+  max-height: min(78vh, 720px);
+  overflow-y: auto;
+}
+
+.task-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.task-modal-id {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.task-modal-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.task-modal-label {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.task-modal-title-input,
+.task-modal-description-input {
+  width: 100%;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  padding: 8px 10px;
+  font: inherit;
+}
+
+.task-modal-title-input {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.task-modal-description-input {
+  font-size: 14px;
+  line-height: 1.55;
+  resize: vertical;
+  min-height: 96px;
+}
+
+.task-modal-title-input:focus-visible,
+.task-modal-description-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.task-modal-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.task-modal-row--stack {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.task-modal-error {
+  font-size: 13px;
+  color: var(--error-500, var(--warning-500));
+  margin: 0;
+}
+
+.task-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.task-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.task-modal-primary,
+.task-modal-secondary,
+.task-modal-retry {
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.task-modal-secondary,
+.task-modal-retry {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.task-modal-secondary:hover,
+.task-modal-retry:hover {
+  background: var(--bg-row-active);
+  color: var(--text);
+}
+
+/* Same accent-on-accent pairing the create dialog's submit uses, so the two
+ * task dialogs cannot drift apart under a theme switch. */
+.task-modal-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-foreground, #fff);
+}
+
+.task-modal-primary:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+
+.task-modal-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.task-modal-placeholder {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 24px 20px;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.task-modal-placeholder strong {
+  color: var(--text);
+}
+
+.task-modal-placeholder p {
+  margin: 0;
+}
+
+/* ── Task with no conversation home ──────────────────────────────────
+ * Shown in place of the chat pane when a task has no owner and so has
+ * nowhere to talk. Deliberately NOT styled as an error: this is an
+ * ordinary stage of an unowned task's life, so it reads as quiet
+ * secondary text rather than a red banner.
+ */
+.issue-doc-no-conversation {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 28px 24px;
+  margin: 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-card, var(--bg));
+}
+
+.issue-doc-no-conversation-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.issue-doc-no-conversation-body {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  max-width: 52ch;
 }

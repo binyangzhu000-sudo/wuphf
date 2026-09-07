@@ -27,7 +27,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// MaxSkillFileBytes caps the size of a sub-resource file an agent may write
+// MaxSkillFileBytes caps the size of a sub-resource file a bot may write
 // under team/skills/{name}/. 1 MiB is enough for a long template, generous
 // enough that we don't stop legit content, and small enough to refuse
 // accidental binary uploads.
@@ -36,7 +36,7 @@ const MaxSkillFileBytes = 1024 * 1024
 // maxSkillFileNameBytes caps the path length of any single sub-resource file.
 const maxSkillFileNameBytes = 64
 
-// skillFileAllowedDirs is the closed-set allow-list of directories an agent
+// skillFileAllowedDirs is the closed-set allow-list of directories a bot
 // may write files into. Anything outside this list is a 400.
 var skillFileAllowedDirs = []string{"references/", "templates/", "scripts/", "assets/"}
 
@@ -115,10 +115,10 @@ func (b *Broker) handleSkillsCRUDSubpath(w http.ResponseWriter, r *http.Request)
 		b.handleSkillRestore(w, r, name)
 		return true
 	case "enable-for":
-		b.handleSkillEnableForAgent(w, r, name)
+		b.handleSkillEnableForBot(w, r, name)
 		return true
 	case "disable-for":
-		b.handleSkillDisableForAgent(w, r, name)
+		b.handleSkillDisableForBot(w, r, name)
 		return true
 	}
 	return false
@@ -276,7 +276,7 @@ func (b *Broker) handleSkillEdit(w http.ResponseWriter, r *http.Request, name st
 		http.Error(w, "skill_guard: rejected — "+scan.Summary, http.StatusForbidden)
 		return
 	}
-	if trust == TrustAgentCreated && scan.Verdict != VerdictSafe {
+	if trust == TrustBotCreated && scan.Verdict != VerdictSafe {
 		atomic.AddInt64(&b.skillCompileMetrics.ProposalsRejectedByGuardTotal, 1)
 		b.mu.Unlock()
 		http.Error(w, "skill_guard: rejected — "+scan.Summary, http.StatusForbidden)
@@ -345,6 +345,11 @@ func (b *Broker) handleSkillArchive(w http.ResponseWriter, r *http.Request, name
 		http.Error(w, "skill not found", http.StatusNotFound)
 		return
 	}
+	if reason := guardSystemSkillMutation(sk, "archive"); reason != "" {
+		b.mu.Unlock()
+		http.Error(w, reason, http.StatusForbidden)
+		return
+	}
 	sk.Status = "archived"
 	sk.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	skCopy := *sk
@@ -404,6 +409,11 @@ func (b *Broker) handleSkillDisable(w http.ResponseWriter, r *http.Request, name
 	if sk == nil {
 		b.mu.Unlock()
 		http.Error(w, "skill not found", http.StatusNotFound)
+		return
+	}
+	if reason := guardSystemSkillMutation(sk, "disable"); reason != "" {
+		b.mu.Unlock()
+		http.Error(w, reason, http.StatusForbidden)
 		return
 	}
 	if sk.Status != "active" && sk.Status != "proposed" {
@@ -682,6 +692,11 @@ func (b *Broker) handleSkillReject(w http.ResponseWriter, r *http.Request, name 
 		http.Error(w, "skill not found", http.StatusNotFound)
 		return
 	}
+	if guardReason := guardSystemSkillMutation(sk, "reject"); guardReason != "" {
+		b.mu.Unlock()
+		http.Error(w, guardReason, http.StatusForbidden)
+		return
+	}
 	skCopy := *sk
 	// Remove from b.skills.
 	out := b.skills[:0]
@@ -951,6 +966,26 @@ func (b *Broker) reconcileSkillStatusFromDisk() {
 // SKILL.md or mutates the in-memory skill while backfill is iterating, we
 // pick up the live copy — or skip entirely when disk is no longer empty —
 // rather than write a stale snapshot taken at startup.
+// repoForSkillBackfill returns the wiki repo to backfill into, or nil when the
+// wiki backend is not actually usable.
+//
+// A non-nil worker is not proof of a working wiki: init can fail (an
+// unreadable or non-directory root) and still leave the worker wired up. The
+// sweep would then enqueue writes that fail on git AND create directories
+// under a root the caller believes is dead — which is how it started racing
+// t.TempDir cleanup, failing whichever test happened to run next.
+func repoForSkillBackfill(worker *WikiWorker) *Repo {
+	repo := worker.Repo()
+	if repo == nil {
+		return nil
+	}
+	info, err := os.Stat(repo.Root())
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+	return repo
+}
+
 func (b *Broker) backfillSkillFilesFromState(ctx context.Context) {
 	b.mu.Lock()
 	worker := b.wikiWorker
@@ -958,7 +993,7 @@ func (b *Broker) backfillSkillFilesFromState(ctx context.Context) {
 	if worker == nil {
 		return
 	}
-	repo := worker.Repo()
+	repo := repoForSkillBackfill(worker)
 	if repo == nil {
 		return
 	}
@@ -1112,31 +1147,31 @@ func yamlMarshalTombstone(tf tombstoneFile) (string, error) {
 	return string(raw), nil
 }
 
-// handleSkillEnableForAgent appends an agent slug to the skill's
-// OwnerAgents list. Idempotent. Used by the agent Skills tab and by
-// the agent Skills tab assignment flow. POST body: {"agent": "<slug>"}.
-func (b *Broker) handleSkillEnableForAgent(w http.ResponseWriter, r *http.Request, name string) {
+// handleSkillEnableForBot appends a bot slug to the skill's
+// OwnerBots list. Idempotent. Used by the bot Skills tab and by
+// the bot Skills tab assignment flow. POST body: {"bot": "<slug>"}.
+func (b *Broker) handleSkillEnableForBot(w http.ResponseWriter, r *http.Request, name string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	var body struct {
-		Agent string `json:"agent"`
+		Bot string `json:"agent"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
-	agent := normalizeActorSlug(body.Agent)
-	if agent == "" {
-		http.Error(w, "agent required", http.StatusBadRequest)
+	bot := normalizeActorSlug(body.Bot)
+	if bot == "" {
+		http.Error(w, "bot required", http.StatusBadRequest)
 		return
 	}
 
 	b.mu.Lock()
-	if b.findMemberLocked(agent) == nil {
+	if b.findMemberLocked(bot) == nil {
 		b.mu.Unlock()
-		http.Error(w, "agent not in roster", http.StatusBadRequest)
+		http.Error(w, "bot not in roster", http.StatusBadRequest)
 		return
 	}
 	sk := b.findSkillByNameLocked(name)
@@ -1147,62 +1182,83 @@ func (b *Broker) handleSkillEnableForAgent(w http.ResponseWriter, r *http.Reques
 	}
 	if sk.Status != "active" {
 		b.mu.Unlock()
-		http.Error(w, "skill must be active to enable for an agent", http.StatusConflict)
+		http.Error(w, "skill must be active to enable for a bot", http.StatusConflict)
 		return
 	}
-	already := false
-	for _, slug := range sk.OwnerAgents {
-		if slug == agent {
-			already = true
-			break
+	changed := false
+	if sk.System {
+		// A system skill is owned by the whole roster; enabling means
+		// lifting the per-bot switch-off.
+		filtered := make([]string, 0, len(sk.DisabledBots))
+		for _, slug := range sk.DisabledBots {
+			if normalizeActorSlug(slug) != bot {
+				filtered = append(filtered, slug)
+			}
 		}
-	}
-	if !already {
-		sk.OwnerAgents = append(sk.OwnerAgents, agent)
-		sk.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		if len(filtered) != len(sk.DisabledBots) {
+			sk.DisabledBots = filtered
+			sk.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+			changed = true
+		}
+	} else {
+		already := false
+		for _, slug := range sk.OwnerBots {
+			if slug == bot {
+				already = true
+				break
+			}
+		}
+		if !already {
+			sk.OwnerBots = append(sk.OwnerBots, bot)
+			sk.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+			changed = true
+		}
 	}
 	out := *sk
 	saveErr := b.saveLocked()
 	wikiWorker := b.wikiWorker
 	wikiPath := skillWikiPath(out.Name)
-	enqueueCtx := b.brokerLifecycleContext()
 	b.mu.Unlock()
+	// Acquired AFTER b.mu is released: brokerLifecycleContext takes b.mu
+	// itself, so calling it under the lock self-deadlocks and froze the
+	// whole broker the first time either per-bot toggle was used.
+	enqueueCtx := b.brokerLifecycleContext()
 	if saveErr != nil {
 		http.Error(w, "save failed: "+saveErr.Error(), http.StatusInternalServerError)
 		return
 	}
 	// Re-render the SKILL.md so the on-disk copy reflects the updated
-	// OwnerAgents list. Without this, the per-agent enablement only lives
+	// OwnerBots list. Without this, the per-bot enablement only lives
 	// in broker-state.json and the wiki preview goes stale. Failures are
 	// logged but do not fail the call — broker state is already saved,
 	// and a later mutation (or boot backfill) reconciles disk.
-	if !already && wikiWorker != nil {
-		if err := enqueueSkillWikiWrite(enqueueCtx, wikiWorker, out, wikiPath, "wuphf: enable skill "+out.Name+" for @"+agent); err != nil {
-			slog.Warn("handleSkillEnableForAgent: wiki enqueue failed",
-				"name", out.Name, "agent", agent, "err", err)
+	if changed && wikiWorker != nil {
+		if err := enqueueSkillWikiWrite(enqueueCtx, wikiWorker, out, wikiPath, "wuphf: enable skill "+out.Name+" for @"+bot); err != nil {
+			slog.Warn("handleSkillEnableForBot: wiki enqueue failed",
+				"name", out.Name, "agent", bot, "err", err)
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"skill": out})
 }
 
-// handleSkillDisableForAgent removes an agent slug from OwnerAgents.
-// Idempotent. POST body: {"agent": "<slug>"}.
-func (b *Broker) handleSkillDisableForAgent(w http.ResponseWriter, r *http.Request, name string) {
+// handleSkillDisableForBot removes a bot slug from OwnerBots.
+// Idempotent. POST body: {"bot": "<slug>"}.
+func (b *Broker) handleSkillDisableForBot(w http.ResponseWriter, r *http.Request, name string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	var body struct {
-		Agent string `json:"agent"`
+		Bot string `json:"agent"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
-	agent := normalizeActorSlug(body.Agent)
-	if agent == "" {
-		http.Error(w, "agent required", http.StatusBadRequest)
+	bot := normalizeActorSlug(body.Bot)
+	if bot == "" {
+		http.Error(w, "bot required", http.StatusBadRequest)
 		return
 	}
 
@@ -1213,38 +1269,59 @@ func (b *Broker) handleSkillDisableForAgent(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "skill not found", http.StatusNotFound)
 		return
 	}
-	before := len(sk.OwnerAgents)
-	// Allocate a fresh slice rather than aliasing sk.OwnerAgents[:0] so the
-	// pre-mutation snapshot stays intact for the change-detection check.
-	filtered := make([]string, 0, before)
-	for _, slug := range sk.OwnerAgents {
-		if slug != agent {
-			filtered = append(filtered, slug)
+	changed := false
+	if sk.System {
+		// A system skill cannot lose owners; disabling records the
+		// per-bot switch-off instead.
+		alreadyOff := false
+		for _, slug := range sk.DisabledBots {
+			if normalizeActorSlug(slug) == bot {
+				alreadyOff = true
+				break
+			}
 		}
-	}
-	changed := len(filtered) != before
-	sk.OwnerAgents = filtered
-	if changed {
-		sk.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		if !alreadyOff {
+			sk.DisabledBots = append(sk.DisabledBots, bot)
+			sk.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+			changed = true
+		}
+	} else {
+		before := len(sk.OwnerBots)
+		// Allocate a fresh slice rather than aliasing sk.OwnerBots[:0] so the
+		// pre-mutation snapshot stays intact for the change-detection check.
+		filtered := make([]string, 0, before)
+		for _, slug := range sk.OwnerBots {
+			if slug != bot {
+				filtered = append(filtered, slug)
+			}
+		}
+		sk.OwnerBots = filtered
+		if len(filtered) != before {
+			sk.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+			changed = true
+		}
 	}
 	out := *sk
 	saveErr := b.saveLocked()
 	wikiWorker := b.wikiWorker
 	wikiPath := skillWikiPath(out.Name)
-	enqueueCtx := b.brokerLifecycleContext()
 	b.mu.Unlock()
+	// Acquired AFTER b.mu is released: brokerLifecycleContext takes b.mu
+	// itself, so calling it under the lock self-deadlocks and froze the
+	// whole broker the first time either per-bot toggle was used.
+	enqueueCtx := b.brokerLifecycleContext()
 	if saveErr != nil {
 		http.Error(w, "save failed: "+saveErr.Error(), http.StatusInternalServerError)
 		return
 	}
 	// Re-render the SKILL.md so the on-disk copy reflects the updated
-	// OwnerAgents list. Mirrors handleSkillEnableForAgent so per-agent
+	// OwnerBots list. Mirrors handleSkillEnableForBot so per-bot
 	// enablement is round-trippable across the broker state and the
 	// wiki preview path.
 	if changed && wikiWorker != nil {
-		if err := enqueueSkillWikiWrite(enqueueCtx, wikiWorker, out, wikiPath, "wuphf: disable skill "+out.Name+" for @"+agent); err != nil {
-			slog.Warn("handleSkillDisableForAgent: wiki enqueue failed",
-				"name", out.Name, "agent", agent, "err", err)
+		if err := enqueueSkillWikiWrite(enqueueCtx, wikiWorker, out, wikiPath, "wuphf: disable skill "+out.Name+" for @"+bot); err != nil {
+			slog.Warn("handleSkillDisableForBot: wiki enqueue failed",
+				"name", out.Name, "agent", bot, "err", err)
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")

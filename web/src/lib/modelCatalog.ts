@@ -1,9 +1,9 @@
 import type { LLMRuntimeKind, LocalProviderStatus } from "../api/client";
 
 // MODEL_CATALOG is a curated suggestion list per LLM runtime. We let users
-// pick from these in the AgentProfilePanel + AgentWizard dropdowns instead
+// pick from these in the BotProfilePanel + BotWizard dropdowns instead
 // of free-typing a model identifier — typos in model ids are a real failure
-// mode (codex/claude refuse the request, the agent appears silent).
+// mode (codex/claude refuse the request, the bot appears silent).
 //
 // Cloud runtimes ship a fixed list of well-known ids. They drift as new
 // model families launch, but the "Custom…" escape hatch in the picker
@@ -108,7 +108,7 @@ export function modelOptionsForKind(
   const options: ModelOption[] = [
     { value: INHERIT_MODEL_VALUE, label: "Use runtime default" },
   ];
-  if (kind === "" ) {
+  if (kind === "") {
     return options;
   }
   if (kind === "mlx-lm" || kind === "ollama" || kind === "exo") {
@@ -123,9 +123,7 @@ export function modelOptionsForKind(
       }
     }
   } else if (kind in CLOUD_MODELS) {
-    for (const model of CLOUD_MODELS[
-      kind as keyof typeof CLOUD_MODELS
-    ]) {
+    for (const model of CLOUD_MODELS[kind as keyof typeof CLOUD_MODELS]) {
       options.push({ value: model, label: model });
     }
   }
@@ -145,7 +143,6 @@ export function isCatalogModel(
   if (modelValue === "") return true;
   const options = modelOptionsForKind(kind, localStatuses);
   return options.some(
-    (o) =>
-      o.value !== CUSTOM_MODEL_VALUE && o.value === modelValue,
+    (o) => o.value !== CUSTOM_MODEL_VALUE && o.value === modelValue,
   );
 }

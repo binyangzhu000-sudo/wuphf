@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"github.com/nex-crm/wuphf/internal/config"
@@ -80,6 +81,11 @@ func (b *Broker) WikiInitErr() error {
 
 func (b *Broker) initWikiWorker() {
 	repo := NewRepo()
+	// A wiki written before the lead bot was renamed keeps its files under
+	// the old slug; move them so agents/<slug>/SOUL.md and the people
+	// article resolve for "cos".
+	migrateLegacyLeadSlugDir(filepath.Join(repo.Root(), "agents"))
+	migrateLegacyLeadSlugFile(filepath.Join(repo.Root(), "team", "people"), ".md")
 	lifecycleCtx := b.brokerLifecycleContext()
 	ctx, cancel := context.WithTimeout(lifecycleCtx, 30*time.Second)
 	defer cancel()
@@ -104,7 +110,15 @@ func (b *Broker) initWikiWorker() {
 		}
 	}
 
-	idx := NewWikiIndex(repo.Root())
+	idx, idxErr := newWikiIndexForBackend(lifecycleCtx, repo.Root())
+	if idxErr != nil {
+		// Only reachable when the operator pinned WUPHF_WIKI_BACKEND=gbrain and
+		// the brain is unreachable. Leave the worker un-initialized so writes
+		// fail cleanly with ErrWorkerStopped, matching the git-missing path.
+		b.wikiInitErr = idxErr
+		log.Printf("wiki: index init failed: %v", idxErr)
+		return
+	}
 
 	worker := NewWikiWorkerWithIndex(repo, b, idx)
 	worker.Start(lifecycleCtx)
@@ -148,7 +162,7 @@ func (b *Broker) initWikiWorker() {
 	// stale errors from a previous attempt.
 	b.wikiInitErr = nil
 
-	b.backfillAgentFilesForRoster()
+	b.backfillBotFilesForRoster()
 
 	// Skill status reconciliation: now that the wiki worker is wired,
 	// prefer the on-disk SKILL.md frontmatter status over the potentially
@@ -162,15 +176,19 @@ func (b *Broker) initWikiWorker() {
 	// handlePostSkill, or during a window when wikiWorker was nil) get
 	// written here so /wiki/article?path=team/skills/<slug>.md no longer
 	// 404s. Runs async because each enqueue blocks on a git commit and the
-	// broker should not stall startup waiting for them.
-	go b.backfillSkillFilesFromState(lifecycleCtx)
+	// broker should not stall startup waiting for them. Tracked so Stop
+	// drains it: every office now seeds two system skills, so this always
+	// writes, and an untracked goroutine kept committing into a test's
+	// temp dir after the test returned (TempDir cleanup: "directory not
+	// empty").
+	b.trackBackground(func() { b.backfillSkillFilesFromState(lifecycleCtx) })
 
 	// Boot reconcile: walk the full wiki tree and populate the index from
 	// existing markdown + jsonl. Runs async so it does not delay broker
 	// startup. The per-commit ReconcilePath calls keep the index live once
 	// the reconcile finishes. If reconcile fails the index is empty but
 	// readable — it will self-heal on the next ReconcilePath call.
-	go func() {
+	b.trackBackground(func() {
 		bgCtx, cancel := context.WithTimeout(lifecycleCtx, 5*time.Minute)
 		defer cancel()
 		if err := idx.ReconcileFromMarkdown(bgCtx); err != nil {
@@ -178,7 +196,7 @@ func (b *Broker) initWikiWorker() {
 		} else {
 			log.Printf("wiki_index: boot reconcile complete")
 		}
-	}()
+	})
 
 	// Daily lint cron. The schedule is controlled by WUPHF_LINT_CRON (default
 	// "09:00" local time). Empty string disables the cron (useful in tests).

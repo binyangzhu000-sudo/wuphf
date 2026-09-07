@@ -1,7 +1,7 @@
 /**
  * humanizeActivity — the render-boundary humanizer (ten-out-of-ten E1).
  *
- * Agent runtime strings leak engineering internals into human surfaces:
+ * Bot runtime strings leak engineering internals into human surfaces:
  * MCP tool ids ("mcp__wuphf-office__team_task"), raw tool-call JSON
  * ('[{"tool_name":…,"type":"tool_reference"}]') in the typing strip,
  * process exhaust ("signal: killed", "exit status 1") in the activity
@@ -75,12 +75,43 @@ export function looksLikeRawToolPayload(raw: string): boolean {
     /signal:\s*killed/i.test(s) ||
     /\bexit status \d+/i.test(s) ||
     // optional "running"/"using" verb + a snake_case identifier and nothing else
-    /^(?:running|using)?\s*[a-z0-9]+(?:_[a-z0-9]+)+$/i.test(s)
+    /^(?:running|using)?\s*[a-z0-9]+(?:_[a-z0-9]+)+$/i.test(s) ||
+    looksLikeRunnerExhaust(s)
   );
 }
 
 /**
- * Clean a LIVE activity string ("what is this agent doing right now") for
+ * Strings the agent runner itself emits between tool calls. None of them
+ * describe work to a person; a human eval (2026-09-03) saw every one of
+ * these under an agent's name in the sidebar.
+ */
+const RUNNER_EXHAUST_PATTERNS: readonly RegExp[] = [
+  /^\(bash completed/i, // "(Bash completed with no output)"
+  /^<persisted-output>/i, // "<persisted-output> Output too large…"
+  /no matching deferred tools/i,
+  /^\s*\d+\s+(?:\/\/|#|\/\*)\s/, // a numbered source line: "1 // Package…"
+  /^(?:~|\.{1,2})?\/(?:[\w.-]+\/)+[\w.-]*$/, // an absolute or relative path
+];
+
+/** True when the string is two or more bare file names and nothing else. */
+function looksLikeFileListing(s: string): boolean {
+  const tokens = s.split(/\s+/);
+  if (tokens.length < 2) return false;
+  const fileLike = tokens.filter((t) => /^[\w.-]+\.[a-z0-9]{1,5}$/i.test(t));
+  const bareWord = tokens.filter((t) => /^[\w-]+$/.test(t));
+  return (
+    fileLike.length >= 2 && fileLike.length + bareWord.length === tokens.length
+  );
+}
+
+function looksLikeRunnerExhaust(s: string): boolean {
+  return (
+    RUNNER_EXHAUST_PATTERNS.some((re) => re.test(s)) || looksLikeFileListing(s)
+  );
+}
+
+/**
+ * Clean a LIVE activity string ("what is this bot doing right now") for
  * the participants rail and the typing strip. Genuine prose passes
  * through; anything machine-shaped collapses to "Working…" so the user
  * still sees activity without seeing code.

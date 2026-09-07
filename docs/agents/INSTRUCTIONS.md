@@ -25,7 +25,8 @@ repo-local instruction files are the runtime source of truth for contributors.
 
 ### Git And PRs
 
-- Never push directly to `main`.
+- Never push directly to `main` (repos with other contributors; see each repo's
+  own profile below for exceptions).
 - Use a branch and open a draft PR for code changes.
 - Use Conventional Commits for commit messages.
 - Run the repo's documented checks before opening or marking a PR ready.
@@ -133,13 +134,29 @@ Web suite and `bash scripts/test-web.sh web/src/path/to/file.test.ts` for
 focused Web tests; do not use `bun test` inside `web/`, because that invokes
 Bun's native test runner instead of the repo's Vitest setup.
 
-### PR And Hooks
+### Landing Changes (overrides "Git And PRs" above for this repo)
 
-- Branch and PR for all code changes.
-- Open PRs as draft.
-- Run the full relevant test suite before marking ready.
+Wuphf is built by a single person. There is no reviewer to wait for, so the
+PR-and-approval ceremony is not the workflow here:
+
+- **Commit to `main` and push directly** (`git push origin HEAD:main`). GitHub
+  reports "Bypassed rule violations" for the branch-protection rule; that is
+  expected and authorized for this repo.
+- Open a PR only when a second opinion is actually wanted. Do not open one just
+  to satisfy process.
+- **The pre-push hooks and CI are the only change-management controls left, so
+  they are not optional.** Never push with `--no-verify`. Lefthook pre-push
+  runs the Go suite, web typecheck + tests, build, vet, and vhs for the file
+  types you touched.
+- Watch the `CI` run on `main` after pushing (`gh run list --branch main`) and
+  fix a red main immediately — nothing gates it before the push any more.
+- Use Conventional Commits; `commitlint` runs on every push.
 - Run `./scripts/bootstrap.sh` after cloning to install dependencies and hooks.
-- Never push with `--no-verify`.
+  In a fresh worktree also run `bun install` in `web/` and `agent/`, or the
+  pre-push web hook fails on missing `node_modules`.
+- Gotcha: `git checkout -B main` fails when another worktree already holds
+  `main`. Work on a detached HEAD and push with `git push origin HEAD:main`;
+  plain `git push origin main` pushes the other worktree's stale local ref.
 
 ### Screenshots
 
@@ -298,6 +315,284 @@ End your summary with this disposition table:
 | 3 | <short> | DEFERRED | <issue link> |
 ```
 
+### Diagnostic probes in a shared tree
+
+Toggling a flag to prove a test is genuinely red before your fix is good
+practice and this repo asks for it. In a tree where several agents are working
+at once, the technique needs a blast radius.
+
+The rule: **a probe must not be able to break anyone else's build, and must not
+be able to fail anyone else's test run.**
+
+- Put the probe in a `_test.go` file. A package-level `const` in a normal file
+  breaks `go build` for every other agent the moment you delete it mid-run, and
+  the error names a symbol nobody else has ever heard of.
+- Give a probe test `t.Skip` by default, or a build tag. An untracked
+  `zz_*_probe_test.go` that fails by design reads to everyone else as their own
+  regression.
+- Delete it when you are done, and verify with a grep rather than asserting it.
+- If you must flip something that changes behaviour tree-wide, say so first.
+
+This is written down because it cost real time twice in one session. Two
+separate probe files each produced a phantom failure that other agents then
+spent effort attributing — one of them by re-running the suite four times and
+diffing the failure sets. Both probes were legitimate; neither was scoped.
+
+Corollary for reading a red suite in a shared tree: **attribute before you
+fix.** Run the failing test in isolation, check whether the file is modified by
+someone else, and check whether the failure set changes between runs. A failure
+that moves between runs is somebody landing work, not a bug in your change.
+
+### A verified fact about a shared tree has a shelf life
+
+"Verify, do not assume" is the right instinct and it quietly stops being
+sufficient when several agents are writing to one tree. A check that was
+accurate when you ran it can be stale by the time anyone reads your report, and
+a stale observation is indistinguishable from a wrong one.
+
+This cost real time. Four separate misreads in one session, and not one of them
+was wrong when it was made: a file mid-verification-revert, a commit that missed
+an edit by 59 seconds, a failure set that changed between runs, and a "this has
+not landed" that had landed a minute later.
+
+The mitigation is free: **state what you checked and when.** "grep at 16:04 on
+the working tree showed no match" is a fact with a timestamp attached. "The hunk
+is not applied" is a claim that decays silently.
+
+Say which artefact, too — the working tree, the index, and a given commit are
+three different things, and "it is not there" is true of one and false of
+another more often than you would expect.
+
+### File ownership needs an escape hatch
+
+"One owner per file" is what lets several agents work a tree in parallel without
+clobbering each other, and it should stay. But as usually written it has no exit:
+an agent that needs two lines in a file someone else holds asks, gets no reply
+because the holder is heads-down, and then correctly does nothing.
+
+That happened here. A finished feature sat complete and invisible for hours,
+waiting on an import and one early return. The agent asked twice and waited,
+which was the right call under the rule as written, and the rule was wrong.
+
+So the rule has a timeout:
+
+1. Ask the holder, and say exactly what you need — ideally the patch itself, not
+   a description of it. A two-line patch is cheaper for them to apply than a
+   paragraph to interpret.
+2. If there is no reply in a reasonable window, HAND OVER THE PATCH and tell the
+   coordinator you are blocked. Do not sit on it silently.
+3. The coordinator either routes it to the holder as a priority or reassigns the
+   file. Ownership is a coordination device, not a lock.
+4. Never edit a file you were told someone else holds without that reassignment.
+   The escape hatch is escalation, not unilateral action.
+
+Corollary for the holder: if someone hands you a patch for your file, apply it
+before your own next task. You are the only person who can, and something is
+stopped until you do.
+
+Corollary for whoever is coordinating: if you are told an agent is blocked on a
+file, that is the highest-priority item you have. A blocked agent costs more than
+a slow one.
+
+### Never create a state you intend to undo, in a shared tree
+
+Proving a test goes red before your fix is required here. Doing it by reverting
+the real files, in place, is not.
+
+An agent verified four fixes by scripting a revert of all four files, running
+the suite, and restoring — three times, in windows minutes long, unannounced,
+while five other agents worked in the same tree. The reverts touched code lines
+and not the comments above them, so during those windows the tree contained
+exactly the artefact you would expect: a comment describing a fix with the
+broken line still underneath it, and an empty-state branch made unreachable.
+
+Two other agents bisected into that window. A third (me) read the tree, found
+the half-applied state, "fixed" a file that was already correct, and reported a
+pattern of unexecuted edits that had never happened. Hours went into diagnosing
+an artefact.
+
+So:
+
+- Verify red-pre-fix on a COPY outside the tree, or against a stashed patch you
+  apply to a scratch checkout. Never by mutating the shared working tree.
+- If you genuinely must change shared state temporarily, announce it first and
+  announce when it is restored.
+- Revert scripts that match on code lines will leave comments describing the
+  new behaviour above the old code. That combination is indistinguishable from
+  sloppiness, and it is what everyone else will conclude.
+
+The general form: **in a shared tree, do not create a state you intend to
+undo.** Someone else will read it while it exists, and they will believe it.
+
+### After a bulk edit, check what was REMOVED
+
+A mechanical pass over many call sites can quietly undo correct code while
+appearing to add correct code, and a line count will not show it.
+
+Real example: a revert script using first-occurrence replacement matched a
+PRE-EXISTING correct call earlier in the file instead of the one it was aiming
+at. It downgraded working code and left the intended site unchanged — exactly
+backwards, with a plausible-looking diffstat. It was caught by diffing for the
+lines that DISAPPEARED, not by reading the ones that arrived.
+
+So after any sweep touching more than a handful of sites:
+
+- Diff for REMOVALS specifically, and confirm every one was intended.
+- Prefer anchored, unique matches over first-occurrence replacement.
+- If a script did the edit, verify a sample by hand. The script's own output is
+  not evidence; it reports what it believes it did.
+
+### A tool reporting success is not evidence that it did the thing
+
+The recurring failure in this repo is not a tool that errors. It is a tool that
+returns confidently and is wrong, in a way that is self-consistent so nothing
+contradicts it.
+
+Observed, all in one session:
+
+- `grep -n 'command' editor.tsx` returned NOTHING on a file whose own import
+  line reads `from "./slash-commands"`. Root cause, found later: TWO source
+  files contained a literal NUL byte, so `file` classified them as data and
+  every binary-aware tool — grep, ripgrep, ugrep — skipped them in silence,
+  with zero matches and exit 0. See "A NUL byte makes a source file invisible"
+  below. Both files are fixed and the set is empty, so grep is trustworthy
+  again; the entry stays because the SILENCE is the lesson.
+- `new_tab` and `switch_tab` both reported success while the created tab had
+  been closed underneath the caller, so evaluation silently kept landing on a
+  DIFFERENT tab than the one named in the return value.
+- A colour probe reported a token as pale lilac. The probe composited over
+  white; the dark themes define that token with alpha, so lightness was
+  theme-dependent and only the hue was actually wrong.
+- A contrast check passed while the colour it validated was not the colour on
+  screen.
+
+The rule that follows:
+
+- A negative result that MATTERS deserves a second route. "Not found", "no
+  other call sites", "nothing else reads this" are load-bearing claims when
+  they justify deleting code or removing a gate; confirm those through Python
+  or the DOM. This is about the weight of the conclusion, not distrust of the
+  tool — do not slow every search down.
+- When an instrument and your intuition share an assumption, agreement between
+  them is not corroboration. Check against reality by a route that does not
+  share the assumption.
+
+An earlier version of this section told everyone to treat EVERY negative grep
+as unproven. That was an overcorrection written before the cause was known: it
+would have taxed every search forever to work around a two-character bug in two
+files. Diagnose before you legislate.
+
+### A guard that can go quiet is worse than no guard
+
+The recurring failure in this repo's tooling is not a check that fails. It is a
+check that stops checking, keeps reporting success, and so manufactures
+confidence that nobody re-examines. Four instances, all found in one session,
+all in different mechanisms:
+
+- **CI concurrency.** `concurrency.group` was keyed on `github.ref`, which is
+  the same string for every push to main, with `cancel-in-progress: true`. Each
+  push cancelled the previous run. When pushes land faster than CI completes,
+  main accumulates commits nothing ever checked — 8 of 10 consecutive runs
+  cancelled. That is not a red main, it is an UNKNOWN main, and it is worse:
+  nothing gates the push, and the thing meant to catch it afterwards never
+  finishes. The one run that did complete had been failing for hours.
+- **The e2e spec list.** The job named 11 spec files; 7 had been deleted.
+  Playwright treats a positional argument as a filter, and a filter matching no
+  file contributes no tests, no warning, exit 0. The job ran 4 specs while
+  appearing to run 11.
+- **The phantom-token guard.** Built on grep, so it silently skipped
+  NUL-bearing files while reporting OK. Its coverage had shrunk from 838
+  components to 832 without a word.
+- **The MCP alias list.** Claude and opencode iterate `ServerKeys()`; the codex
+  runner writes one hardcoded key. An alias list that works in every runner
+  except one is worse than no alias list, because it passes every test anyone
+  would think to write.
+
+What they have in common: the mechanism reports success, the output looks
+normal, and the only evidence of the hole is an absence — a run that did not
+happen, a file that was not scanned, a spec that contributed no tests.
+
+So, for anything that exists to catch problems:
+
+- **Make it fail loudly rather than cover less.** A guard should refuse to run
+  on input it cannot handle, naming the input, instead of skipping it and
+  passing. The phantom-token guard now errors on a NUL-bearing file; the e2e
+  job now fails when it names a spec that does not exist.
+- **Assert the guard's own coverage.** Component and token counts, spec counts,
+  run counts. A number that can silently shrink should be checked, not printed.
+- **Ask what silence means.** If this check quietly stopped working, what would
+  the output look like? If the answer is "exactly like success", it needs a
+  coverage assertion before it needs anything else.
+
+### A NUL byte makes a source file invisible to every text tool
+
+A literal NUL in a source file makes `file` classify it as data, and every
+binary-aware search tool then skips it SILENTLY — no matches, no warning,
+exit 0. The file is still valid TypeScript and still compiles, so nothing else
+complains.
+
+Found in two files, both writing a control character as a raw byte instead of
+its escape: a cache-key separator in the wiki editor, and a NUL-injection
+security fixture in an apps test. Replacing the raw byte with `\0` gives an
+identical string value and restores the file to UTF-8 text.
+
+The damage is not the failed search, it is what depends on searching:
+
+- `scripts/check-css-phantom-tokens.sh` is built on grep, so it had been
+  skipping those files while reporting OK. Its coverage was silently shrinking
+  — 832 components before the fix, 838 after. A guard written to catch this
+  exact class of failure was failing that way itself.
+- The guard now REFUSES TO RUN if any file it is about to scan contains a NUL,
+  naming the file. A guard whose coverage can shrink without saying so is worse
+  than no guard, because it produces confidence.
+
+If a search returns nothing on a file you have reason to believe contains the
+string, check `file <path>` before concluding anything. Write control
+characters as escapes, never as raw bytes.
+
+### A caveat that names the wrong item is worse than a vague one
+
+Report limits on your own claims — but a PRECISE caveat is a claim too, and it
+can be wrong the same way any other claim can.
+
+Real example: an agent verifying six call sites reported "five are red by
+construction, not by demonstration — the `return ""` variant is the one that
+differs." Every part of that was written in good faith and the count was
+correct. The identification was backwards: the regex had matched the `return ""`
+site and missed the bare `return` majority, so the site named as uncovered was
+the one already proven. Acting on the sentence would have re-proved a proven
+site and left five unproven.
+
+A vague caveat makes a reader cautious everywhere. A precise one makes them
+cautious in exactly one place and relaxed everywhere else — so when the
+precision is wrong it does not merely fail to help, it redirects attention away
+from the real gap.
+
+- Name the SITES, not the shape. A shape is a description of the thing; the
+  sites are the thing.
+- Before writing "all but X" or "every one except Y", go and look at X and Y.
+  The caveat deserves the same verification as the claim it qualifies.
+- Prefer demonstrating every case to arguing that the remainder follows. "By
+  identical construction" is an inference, and it is exactly as strong as your
+  belief that the constructions are identical — which is the belief most likely
+  to be wrong, because it is the one nobody checks.
+
+### Never drive the shared browser
+
+Agents must not automate the founder's running Chrome. Use Playwright with its
+own isolated browser; it is already in `web/` devDependencies.
+
+This is not hypothetical. The shared harness pinned an agent's session to a tab
+on the founder's live stack, and several evaluations plus one synthetic click
+ran against the founder's window before the agent noticed. Nothing was
+destroyed, but nothing about the tool's return values revealed it either — see
+the section above.
+
+A shared browser is shared mutable state with someone sitting in front of it.
+Treat it exactly like the shared worktree rules: do not act in a space someone
+else is occupying, and if you discover you did, say so immediately and say what
+ran.
+
 ### Worktree-based parallelism
 
 For multi-batch fixes:
@@ -333,6 +628,9 @@ iteration hook; reviewer practice is to run the demo, not eyeball the diff.
 ### Lint And Security
 
 - Go: `gofmt`, `go vet ./...`, and `golangci-lint run ./...`.
-- Web: `bunx biome check --write`.
+- Web: `bun run lint:fix` from `web/`. It covers `src/` **and**
+  `public/themes/` — the theme files are stylesheets like any other, and
+  scoping the command to `src/` alone let a formatting error sit in
+  `nex-shell.css` unnoticed.
 - Secrets: `bunx secretlint`.
 - Do not suppress lint warnings with ignore comments.

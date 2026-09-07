@@ -74,9 +74,13 @@ const styles = {
   rail: {
     width: 56,
     flexShrink: 0,
-    background: "var(--workspace-rail-bg, #0a0a0a)",
-    borderRight:
-      "1px solid var(--workspace-rail-border, rgba(255, 255, 255, 0.1))",
+    // The rail is deliberately the darkest chrome in every theme (the
+    // light-on-dark --neutral-100 ink below has always assumed that), but
+    // --workspace-rail-* was declared nowhere, so the literals below were
+    // the real values and the rail could not follow the theme at all.
+    // --neutral-950 is the darkest stop of each theme's own ramp.
+    background: "var(--neutral-950)",
+    borderRight: "1px solid var(--overlay-white-soft)",
     display: "flex" as const,
     flexDirection: "column" as const,
     alignItems: "center" as const,
@@ -84,7 +88,7 @@ const styles = {
     gap: 14,
     height: "100vh",
     overflowY: "auto" as const,
-    color: "var(--workspace-rail-fg, var(--neutral-100))",
+    color: "var(--neutral-100)",
   },
   icon: (
     active: boolean,
@@ -95,12 +99,8 @@ const styles = {
     height: 36,
     borderRadius: 8,
     border: active ? "2px solid var(--accent)" : "2px solid transparent",
-    background: paused
-      ? "var(--workspace-rail-icon-paused-bg, rgba(255,255,255,0.08))"
-      : bg,
-    color: paused
-      ? "var(--workspace-rail-icon-paused-fg, rgba(255,255,255,0.55))"
-      : readableTextOn(bg),
+    background: paused ? "var(--overlay-white-soft)" : bg,
+    color: paused ? "var(--neutral-300)" : readableTextOn(bg),
     fontWeight: 700,
     fontSize: 13,
     fontFamily: "var(--font-sans)",
@@ -499,10 +499,10 @@ export function WorkspaceRail({
         const leaf = router.state.matches.at(-1);
         const onConversation = leaf?.routeId === channelRoute.id;
         if (!onConversation) {
-          void router.navigate({
-            to: "/channels/$channelSlug",
-            params: { channelSlug: "general" },
-          });
+          // Home, not #general. Re-focusing an already-active workspace used
+          // to drop the user into the shared room, which is retired — so the
+          // click landed on "Page not found".
+          void router.navigate({ to: "/" });
         }
         return;
       }
@@ -516,7 +516,7 @@ export function WorkspaceRail({
       }
       if (ws.state === "error") {
         showNotice(
-          `Workspace '${ws.name}' is in an error state. Run 'wuphf workspace doctor' to investigate.`,
+          `Workspace '${ws.name}' is in an error state. Run 'gawkbot workspace doctor' to investigate.`,
           "error",
         );
         return;

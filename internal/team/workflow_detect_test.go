@@ -20,12 +20,12 @@ func appendRawLine(path, line string) error {
 
 // manifestFor builds a one-turn TurnManifest for a task with the given tools
 // (each counted once) — enough to drive the shape miner in tests.
-func manifestFor(taskID, agent string, tools ...string) TurnManifest {
+func manifestFor(taskID, bot string, tools ...string) TurnManifest {
 	tc := make([]TurnToolCount, 0, len(tools))
 	for _, name := range tools {
 		tc = append(tc, TurnToolCount{Name: name, Count: 1})
 	}
-	return TurnManifest{TaskID: taskID, Agent: agent, Tools: tc}
+	return TurnManifest{TaskID: taskID, Bot: bot, Tools: tc}
 }
 
 // TestDetectWorkflowsRecurrenceFloor: a no-outcome read-mostly shape surfaces
@@ -115,23 +115,23 @@ func TestDetectWorkflowsFuzzyTolerance(t *testing.T) {
 	}
 }
 
-// TestDetectWorkflowsCrossAgent: the same shape run by two DIFFERENT agents
-// clusters under CrossAgent (with the agent blanked), but stays per-agent by
+// TestDetectWorkflowsCrossBot: the same shape run by two DIFFERENT bots
+// clusters under CrossBot (with the bot blanked), but stays per-bot by
 // default.
-func TestDetectWorkflowsCrossAgent(t *testing.T) {
-	twoAgents := []TurnManifest{
+func TestDetectWorkflowsCrossBot(t *testing.T) {
+	twoBots := []TurnManifest{
 		manifestFor("t1", "revops", "crm_fetch_leads", "score_leads"),
 		manifestFor("t2", "sales", "crm_fetch_leads", "score_leads"),
 	}
-	if got := DetectWorkflows(twoAgents, DetectOptions{RecurrenceFloor: 2}); len(got) != 0 {
-		t.Fatalf("default: different agents must not cluster, got %d", len(got))
+	if got := DetectWorkflows(twoBots, DetectOptions{RecurrenceFloor: 2}); len(got) != 0 {
+		t.Fatalf("default: different bots must not cluster, got %d", len(got))
 	}
-	got := DetectWorkflows(twoAgents, DetectOptions{RecurrenceFloor: 2, CrossAgent: true})
+	got := DetectWorkflows(twoBots, DetectOptions{RecurrenceFloor: 2, CrossBot: true})
 	if len(got) != 1 || got[0].Count != 2 {
-		t.Fatalf("cross-agent: want one count=2 candidate, got %d (%+v)", len(got), got)
+		t.Fatalf("cross-bot: want one count=2 candidate, got %d (%+v)", len(got), got)
 	}
-	if got[0].Agent != "" {
-		t.Fatalf("cross-agent candidate must claim no single agent, got %q", got[0].Agent)
+	if got[0].Bot != "" {
+		t.Fatalf("cross-bot candidate must claim no single bot, got %q", got[0].Bot)
 	}
 }
 
@@ -161,7 +161,7 @@ func TestDetectWorkflowsSingleRunExternalizingOnly(t *testing.T) {
 // office MCP) never count toward a shape, so a chatty turn is not a "workflow".
 func TestDetectWorkflowsFiltersOrchestration(t *testing.T) {
 	got := DetectWorkflows([]TurnManifest{
-		manifestFor("t1", "ceo", "Bash", "Read", "mcp__wuphf-office__team_task", "Edit"),
+		manifestFor("t1", "cos", "Bash", "Read", "mcp__wuphf-office__team_task", "Edit"),
 	}, DetectOptions{RecurrenceFloor: 2})
 	if len(got) != 0 {
 		t.Fatalf("orchestration-only turn must not surface, got %d candidates", len(got))
@@ -196,7 +196,7 @@ func TestTurnManifestInlineScope(t *testing.T) {
 		for _, name := range tools {
 			tc = append(tc, HeadlessManifestEntry{ToolName: name, Count: 1})
 		}
-		return HeadlessEvent{Type: HeadlessEventTypeManifest, TaskID: taskID, TurnID: turnID, Agent: "ceo", ToolCalls: tc}
+		return HeadlessEvent{Type: HeadlessEventTypeManifest, TaskID: taskID, TurnID: turnID, Bot: "cos", ToolCalls: tc}
 	}
 
 	// Task turn → recorded under the task id.

@@ -59,8 +59,8 @@ func (m channelModel) submitMemberDraft() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		draft.Slug = channelui.NormalizeDraftSlug(value)
-		if draft.Slug == "ceo" {
-			m.notice = "CEO is reserved."
+		if draft.Slug == "cos" {
+			m.notice = "Chief of Staff is reserved."
 			return m, nil
 		}
 		draft.Step++
@@ -120,7 +120,7 @@ func memberDraftComposerLabel(d channelMemberDraft) string {
 	case "personality":
 		return "Personality"
 	default:
-		return "Agent setup"
+		return "Bot setup"
 	}
 }
 

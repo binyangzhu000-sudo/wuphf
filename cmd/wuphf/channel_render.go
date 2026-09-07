@@ -15,11 +15,11 @@ func buildOfficeMessageLines(messages []channelui.BrokerMessage, expanded map[st
 	if len(messages) == 0 {
 		lines = append(lines,
 			channelui.RenderedLine{Text: ""},
-			channelui.RenderedLine{Text: mutedStyle.Render("  Welcome to The WUPHF Office. The cast is assembled.")},
+			channelui.RenderedLine{Text: mutedStyle.Render("  Welcome to gawkbot. The staff is assembled, and they are all looking at you.")},
 			channelui.RenderedLine{Text: mutedStyle.Render("  Drop a company-building thought in #general, or tag a teammate to get things moving.")},
 			channelui.RenderedLine{Text: ""},
-			channelui.RenderedLine{Text: mutedStyle.Render("  Suggested: Let's build an AI notetaking company. (Ryan Howard would've called it NoteWUPHF.)")},
-			channelui.RenderedLine{Text: mutedStyle.Render("  The CEO triages first, then the right specialists pile in — unlike the original WUPHF.com, this ships.")},
+			channelui.RenderedLine{Text: mutedStyle.Render("  Suggested: Let's build an AI notetaking company.")},
+			channelui.RenderedLine{Text: mutedStyle.Render("  The Chief of Staff triages first, then the right specialists pile in — unlike the original WUPHF.com, this ships.")},
 		)
 		return lines
 	}
@@ -32,16 +32,16 @@ func buildOfficeMessageLines(messages []channelui.BrokerMessage, expanded map[st
 	return lines
 }
 
-func buildOneOnOneMessageLines(messages []channelui.BrokerMessage, expanded map[string]bool, contentWidth int, agentName string, unreadAnchorID string, unreadCount int) []channelui.RenderedLine {
+func buildOneOnOneMessageLines(messages []channelui.BrokerMessage, expanded map[string]bool, contentWidth int, botName string, unreadAnchorID string, unreadCount int) []channelui.RenderedLine {
 	if len(messages) == 0 {
 		mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(channelui.SlackMuted))
 		return []channelui.RenderedLine{
 			{Text: ""},
-			{Text: mutedStyle.Render("  Conference room reserved. Direct session reset. Agent pane reloaded in place.")},
-			{Text: mutedStyle.Render("  No colleagues, no sidebar, no Toby. Just you and " + agentName + ".")},
+			{Text: mutedStyle.Render("  Conference room reserved. Direct session reset. Bot pane reloaded in place.")},
+			{Text: mutedStyle.Render("  No sidebar, no interruptions. Just you and " + botName + ".")},
 			{Text: ""},
 			{Text: mutedStyle.Render("  Suggested: Help me think through the v1 launch plan.")},
-			{Text: mutedStyle.Render("  Whatever you say here stays in this room. Like Vegas. Or Threat Level Midnight.")},
+			{Text: mutedStyle.Render("  Whatever you say here stays in this room.")},
 		}
 	}
 	return buildOfficeMessageLines(messages, expanded, contentWidth, true, unreadAnchorID, unreadCount)

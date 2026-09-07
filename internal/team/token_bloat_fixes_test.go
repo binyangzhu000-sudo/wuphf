@@ -6,21 +6,21 @@ import (
 	"time"
 )
 
-// TestDuplicateAgentBroadcastIsSuppressed verifies that when the same agent
+// TestDuplicateBotBroadcastIsSuppressed verifies that when the same bot
 // posts a near-identical broadcast to the same channel+thread within the
 // dedup window, the broker silently drops the duplicate. This is the
 // broker-side safety net for the "CEO emits 3 broadcasts in one turn"
-// pattern — the prompt rule telling agents not to do that is routinely
+// pattern — the prompt rule telling bots not to do that is routinely
 // ignored, so this enforces it at the persistence layer.
-func TestDuplicateAgentBroadcastIsSuppressed(t *testing.T) {
+func TestDuplicateBotBroadcastIsSuppressed(t *testing.T) {
 	b := newTestBroker(t)
 	now := time.Now().UTC().Format(time.RFC3339)
 	b.mu.Lock()
 	b.messages = []channelMessage{
 		{
 			ID:        "msg-1",
-			From:      "ceo",
-			Channel:   "general",
+			From:      "cos",
+			Channel:   "team",
 			Content:   "Ball is in reviewer's court, shipping the PR now.",
 			ReplyTo:   "",
 			Timestamp: now,
@@ -32,39 +32,39 @@ func TestDuplicateAgentBroadcastIsSuppressed(t *testing.T) {
 	defer b.mu.Unlock()
 
 	// Byte-identical → drop.
-	if !b.isDuplicateAgentBroadcastLocked("ceo", "general", "", "Ball is in reviewer's court, shipping the PR now.") {
+	if !b.isDuplicateBotBroadcastLocked("cos", "team", "", "Ball is in reviewer's court, shipping the PR now.") {
 		t.Error("exact duplicate should be detected")
 	}
 	// Paraphrased but same semantic content → drop (Jaccard over word set).
-	if !b.isDuplicateAgentBroadcastLocked("ceo", "general", "", "Ball is in the reviewer's court — shipping the PR now.") {
+	if !b.isDuplicateBotBroadcastLocked("cos", "team", "", "Ball is in the reviewer's court — shipping the PR now.") {
 		t.Error("near-duplicate with trivial punctuation drift should be detected")
 	}
 	// Truly different content → allow.
-	if b.isDuplicateAgentBroadcastLocked("ceo", "general", "", "Planner is blocked on a missing spec.") {
+	if b.isDuplicateBotBroadcastLocked("cos", "team", "", "Planner is blocked on a missing spec.") {
 		t.Error("distinct content must not be flagged duplicate")
 	}
-	// Different agent → allow.
-	if b.isDuplicateAgentBroadcastLocked("planner", "general", "", "Ball is in reviewer's court, shipping the PR now.") {
+	// Different bot → allow.
+	if b.isDuplicateBotBroadcastLocked("planner", "team", "", "Ball is in reviewer's court, shipping the PR now.") {
 		t.Error("duplicate detection must scope to the sender")
 	}
 	// Different thread → allow.
-	if b.isDuplicateAgentBroadcastLocked("ceo", "general", "msg-99", "Ball is in reviewer's court, shipping the PR now.") {
+	if b.isDuplicateBotBroadcastLocked("cos", "team", "msg-99", "Ball is in reviewer's court, shipping the PR now.") {
 		t.Error("duplicate detection must scope to (channel, thread)")
 	}
 }
 
-// TestDuplicateAgentBroadcastWindowExpires verifies the dedup window is time
+// TestDuplicateBotBroadcastWindowExpires verifies the dedup window is time
 // bounded — a follow-up beyond the window posts normally.
-func TestDuplicateAgentBroadcastWindowExpires(t *testing.T) {
+func TestDuplicateBotBroadcastWindowExpires(t *testing.T) {
 	b := newTestBroker(t)
 	old := time.Now().UTC().Add(-2 * duplicateBroadcastWindow).Format(time.RFC3339)
 	b.mu.Lock()
 	b.messages = []channelMessage{
-		{ID: "msg-1", From: "ceo", Channel: "general", Content: "same content", Timestamp: old},
+		{ID: "msg-1", From: "cos", Channel: "team", Content: "same content", Timestamp: old},
 	}
 	defer b.mu.Unlock()
 
-	if b.isDuplicateAgentBroadcastLocked("ceo", "general", "", "same content") {
+	if b.isDuplicateBotBroadcastLocked("cos", "team", "", "same content") {
 		t.Error("messages older than duplicateBroadcastWindow must not trigger dedup")
 	}
 }
@@ -86,20 +86,20 @@ func TestStaleUnansweredFilteredOnResume(t *testing.T) {
 	fresh := time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339)
 	b.mu.Lock()
 	// Pin members explicitly so the test stays self-contained: this
-	// scenario only cares about ceo + planner routing. Defense-in-depth
+	// scenario only cares about cos + planner routing. Defense-in-depth
 	// against future leaks — the root cause (launcher tests leaking a
 	// youtube-factory manifest into the init-time WUPHF_RUNTIME_HOME) is
 	// fixed in the same PR, but the buildResumePackets inPack-drop path
 	// fails silently (no error, just a missing packet) so any new leak
 	// would be painful to re-diagnose.
 	b.members = []officeMember{
-		{Slug: "ceo", Name: "CEO"},
+		{Slug: "cos", Name: "CEO"},
 		{Slug: "planner", Name: "Planner"},
 	}
 	b.messages = []channelMessage{
-		{ID: "h1", From: "you", Channel: "general", Content: "stale — ignore", Tagged: []string{"planner"}, Timestamp: stale},
-		{ID: "h2", From: "you", Channel: "general", Content: "fresh — answer", Tagged: []string{"planner"}, Timestamp: fresh},
-		{ID: "h3", From: "you", Channel: "general", Content: "malformed — ignore", Tagged: []string{"planner"}, Timestamp: "not-a-time"},
+		{ID: "h1", From: "you", Channel: "team", Content: "stale — ignore", Tagged: []string{"planner"}, Timestamp: stale},
+		{ID: "h2", From: "you", Channel: "team", Content: "fresh — answer", Tagged: []string{"planner"}, Timestamp: fresh},
+		{ID: "h3", From: "you", Channel: "team", Content: "malformed — ignore", Tagged: []string{"planner"}, Timestamp: "not-a-time"},
 	}
 	b.mu.Unlock()
 

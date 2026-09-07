@@ -12,9 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nex-crm/wuphf/internal/channel"
+	"github.com/nex-crm/wuphf/internal/computer/box"
 	"github.com/nex-crm/wuphf/internal/config"
-	"github.com/nex-crm/wuphf/internal/nex"
 	"github.com/nex-crm/wuphf/internal/provider"
 )
 
@@ -87,7 +86,7 @@ func (b *Broker) handleCompany(w http.ResponseWriter, r *http.Request) {
 
 // validateProviderEndpointURL gates user-supplied base URLs persisted
 // to ~/.wuphf/config.json so a locally-authenticated client can't
-// pivot future agent turns to attacker-controlled targets via
+// pivot future bot turns to attacker-controlled targets via
 // schemes our HTTP client doesn't service (or persist URLs that
 // would surprise users on next launch). Allowed: http://… and
 // https://… with a non-empty host. Rejected: file://, gopher://,
@@ -97,7 +96,7 @@ func (b *Broker) handleCompany(w http.ResponseWriter, r *http.Request) {
 // Loopback hosts are allowed — wuphf's whole point is local-LLM
 // pointing at 127.0.0.1, and the runtime probe code already gates
 // reachability scans on isLoopbackBaseURL elsewhere. The threat we
-// care about here is "URL the agent runner will later POST a
+// care about here is "URL the bot runner will later POST a
 // system prompt + conversation to," which is governed by scheme +
 // host, not by loopback-vs-public.
 func validateProviderEndpointURL(raw string) error {
@@ -153,9 +152,9 @@ func (b *Broker) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"llm_provider_priority":   cfg.LLMProviderPriority,
 			// llm_provider_kinds is the non-gateway subset of the registered
 			// provider runtimes — the safe set to render in any UI runtime
-			// picker (Settings default-runtime, AgentProfilePanel runtime
-			// section, AgentWizard provider field). Gateway kinds (openclaw,
-			// hermes-agent) are excluded; the Integrations app surfaces them.
+			// picker (Settings default-runtime, BotProfilePanel runtime
+			// section, BotWizard provider field). Gateway kinds (openclaw,
+			// hermes-bot) are excluded; the Integrations app surfaces them.
 			"llm_provider_kinds": provider.LLMProviderKinds(),
 			// gateway_kinds is the inverse — registered kinds that are
 			// gateway-controlled. Consumed by the Integrations app to
@@ -173,7 +172,6 @@ func (b *Broker) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"email":          cfg.Email,
 			"workspace_id":   cfg.WorkspaceID,
 			"workspace_slug": cfg.WorkspaceSlug,
-			"dev_url":        cfg.DevURL,
 			// Company
 			"company_name":        cfg.CompanyName,
 			"company_description": cfg.CompanyDescription,
@@ -186,7 +184,6 @@ func (b *Broker) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"task_reminder_minutes":  config.ResolveTaskReminderInterval(),
 			"task_recheck_minutes":   config.ResolveTaskRecheckInterval(),
 			// Integrations — secret fields as booleans
-			"api_key_set":          config.ResolveAPIKey("") != "",
 			"openai_key_set":       config.ResolveOpenAIAPIKey() != "",
 			"realtime_model":       config.ResolveRealtimeModel(),
 			"anthropic_key_set":    config.ResolveAnthropicAPIKey() != "",
@@ -194,6 +191,7 @@ func (b *Broker) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"minimax_key_set":      config.ResolveMinimaxAPIKey() != "",
 			"one_key_set":          config.ResolveOneSecret() != "",
 			"composio_key_set":     config.IsComposioConfigured(),
+			"box_key_set":          config.ResolveBoxAPIKey() != "",
 			"telegram_token_set":   config.ResolveTelegramBotToken() != "",
 			"openclaw_token_set":   config.ResolveOpenclawToken() != "",
 			"openclaw_gateway_url": config.ResolveOpenclawGatewayURL(),
@@ -245,6 +243,7 @@ func (b *Broker) handleConfig(w http.ResponseWriter, r *http.Request) {
 			MinimaxAPIKey   *string `json:"minimax_api_key,omitempty"`
 			OneAPIKey       *string `json:"one_api_key,omitempty"`
 			ComposioAPIKey  *string `json:"composio_api_key,omitempty"`
+			BoxAPIKey       *string `json:"box_api_key,omitempty"`
 			TelegramToken   *string `json:"telegram_bot_token,omitempty"`
 			OpenclawToken   *string `json:"openclaw_token,omitempty"`
 			OpenclawGateway *string `json:"openclaw_gateway_url,omitempty"`
@@ -447,10 +446,6 @@ func (b *Broker) handleConfig(w http.ResponseWriter, r *http.Request) {
 			changed = true
 		}
 		// Secret fields
-		if body.APIKey != nil {
-			cfg.APIKey = strings.TrimSpace(*body.APIKey)
-			changed = true
-		}
 		if body.OpenAIAPIKey != nil {
 			cfg.OpenAIAPIKey = strings.TrimSpace(*body.OpenAIAPIKey)
 			changed = true
@@ -477,6 +472,20 @@ func (b *Broker) handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.ComposioAPIKey != nil {
 			cfg.ComposioAPIKey = strings.TrimSpace(*body.ComposioAPIKey)
+			changed = true
+		}
+		if body.BoxAPIKey != nil {
+			token := strings.TrimSpace(*body.BoxAPIKey)
+			// Check the key with the provider before saving it. Without this
+			// the paste "succeeds" and the first sign of trouble is a 401 in
+			// a bot's Computer tab minutes later, with nothing to act on.
+			if token != "" {
+				if err := box.VerifyToken(r.Context(), boxAPIBase(), token); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+			}
+			cfg.BoxAPIKey = token
 			changed = true
 		}
 		if body.TelegramToken != nil {
@@ -523,7 +532,7 @@ func (b *Broker) handleConfig(w http.ResponseWriter, r *http.Request) {
 				// — that includes both directly-dispatchable LLMs
 				// (claude-code/codex/opencode/mlx-lm/ollama/exo) and
 				// gateway-controlled HTTP runtimes (openclaw-http,
-				// hermes-agent) whose base_url + model the operator may
+				// hermes-bot) whose base_url + model the operator may
 				// legitimately want to override. The legacy openclaw
 				// bridge kind has no Register entry (it dispatches via
 				// the WebSocket bridge, not /v1/chat/completions) so
@@ -543,7 +552,7 @@ func (b *Broker) handleConfig(w http.ResponseWriter, r *http.Request) {
 				ep.Model = strings.TrimSpace(ep.Model)
 				// Security gate: a malicious authenticated client (or
 				// anyone with write access to ~/.wuphf/config.json) must
-				// not be able to redirect future agent turns to file://,
+				// not be able to redirect future bot turns to file://,
 				// gopher://, unix://, or schemeless URLs. Allow only the
 				// two URL families our HTTP client actually services
 				// (http, https) and require a non-empty host so a
@@ -601,45 +610,6 @@ func (b *Broker) handleConfig(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
-}
-
-// handleNexRegister wraps `nex-cli --cmd "setup <email>"` so the onboarding
-// wizard can register a Nex identity without the user dropping to the terminal.
-// Body: {"email": "..."}. Returns whatever the CLI prints on success, or the
-// CLI's stderr on failure. Requires nex-cli to be installed and on PATH.
-func (b *Broker) handleNexRegister(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var body struct {
-		Email string `json:"email"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	email := strings.TrimSpace(body.Email)
-	if email == "" {
-		http.Error(w, "email is required", http.StatusBadRequest)
-		return
-	}
-	output, err := nex.Register(r.Context(), email)
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadGateway)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status": "error",
-			"error":  err.Error(),
-		})
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"status": "ok",
-		"email":  email,
-		"output": output,
-	})
 }
 
 // handleOfficeMembers and the action handlers (create/update/remove)
@@ -743,8 +713,40 @@ func (b *Broker) handleChannels(w http.ResponseWriter, r *http.Request) {
 		b.mu.Lock()
 		channels := make([]teamChannel, 0, len(b.channels))
 		for _, ch := range b.channels {
+			// Group DMs are retired: withhold them from the listing so no
+			// multi-participant room can be reached from the UI. The row and
+			// its history stay on disk untouched and come back the moment the
+			// switch flips, which is the whole point of gating the list rather
+			// than deleting the channel.
+			if ch.isGroupDM() && !groupDMsEnabled() {
+				continue
+			}
+			// An app's edit thread is plumbing, not a room (see
+			// appEditChannelPrefix). It exists so an app can be correlated with
+			// its build conversation and so the Edit panel has something to wake
+			// on; nobody browses to it. Withheld HERE rather than only in the
+			// sidebar because "invisible" has to mean absent from the data every
+			// surface enumerates — a picker, a switcher, or a search box added
+			// later reads this endpoint and would otherwise list one dead room
+			// per app. The app's own Edit panel addresses the channel by slug and
+			// never reads this listing.
+			if strings.HasPrefix(ch.Slug, appEditChannelPrefix) {
+				continue
+			}
+			// Named-channel retirement: withhold ordinary named rooms from the
+			// listing. Bridged channels are EXEMPT — a Slack or Telegram room is
+			// how external messages arrive, and hiding it would strand every
+			// message that came in through it. ch.Surface is what marks one, so
+			// the carve-out reads off the data rather than off a slug list.
+			// DMs are unaffected; they are the surface that survives.
+			if !namedChannelsEnabled() && !ch.isDM() && ch.Surface == nil {
+				continue
+			}
 			if typeFilter == "dm" {
-				if ch.isDM() {
+				// Human DMs only. Bot↔bot pair DMs never appear in
+				// listings — their sole human surface is the consult
+				// markers' read-only thread view.
+				if _, _, pair := isBotToBotDM(ch.Slug); ch.isDM() && !pair {
 					channels = append(channels, ch)
 				}
 			} else {
@@ -794,6 +796,26 @@ func (b *Broker) handleChannels(w http.ResponseWriter, r *http.Request) {
 		}
 		switch action {
 		case "create":
+			// Named-channel retirement. The gate sits HERE, at the HTTP
+			// boundary, and NOT inside createChannelLocked — deliberately.
+			//
+			// createChannelLocked has five callers. Three of them must keep
+			// working while named channels are off: the Slack bridge, the
+			// Telegram bridge (both are how EXTERNAL messages arrive, not rooms
+			// bots chat in), and the app-<id> edit thread (hidden plumbing,
+			// load-bearing for apps being editable at all). Gating the shared
+			// helper would mean maintaining an exemption list inside it, and an
+			// exemption list is a thing that goes stale. Gating the one
+			// human-facing entry point needs no list: the other callers are
+			// exempt by construction.
+			//
+			// Do NOT "finish the job" by moving this into createChannelLocked.
+			if !namedChannelsEnabled() {
+				http.Error(w,
+					"named channels are retired: conversations happen in a DM with one bot. Open a DM and tag the others in it.",
+					http.StatusConflict)
+				return
+			}
 			ch, cerr := b.createChannelLocked(channelCreateInput{
 				Slug:        body.Slug,
 				Name:        body.Name,
@@ -828,12 +850,19 @@ func (b *Broker) handleChannels(w http.ResponseWriter, r *http.Request) {
 				ch.Surface = body.Surface
 			}
 			if body.Members != nil {
+				// A DM's participants are fixed by its slug. Editing them
+				// here would be the one remaining path for a third party
+				// into a private thread.
+				if ch.isDM() {
+					http.Error(w, "a DM's participants are fixed; open a channel for a group", http.StatusBadRequest)
+					return
+				}
 				members, missing := validateMembers(body.Members)
 				if missing != "" {
 					http.Error(w, "unknown members: "+missing, http.StatusNotFound)
 					return
 				}
-				ch.Members = uniqueSlugs(append([]string{"ceo"}, members...))
+				ch.Members = uniqueSlugs(append([]string{"cos"}, members...))
 				if len(ch.Disabled) > 0 {
 					// Drop any disabled entry whose slug is in the updated
 					// roster. The semantic pinned by
@@ -913,245 +942,6 @@ func (b *Broker) handleChannels(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// channelCreateInput is the input shape for createChannelLocked. It mirrors
-// the bits of the POST /channels body that drive a "create" action so the
-// Telegram-connect handler (and any future integration handler) can reuse the
-// canonical create path without re-implementing the validation rules.
-type channelCreateInput struct {
-	Slug        string
-	Name        string
-	Description string
-	Members     []string
-	CreatedBy   string
-	Surface     *channelSurface
-}
-
-// channelCreateError pairs an HTTP status with a user-facing message so the
-// caller can write it back through http.Error without rebuilding the
-// status-code → message mapping in every handler.
-type channelCreateError struct {
-	Code int
-	Msg  string
-}
-
-func (e *channelCreateError) Error() string { return e.Msg }
-
-// createChannelLocked is the canonical channel-create path. It validates the
-// slug, applies the reserved-slug guard, validates members against
-// b.findMemberLocked, prepends "ceo", optionally adds the creator, persists,
-// and publishes the change event. Caller MUST hold b.mu.
-//
-// All of this used to be inlined in handleChannels' "create" case; pulling it
-// out lets the Telegram-connect web flow share the exact same validation
-// rather than reimplementing them and drifting (the original copy in
-// handleTelegramConnect skipped member validation, the reserved-slug guard,
-// and the creator-self-add — all silent gaps that this consolidation closes).
-func (b *Broker) createChannelLocked(in channelCreateInput) (*teamChannel, *channelCreateError) {
-	// Validate the raw slug before normalizing — normalizeChannelSlug rewrites
-	// "" / whitespace to "general" and would have skipped the "slug required"
-	// branch entirely, falling through to "channel already exists" because
-	// #general always exists. Surface the missing-slug case as 400 with a
-	// useful message instead.
-	if strings.TrimSpace(in.Slug) == "" {
-		return nil, &channelCreateError{Code: http.StatusBadRequest, Msg: "slug required"}
-	}
-	slug := normalizeChannelSlug(in.Slug)
-	if slug == "" {
-		return nil, &channelCreateError{Code: http.StatusBadRequest, Msg: "slug required"}
-	}
-	if reservedChannelSlugs[slug] {
-		return nil, &channelCreateError{Code: http.StatusBadRequest, Msg: "slug is reserved"}
-	}
-	if b.findChannelLocked(slug) != nil {
-		return nil, &channelCreateError{Code: http.StatusConflict, Msg: "channel already exists"}
-	}
-
-	requested := uniqueSlugs(in.Members)
-	validated := make([]string, 0, len(requested))
-	var missing []string
-	for _, m := range requested {
-		if b.findMemberLocked(m) == nil {
-			missing = append(missing, m)
-			continue
-		}
-		validated = append(validated, m)
-	}
-	if len(missing) > 0 {
-		return nil, &channelCreateError{
-			Code: http.StatusNotFound,
-			Msg:  "unknown members: " + strings.Join(missing, ", "),
-		}
-	}
-
-	final := append([]string{"ceo"}, validated...)
-	// CreatedBy is an actor slug, not a channel slug. normalizeChannelSlug
-	// rewrites "" to "general", which would silently auto-add a real office
-	// member named "general" as a channel member whenever CreatedBy was
-	// empty. normalizeActorSlug preserves "" so the guard below short-circuits.
-	if creator := normalizeActorSlug(in.CreatedBy); creator != "" && creator != "ceo" && b.findMemberLocked(creator) != nil {
-		final = append(final, creator)
-	}
-
-	now := time.Now().UTC().Format(time.RFC3339)
-	ch := teamChannel{
-		Slug:        slug,
-		Name:        strings.TrimSpace(in.Name),
-		Description: strings.TrimSpace(in.Description),
-		Members:     uniqueSlugs(final),
-		Surface:     in.Surface,
-		CreatedBy:   strings.TrimSpace(in.CreatedBy),
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	}
-	if ch.Name == "" {
-		ch.Name = slug
-	}
-	if ch.Description == "" {
-		ch.Description = defaultTeamChannelDescription(ch.Slug, ch.Name)
-	}
-	b.channels = append(b.channels, ch)
-	if err := b.saveLocked(); err != nil {
-		// Roll back the in-memory append so a failed persist never leaves a
-		// ghost channel (one with no owning task that the UI can't reach, and
-		// that blocks a later create of the same slug with a phantom
-		// StatusConflict). Without this, createPerTaskChannelLocked's caller
-		// silently routes the task to #general instead of its own channel.
-		b.channels = b.channels[:len(b.channels)-1]
-		b.rebuildChannelIndexLocked()
-		return nil, &channelCreateError{Code: http.StatusInternalServerError, Msg: "failed to persist broker state"}
-	}
-	b.publishOfficeChangeLocked(officeChangeEvent{Kind: "channel_created", Slug: slug})
-	return &b.channels[len(b.channels)-1], nil
-}
-
-// handleCreateDM creates or returns an existing DM channel.
-// POST /channels/dm — body: {members: ["human", "engineering"], type: "direct"|"group"}
-func (b *Broker) handleCreateDM(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var body struct {
-		Members []string `json:"members"`
-		Type    string   `json:"type"` // "direct" or "group"
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid json", http.StatusBadRequest)
-		return
-	}
-	if len(body.Members) < 2 {
-		http.Error(w, "at least 2 members required", http.StatusBadRequest)
-		return
-	}
-	// Validate: at least one member must be "human" (no agent-to-agent DMs).
-	hasHuman := false
-	for _, m := range body.Members {
-		if isHumanMessageSender(m) {
-			hasHuman = true
-			break
-		}
-	}
-	if !hasHuman {
-		http.Error(w, "DM must include a human member; agent-to-agent DMs are not allowed", http.StatusBadRequest)
-		return
-	}
-
-	if b.channelStore == nil {
-		http.Error(w, "channel store not initialized", http.StatusInternalServerError)
-		return
-	}
-
-	var (
-		ch      *channel.Channel
-		err     error
-		created bool
-	)
-	dmType := strings.TrimSpace(strings.ToLower(body.Type))
-	// For group DMs, infer "created" from the group slug — the previous
-	// FindDirectByMembers lookup checked for a 1:1 channel between the
-	// first two members, which has no semantic relationship to whether
-	// the group already existed.
-	groupAlreadyExists := func(members []string) bool {
-		slug := channel.GroupSlug(members)
-		if slug == "" {
-			return false
-		}
-		_, exists := b.channelStore.GetBySlug(slug)
-		return exists
-	}
-	if dmType == "group" && len(body.Members) > 2 {
-		created = !groupAlreadyExists(body.Members)
-		ch, err = b.channelStore.GetOrCreateGroup(body.Members, "human")
-	} else {
-		// Default: direct (1:1). For >2 members use group.
-		if len(body.Members) > 2 {
-			created = !groupAlreadyExists(body.Members)
-			ch, err = b.channelStore.GetOrCreateGroup(body.Members, "human")
-		} else {
-			// Normalize: find the non-human member for the slug.
-			agentSlug := ""
-			for _, m := range body.Members {
-				if !isHumanMessageSender(m) {
-					agentSlug = m
-					break
-				}
-			}
-			if agentSlug == "" {
-				http.Error(w, "could not determine agent member", http.StatusBadRequest)
-				return
-			}
-			_, exists := b.channelStore.FindDirectByMembers("human", agentSlug)
-			created = !exists
-			ch, err = b.channelStore.GetOrCreateDirect("human", agentSlug)
-		}
-	}
-	if err != nil {
-		http.Error(w, "failed to create DM: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	b.mu.Lock()
-	if b.findChannelLocked(ch.Slug) == nil {
-		now := time.Now().UTC().Format(time.RFC3339)
-		target := DMTargetAgent(ch.Slug)
-		description := "Group direct messages"
-		memberSlugs := append([]string(nil), body.Members...)
-		if target != "" {
-			description = "Direct messages with " + target
-			memberSlugs = []string{"human", target}
-		}
-		name := strings.TrimSpace(ch.Name)
-		if name == "" {
-			name = ch.Slug
-		}
-		b.channels = append(b.channels, teamChannel{
-			Slug:        ch.Slug,
-			Name:        name,
-			Type:        "dm",
-			Description: description,
-			Members:     uniqueSlugs(memberSlugs),
-			CreatedBy:   "human",
-			CreatedAt:   now,
-			UpdatedAt:   now,
-		})
-	}
-	if err := b.saveLocked(); err != nil {
-		b.mu.Unlock()
-		http.Error(w, "failed to persist DM channel", http.StatusInternalServerError)
-		return
-	}
-	b.mu.Unlock()
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"id":      ch.ID,
-		"slug":    ch.Slug,
-		"type":    ch.Type,
-		"name":    ch.Name,
-		"created": created,
-	})
-}
-
 func (b *Broker) handleChannelMembers(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -1185,12 +975,16 @@ func (b *Broker) handleChannelMembers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		channel := normalizeChannelSlug(body.Channel)
-		member := normalizeChannelSlug(body.Slug)
 		action := strings.TrimSpace(body.Action)
-		if member == "" {
+		// body.Slug names a MEMBER here, not a channel: actor normaliser, and
+		// the 400 tests the raw value. normalizeChannelSlug turned a missing
+		// member slug into "general", so this rejection never fired and the
+		// handler went on to add or remove a "member" named after a channel.
+		if strings.TrimSpace(body.Slug) == "" {
 			http.Error(w, "slug required", http.StatusBadRequest)
 			return
 		}
+		member := normalizeChannelSlug(body.Slug)
 		b.mu.Lock()
 		ch := b.findChannelLocked(channel)
 		if ch == nil {
@@ -1204,14 +998,14 @@ func (b *Broker) handleChannelMembers(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "member not found", http.StatusNotFound)
 			return
 		}
-		// Lead agents (BuiltIn) cannot be disabled or removed from any
+		// Lead bots (BuiltIn) cannot be disabled or removed from any
 		// channel. The blueprint's lead is the tag target for the onboarding
 		// kickoff and the default owner for channel membership; the UI locks
-		// these interactions too. Keeps the "ceo" literal as a legacy guard
+		// these interactions too. Keeps the "cos" literal as a legacy guard
 		// for team states that predate the BuiltIn field.
-		if (memberRecord.BuiltIn || member == "ceo") && (action == "remove" || action == "disable") {
+		if (memberRecord.BuiltIn || member == "cos") && (action == "remove" || action == "disable") {
 			b.mu.Unlock()
-			http.Error(w, "cannot remove or disable lead agent", http.StatusBadRequest)
+			http.Error(w, "cannot remove or disable lead bot", http.StatusBadRequest)
 			return
 		}
 		switch action {
@@ -1294,10 +1088,13 @@ func (b *Broker) handleMembers(w http.ResponseWriter, r *http.Request) {
 		disabled    bool
 	}
 	isOneOnOne := b.sessionMode == SessionModeOneOnOne
-	oneOnOneSlug := b.oneOnOneAgent
+	oneOnOneSlug := b.oneOnOneBot
 	memberProfiles := make(map[string]memberView, len(b.members))
 	for _, member := range b.members {
-		memberProfiles[normalizeChannelSlug(member.Slug)] = memberView{name: member.Name, role: member.Role}
+		// Member slugs key this map, so all three touch points below use the
+		// ACTOR normaliser. They must agree: a map written under one normaliser
+		// and read under the other misses for any slug the two disagree on.
+		memberProfiles[normalizeActorSlug(member.Slug)] = memberView{name: member.Name, role: member.Role}
 	}
 	members := make(map[string]memberView)
 	if ch := b.findChannelLocked(channel); ch != nil {
@@ -1306,7 +1103,7 @@ func (b *Broker) handleMembers(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			info := memberView{disabled: containsString(ch.Disabled, member)}
-			if office, ok := memberProfiles[normalizeChannelSlug(member)]; ok {
+			if office, ok := memberProfiles[normalizeActorSlug(member)]; ok {
 				info.name = office.name
 				info.role = office.role
 			}
@@ -1330,7 +1127,7 @@ func (b *Broker) handleMembers(w http.ResponseWriter, r *http.Request) {
 	for slug, ts := range b.lastTaggedAt {
 		taggedAt[slug] = ts
 	}
-	activity := make(map[string]agentActivitySnapshot, len(b.activity))
+	activity := make(map[string]botActivitySnapshot, len(b.activity))
 	for slug, snapshot := range b.activity {
 		activity[slug] = snapshot
 	}
@@ -1346,7 +1143,7 @@ func (b *Broker) handleMembers(w http.ResponseWriter, r *http.Request) {
 		info.lastMessage = content
 		info.lastTime = msg.Timestamp
 		if info.name == "" {
-			if office, ok := memberProfiles[normalizeChannelSlug(msg.From)]; ok {
+			if office, ok := memberProfiles[normalizeActorSlug(msg.From)]; ok {
 				info.name = office.name
 				info.role = office.role
 			}
@@ -1372,7 +1169,7 @@ func (b *Broker) handleMembers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Capture pane activity via diff detection.
-	// If content changed since last poll, agent is active — return last 5 lines.
+	// If content changed since last poll, bot is active — return last 5 lines.
 	var paneActivity map[string]string
 	if isOneOnOne && oneOnOneSlug != "" {
 		paneActivity = b.capturePaneActivity(oneOnOneSlug)
@@ -1443,7 +1240,7 @@ func (b *Broker) EnabledMembers(channel string) []string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.sessionMode == SessionModeOneOnOne {
-		return []string{b.oneOnOneAgent}
+		return []string{b.oneOnOneBot}
 	}
 	channel = normalizeChannelSlug(channel)
 	if channel == "" {
@@ -1459,7 +1256,7 @@ func (b *Broker) EnabledMembers(channel string) []string {
 // members who were present in ch.Members at some point but have been muted
 // for this channel. Callers use this to distinguish "never added" (which an
 // explicit @-tag can bypass) from "deliberately muted" (which an @-tag must
-// respect — muting an agent is the user's explicit intent to silence them).
+// respect — muting a bot is the user's explicit intent to silence them).
 func (b *Broker) DisabledMembers(channel string) []string {
 	b.mu.Lock()
 	defer b.mu.Unlock()

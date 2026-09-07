@@ -299,7 +299,7 @@ func (m onboardingModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// stepSetup AND the placeholder is still the active error.
 		if m.step == stepSetup && m.err == "Checking for a local LLM runtime…" {
 			if msg.kind != "" {
-				m.err = fmt.Sprintf("Detected %s running on %s. Exit with Ctrl+C and re-run: `wuphf --provider %s`. Or paste an Anthropic key below.", msg.kind, msg.addr, msg.kind)
+				m.err = fmt.Sprintf("Detected %s running on %s. Exit with Ctrl+C and re-run: `gawkbot --provider %s`. Or paste an Anthropic key below.", msg.kind, msg.addr, msg.kind)
 			} else {
 				m.err = "Paste an Anthropic API key (https://console.anthropic.com/settings/keys), or install Claude Code (https://claude.com/claude-code) and rerun — no key needed."
 			}
@@ -542,7 +542,7 @@ func (m onboardingModel) viewWelcome(w, h int) string {
 	var lines []string
 
 	lines = append(lines, "")
-	lines = append(lines, accentStyle.Render("  WUPHF — Let's set up your office"))
+	lines = append(lines, accentStyle.Render("  gawkbot — Let's set up your team"))
 	lines = append(lines, mutedStyle.Render("  The cast is ready. We just need a few details."))
 	lines = append(lines, "")
 	lines = append(lines, labelStyle.Render("  Company or project name"))
@@ -666,7 +666,7 @@ func (m onboardingModel) viewTask(w, h int) string {
 	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#E8E8EA")).Bold(true)
 	activeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Background(lipgloss.Color("#1264A3")).Bold(true).Padding(0, 1)
 	inactiveStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(channelui.SlackMuted)).Padding(0, 1)
-	agentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#64748B"))
+	botStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#64748B"))
 
 	var lines []string
 	lines = append(lines, "")
@@ -677,7 +677,7 @@ func (m onboardingModel) viewTask(w, h int) string {
 		num := fmt.Sprintf("[%d]", i+1)
 		owner := ""
 		if tpl.OwnerSlug != "" {
-			owner = agentStyle.Render("  \u2192 " + tpl.OwnerSlug)
+			owner = botStyle.Render("  \u2192 " + tpl.OwnerSlug)
 		}
 		label := fmt.Sprintf("%s %s%s", num, tpl.Title, owner)
 		if m.selectedTpl == i {
@@ -727,14 +727,14 @@ func allRequiredPrereqsOk(prereqs []prereqResult) bool {
 // localRuntimeCandidates lists the supported local OpenAI-compatible runtimes
 // in priority order. The order is the user-facing tiebreak when more than one
 // is reachable: ollama wins because it's the most common install, Hermes
-// second because it is a full agent runtime, OpenClaw Gateway third because it
-// is a full agent runtime when its HTTP endpoint is enabled, mlx-lm fourth
+// second because it is a full bot runtime, OpenClaw Gateway third because it
+// is a full bot runtime when its HTTP endpoint is enabled, mlx-lm fourth
 // because it's Apple-Silicon-only, exo last because it's niche.
 //
 // These URLs intentionally duplicate the unexported defaultXxxBaseURL
 // constants in internal/provider/{ollama,hermes_agent,openclaw_http,mlx_lm,exo}.go.
 // Importing the provider package for a single string per runtime would balloon
-// the cold-start dependency graph for `wuphf` first-run, which has to feel
+// the cold-start dependency graph for `gawkbot` first-run, which has to feel
 // snappy on a fresh `npx` install. The provider defaults change rarely (last
 // touched when the providers were added); if they do change, update both call
 // sites.
@@ -984,7 +984,7 @@ func defaultTemplates() []taskTemplate {
 		{ID: "repo-structure", Title: "Set up repo structure", OwnerSlug: "executor"},
 		{ID: "product-spec", Title: "Write the product spec", OwnerSlug: "planner"},
 		{ID: "readme", Title: "Write the README", OwnerSlug: "planner"},
-		{ID: "competitive-audit", Title: "Audit the competition", OwnerSlug: "ceo"},
+		{ID: "competitive-audit", Title: "Audit the competition", OwnerSlug: "cos"},
 	}
 }
 

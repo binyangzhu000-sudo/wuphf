@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nex-crm/wuphf/internal/agent"
+	"github.com/nex-crm/wuphf/internal/bot"
 	"github.com/nex-crm/wuphf/internal/config"
 )
 
@@ -156,7 +156,7 @@ func TestReconcileSharedTaskChannelsLocked_RehomesSquatters(t *testing.T) {
 	})
 	b.tasks = []teamTask{
 		{ID: "OFFICE-22", Title: "Daily Digest from email", Owner: "eng", status: "in_progress", Channel: "task-office-22"},
-		{ID: "OFFICE-28", Title: "Outbound email reply agent", Owner: "eng", status: "in_progress", Channel: "task-office-22"},
+		{ID: "OFFICE-28", Title: "Outbound email reply bot", Owner: "eng", status: "in_progress", Channel: "task-office-22"},
 		{ID: "OFFICE-30", Title: "Backup", Owner: "eng", status: "open", Channel: "general"},
 		{ID: "OFFICE-31", Title: "Shared project work", Owner: "eng", status: "open", Channel: "project-loop"},
 	}
@@ -243,7 +243,7 @@ func TestTaskAndRequestViewsRejectNonMembers(t *testing.T) {
 		"slug":        "deals",
 		"name":        "deals",
 		"description": "Deal strategy and pipeline work.",
-		"created_by":  "ceo",
+		"created_by":  "cos",
 	})
 	req, _ := http.NewRequest(http.MethodPost, base+"/channels", bytes.NewReader(createBody))
 	req.Header.Set("Authorization", "Bearer "+b.Token())
@@ -286,6 +286,12 @@ func TestBrokerTaskLifecycle(t *testing.T) {
 
 	base := fmt.Sprintf("http://%s", b.Addr())
 	post := func(payload map[string]any) teamTask {
+		// No default room any more: a mutation that names no channel is
+		// refused on purpose. These cases are not testing that rule, so the
+		// helper supplies the fixture's room.
+		if _, ok := payload["channel"]; !ok {
+			payload["channel"] = GeneralChannelSlug
+		}
 		body, _ := json.Marshal(payload)
 		req, _ := http.NewRequest(http.MethodPost, base+"/tasks", bytes.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+b.Token())
@@ -312,7 +318,7 @@ func TestBrokerTaskLifecycle(t *testing.T) {
 		"action":     "create",
 		"title":      "Own the landing page",
 		"details":    "Frontend only",
-		"created_by": "ceo",
+		"created_by": "cos",
 		"owner":      "fe",
 		"thread_id":  "msg-1",
 	})
@@ -395,6 +401,12 @@ func TestBrokerTaskReassignNotifies(t *testing.T) {
 
 	base := fmt.Sprintf("http://%s", b.Addr())
 	post := func(payload map[string]any) teamTask {
+		// No default room any more: a mutation that names no channel is
+		// refused on purpose. These cases are not testing that rule, so the
+		// helper supplies the fixture's room.
+		if _, ok := payload["channel"]; !ok {
+			payload["channel"] = GeneralChannelSlug
+		}
 		body, _ := json.Marshal(payload)
 		req, _ := http.NewRequest(http.MethodPost, base+"/tasks", bytes.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+b.Token())
@@ -472,8 +484,8 @@ func TestBrokerTaskReassignNotifies(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected channel message in %q; saw %v", taskChannel, keys(seen))
 	}
-	if !containsAll(chMsg.Tagged, []string{"ceo", "ops", "engineering"}) {
-		t.Fatalf("expected channel message tagged ceo+ops+engineering, got %v", chMsg.Tagged)
+	if !containsAll(chMsg.Tagged, []string{"cos", "ops", "engineering"}) {
+		t.Fatalf("expected channel message tagged cos+ops+engineering, got %v", chMsg.Tagged)
 	}
 	if !strings.Contains(chMsg.Content, "@engineering") || !strings.Contains(chMsg.Content, "@ops") {
 		t.Fatalf("expected channel content to name both owners, got %q", chMsg.Content)
@@ -510,6 +522,12 @@ func TestBrokerTaskCancelNotifies(t *testing.T) {
 
 	base := fmt.Sprintf("http://%s", b.Addr())
 	post := func(payload map[string]any) teamTask {
+		// No default room any more: a mutation that names no channel is
+		// refused on purpose. These cases are not testing that rule, so the
+		// helper supplies the fixture's room.
+		if _, ok := payload["channel"]; !ok {
+			payload["channel"] = GeneralChannelSlug
+		}
 		body, _ := json.Marshal(payload)
 		req, _ := http.NewRequest(http.MethodPost, base+"/tasks", bytes.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+b.Token())
@@ -619,6 +637,12 @@ func TestBrokerOfficeFeatureTaskForGTMCompletesWithoutReviewAndUnblocksDependent
 
 	base := fmt.Sprintf("http://%s", b.Addr())
 	post := func(payload map[string]any) teamTask {
+		// No default room any more: a mutation that names no channel is
+		// refused on purpose. These cases are not testing that rule, so the
+		// helper supplies the fixture's room.
+		if _, ok := payload["channel"]; !ok {
+			payload["channel"] = GeneralChannelSlug
+		}
 		body, _ := json.Marshal(payload)
 		req, _ := http.NewRequest(http.MethodPost, base+"/tasks", bytes.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+b.Token())
@@ -645,7 +669,7 @@ func TestBrokerOfficeFeatureTaskForGTMCompletesWithoutReviewAndUnblocksDependent
 		"action":         "create",
 		"title":          "Define the YouTube business thesis",
 		"details":        "Pick the niche and monetization ladder.",
-		"created_by":     "ceo",
+		"created_by":     "cos",
 		"owner":          "gtm",
 		"thread_id":      "msg-1",
 		"task_type":      "feature",
@@ -659,7 +683,7 @@ func TestBrokerOfficeFeatureTaskForGTMCompletesWithoutReviewAndUnblocksDependent
 		"action":         "create",
 		"title":          "Create the launch package",
 		"details":        "Build the 30-video slate.",
-		"created_by":     "ceo",
+		"created_by":     "cos",
 		"owner":          "gtm",
 		"thread_id":      "msg-1",
 		"task_type":      "launch",
@@ -702,6 +726,12 @@ func TestBrokerTaskCreateReusesExistingOpenTask(t *testing.T) {
 
 	base := fmt.Sprintf("http://%s", b.Addr())
 	post := func(payload map[string]any) teamTask {
+		// No default room any more: a mutation that names no channel is
+		// refused on purpose. These cases are not testing that rule, so the
+		// helper supplies the fixture's room.
+		if _, ok := payload["channel"]; !ok {
+			payload["channel"] = GeneralChannelSlug
+		}
 		body, _ := json.Marshal(payload)
 		req, _ := http.NewRequest(http.MethodPost, base+"/tasks", bytes.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+b.Token())
@@ -728,7 +758,7 @@ func TestBrokerTaskCreateReusesExistingOpenTask(t *testing.T) {
 		"action":     "create",
 		"title":      "Own the landing page",
 		"details":    "Initial FE pass",
-		"created_by": "ceo",
+		"created_by": "cos",
 		"owner":      "fe",
 		"thread_id":  "msg-1",
 	})
@@ -736,7 +766,7 @@ func TestBrokerTaskCreateReusesExistingOpenTask(t *testing.T) {
 		"action":     "create",
 		"title":      "Own the landing page",
 		"details":    "Updated details",
-		"created_by": "ceo",
+		"created_by": "cos",
 		"owner":      "fe",
 		"thread_id":  "msg-1",
 	})
@@ -767,7 +797,7 @@ func TestBrokerEnsurePlannedTaskKeepsScopedDuplicateTitlesDistinct(t *testing.T)
 		Title:            "Publish faceless AI ops episode",
 		Details:          "Episode 1 pipeline task",
 		Owner:            "eng",
-		CreatedBy:        "ceo",
+		CreatedBy:        "cos",
 		TaskType:         "feature",
 		PipelineID:       "youtube-factory",
 		SourceDecisionID: "decision-episode-1",
@@ -781,7 +811,7 @@ func TestBrokerEnsurePlannedTaskKeepsScopedDuplicateTitlesDistinct(t *testing.T)
 		Title:            "Publish faceless AI ops episode",
 		Details:          "Episode 2 pipeline task",
 		Owner:            "eng",
-		CreatedBy:        "ceo",
+		CreatedBy:        "cos",
 		TaskType:         "feature",
 		PipelineID:       "youtube-factory",
 		SourceDecisionID: "decision-episode-2",
@@ -803,7 +833,7 @@ func TestBrokerEnsurePlannedTaskKeepsScopedDuplicateTitlesDistinct(t *testing.T)
 		Title:            "Publish faceless AI ops episode",
 		Details:          "Episode 2 retry",
 		Owner:            "eng",
-		CreatedBy:        "ceo",
+		CreatedBy:        "cos",
 		TaskType:         "feature",
 		PipelineID:       "youtube-factory",
 		SourceDecisionID: "decision-episode-2",
@@ -816,6 +846,14 @@ func TestBrokerEnsurePlannedTaskKeepsScopedDuplicateTitlesDistinct(t *testing.T)
 	}
 }
 
+// TestBrokerTaskCreateKeepsDistinctTasksInSameThread pins the non-dedup
+// invariant: two creates anchored to the SAME thread are two tasks, not one
+// reused row.
+//
+// It used to prove that by checking the two tasks landed in two DIFFERENT
+// per-task channels. That proof is gone — tasks no longer mint channels, so both
+// land in the channel they were created from. Distinctness is now pinned where
+// it actually lives: two task ids, and that channel listing both of them.
 func TestBrokerTaskCreateKeepsDistinctTasksInSameThread(t *testing.T) {
 	b := newTestBroker(t)
 	if err := b.StartOnPort(0); err != nil {
@@ -825,6 +863,12 @@ func TestBrokerTaskCreateKeepsDistinctTasksInSameThread(t *testing.T) {
 
 	base := fmt.Sprintf("http://%s", b.Addr())
 	post := func(payload map[string]any) teamTask {
+		// No default room any more: a mutation that names no channel is
+		// refused on purpose. These cases are not testing that rule, so the
+		// helper supplies the fixture's room.
+		if _, ok := payload["channel"]; !ok {
+			payload["channel"] = GeneralChannelSlug
+		}
 		body, _ := json.Marshal(payload)
 		req, _ := http.NewRequest(http.MethodPost, base+"/tasks", bytes.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+b.Token())
@@ -847,19 +891,26 @@ func TestBrokerTaskCreateKeepsDistinctTasksInSameThread(t *testing.T) {
 		return result.Task
 	}
 
+	// The channel both creates are made from. Named rather than repeated as a
+	// literal because #general is scheduled for removal (conversation moves to
+	// per-bot DMs); what these assertions pin is "the channel it was created
+	// from", not that room's name.
+	createdFrom := "general"
 	first := post(map[string]any{
 		"action":     "create",
+		"channel":    createdFrom,
 		"title":      "Build the operating system",
 		"details":    "Engineering lane",
-		"created_by": "ceo",
+		"created_by": "cos",
 		"owner":      "eng",
 		"thread_id":  "msg-1",
 	})
 	second := post(map[string]any{
 		"action":     "create",
+		"channel":    createdFrom,
 		"title":      "Lock the channel thesis",
 		"details":    "GTM lane",
-		"created_by": "ceo",
+		"created_by": "cos",
 		"owner":      "gtm",
 		"thread_id":  "msg-1",
 	})
@@ -867,33 +918,49 @@ func TestBrokerTaskCreateKeepsDistinctTasksInSameThread(t *testing.T) {
 	if first.ID == second.ID {
 		t.Fatalf("expected distinct tasks in the same thread, got reused task id %q", first.ID)
 	}
-	// Every task now mints its own channel, so two distinct creates land
-	// in two distinct per-task channels rather than being grouped under
-	// #general. The non-dedup invariant is that both tasks exist, each in
-	// its own channel.
-	if first.Channel == second.Channel {
-		t.Fatalf("expected distinct per-task channels, both = %q", first.Channel)
+	// Both stay in the channel they were created from — sharing a room is the
+	// point, not a dedup failure.
+	if first.Channel != createdFrom || second.Channel != createdFrom {
+		t.Fatalf("both tasks must stay in %q, got %q and %q", createdFrom, first.Channel, second.Channel)
 	}
-	if got := len(b.ChannelTasks(first.Channel)); got != 1 {
-		t.Fatalf("expected one task in %q, got %d", first.Channel, got)
-	}
-	if got := len(b.ChannelTasks(second.Channel)); got != 1 {
-		t.Fatalf("expected one task in %q, got %d", second.Channel, got)
+	assertNoPerTaskChannels(t, b)
+	if got := len(b.ChannelTasks(createdFrom)); got != 2 {
+		t.Fatalf("expected both tasks listed in %q, got %d", createdFrom, got)
 	}
 }
 
-// TestBrokerSubtaskMintsOwnChannelSeparateFromParent pins the fix for the
-// "sub-tasks share the parent's chat" bug: a sub-issue created with
-// parent_issue_id set must land in its OWN dedicated task-<childID> channel,
-// not the parent's. Agents create sub-issues from inside the parent's channel
-// (team_task forwards the current conversation as the channel), so the sub-issue
-// arrives carrying the parent's channel; the broker must override it. Without
-// the fix the child stays in the parent's channel and the two tasks share one
-// timeline. Exercised through the live HTTP /tasks path, not the internal call.
-func TestBrokerSubtaskMintsOwnChannelSeparateFromParent(t *testing.T) {
+// assertNoPerTaskChannels fails the test when any `task-<id>` channel exists.
+// The one-room model mints none, so this is the shared guard every task-channel
+// regression test uses.
+func assertNoPerTaskChannels(t *testing.T, b *Broker) {
+	t.Helper()
+	b.mu.Lock()
+	var minted []string
+	for i := range b.channels {
+		if strings.HasPrefix(b.channels[i].Slug, "task-") {
+			minted = append(minted, b.channels[i].Slug)
+		}
+	}
+	b.mu.Unlock()
+	if len(minted) > 0 {
+		t.Fatalf("no per-task channels may be minted, got %v", minted)
+	}
+}
+
+// TestBrokerSubtaskStaysInTheOfficeChannel pins the one-room contract.
+//
+// This test used to assert the opposite: every Issue and sub-Issue minted its
+// own task-<id> channel so their chatter stayed separate. That model is gone.
+// It split the roster across rooms nobody was reading — a human @-mentioning a
+// teammate in one task channel could not be answered by a teammate who was not
+// a member of it, which is exactly how the @designer hand-off failed on
+// 2026-08-22. Work is now discussed in the office channel it was created from,
+// where the whole roster is present; Tasks remains the place to see status.
+//
+// So: a parent Issue created in #general stays in #general, a sub-Issue stays
+// with its parent, and no task-<id> channel is created for either.
+func TestBrokerSubtaskStaysInTheOfficeChannel(t *testing.T) {
 	b := newTestBroker(t)
-	// Register the owner so it joins the parent's minted channel (and thus has
-	// access to create the sub-issue from there).
 	ensureTestMemberAccess(b, "general", "eng", "Eng")
 	if err := b.StartOnPort(0); err != nil {
 		t.Fatalf("failed to start broker: %v", err)
@@ -902,6 +969,12 @@ func TestBrokerSubtaskMintsOwnChannelSeparateFromParent(t *testing.T) {
 
 	base := fmt.Sprintf("http://%s", b.Addr())
 	post := func(payload map[string]any) teamTask {
+		// No default room any more: a mutation that names no channel is
+		// refused on purpose. These cases are not testing that rule, so the
+		// helper supplies the fixture's room.
+		if _, ok := payload["channel"]; !ok {
+			payload["channel"] = GeneralChannelSlug
+		}
 		body, _ := json.Marshal(payload)
 		req, _ := http.NewRequest(http.MethodPost, base+"/tasks", bytes.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+b.Token())
@@ -924,77 +997,65 @@ func TestBrokerSubtaskMintsOwnChannelSeparateFromParent(t *testing.T) {
 		return result.Task
 	}
 
-	// Parent task defaults to #general → mints its own task-<id> channel.
 	parent := post(map[string]any{
 		"action":     "create",
 		"title":      "Ship the Q3 launch",
 		"details":    "Top-level launch objective",
-		"created_by": "ceo",
+		"created_by": "cos",
 		"owner":      "eng",
 	})
-	if parent.Channel == "general" || parent.Channel == "" {
-		t.Fatalf("expected parent to mint its own channel, got %q", parent.Channel)
+	if parent.Channel != "general" {
+		t.Fatalf("parent must stay in the channel it was created from, got %q", parent.Channel)
 	}
-	// The parent lands in Planning; approve its plan (human) so the CEO may
-	// decompose it into sub-issues.
 	post(map[string]any{"action": "approve", "id": parent.ID, "created_by": "human"})
 
-	// Sub-issue created by the CEO from inside the parent's channel (the way
-	// the CEO decomposes an Issue) — it arrives carrying the parent's channel.
 	child := post(map[string]any{
 		"action":          "create",
 		"title":           "Draft the launch announcement copy",
 		"details":         "Sub-issue of the launch",
-		"created_by":      "ceo",
+		"created_by":      "cos",
 		"owner":           "eng",
 		"channel":         parent.Channel,
 		"parent_issue_id": parent.ID,
 	})
-
 	if child.ParentIssueID != parent.ID {
 		t.Fatalf("expected child parent_issue_id %q, got %q", parent.ID, child.ParentIssueID)
 	}
-	// The bug: child shared the parent's channel. The fix: child gets its own.
-	if child.Channel == parent.Channel {
-		t.Fatalf("sub-issue must not share the parent's channel %q", parent.Channel)
+	if child.Channel != parent.Channel {
+		t.Fatalf("sub-issue must stay with its parent in %q, got %q", parent.Channel, child.Channel)
 	}
-	expectedSlug := normalizeChannelSlug("task-" + child.ID)
-	if child.Channel != expectedSlug {
-		t.Fatalf("expected sub-issue channel %q, got %q", expectedSlug, child.Channel)
-	}
-	// The minted child channel exists and links back to the child task.
+
+	// No task-<id> room was created for either task.
 	b.mu.Lock()
-	var childCh *teamChannel
+	var minted []string
 	for i := range b.channels {
-		if b.channels[i].Slug == expectedSlug {
-			childCh = &b.channels[i]
-			break
+		if strings.HasPrefix(b.channels[i].Slug, "task-") {
+			minted = append(minted, b.channels[i].Slug)
 		}
 	}
 	b.mu.Unlock()
-	if childCh == nil {
-		t.Fatalf("expected channel %q to exist in broker, not found", expectedSlug)
+	if len(minted) > 0 {
+		t.Fatalf("no per-task channels may be minted, got %v", minted)
 	}
-	if childCh.TaskID != child.ID {
-		t.Fatalf("expected child channel TaskID=%q, got %q", child.ID, childCh.TaskID)
-	}
-	// Each channel holds exactly its own task — no shared timeline.
-	if got := len(b.ChannelTasks(parent.Channel)); got != 1 {
-		t.Fatalf("expected one task in parent channel %q, got %d", parent.Channel, got)
-	}
-	if got := len(b.ChannelTasks(child.Channel)); got != 1 {
-		t.Fatalf("expected one task in child channel %q, got %d", child.Channel, got)
+
+	// Both tasks are visible from the one room.
+	if got := len(b.ChannelTasks("general")); got != 2 {
+		t.Fatalf("expected both tasks in #general, got %d", got)
 	}
 }
 
-// TestBrokerSecondTopLevelTaskFromTaskChannelMintsOwnChannel pins the fix for
-// the "every new Issue piles into the same chat" bug. A top-level Issue created
-// from inside ANOTHER Issue's per-task channel (the way the CEO creates a second
-// Issue while talking in the first Issue's chat) must mint its OWN channel, not
-// share the first Issue's. Reproduces the live OFFICE-22 / OFFICE-28 case where
-// a second issue (no parent_issue_id) landed in the first issue's task-<id>
-// channel. Exercised through the HTTP /tasks path, not the internal call.
-func TestBrokerSecondTopLevelTaskFromTaskChannelMintsOwnChannel(t *testing.T) {
+// TestBrokerSecondTopLevelTaskStaysInTheOfficeChannel pins the one-room
+// contract for a SECOND top-level Issue.
+//
+// This test used to assert the opposite. Under the per-task-channel model each
+// Issue owned a room, so a second Issue created while the CEO was talking in the
+// first Issue's chat arrived carrying that chat's slug and had to be pushed out
+// into a room of its own (the live OFFICE-22 / OFFICE-28 case). With one room
+// there is nothing to be pushed out of: both Issues are created from #general,
+// both stay there, and sharing that timeline is the intent — the whole roster is
+// present for both conversations. Exercised through the HTTP /tasks path, not
+// the internal call.
+func TestBrokerSecondTopLevelTaskStaysInTheOfficeChannel(t *testing.T) {
 	b := newTestBroker(t)
 	if err := b.StartOnPort(0); err != nil {
 		t.Fatalf("failed to start broker: %v", err)
@@ -1003,6 +1064,12 @@ func TestBrokerSecondTopLevelTaskFromTaskChannelMintsOwnChannel(t *testing.T) {
 
 	base := fmt.Sprintf("http://%s", b.Addr())
 	post := func(payload map[string]any) teamTask {
+		// No default room any more: a mutation that names no channel is
+		// refused on purpose. These cases are not testing that rule, so the
+		// helper supplies the fixture's room.
+		if _, ok := payload["channel"]; !ok {
+			payload["channel"] = GeneralChannelSlug
+		}
 		body, _ := json.Marshal(payload)
 		req, _ := http.NewRequest(http.MethodPost, base+"/tasks", bytes.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+b.Token())
@@ -1025,43 +1092,43 @@ func TestBrokerSecondTopLevelTaskFromTaskChannelMintsOwnChannel(t *testing.T) {
 		return result.Task
 	}
 
-	// First top-level Issue from #general → mints its own task-<id> channel.
+	// The office channel both Issues are created from. Named rather than
+	// hardcoded per assertion: #general is scheduled for removal, and what these
+	// checks pin is "stays where it was created", not that room's name.
+	createdFrom := "general"
 	first := post(map[string]any{
 		"action":     "create",
+		"channel":    createdFrom,
 		"title":      "Daily Digest from email",
 		"details":    "Top-level issue one",
-		"created_by": "ceo",
+		"created_by": "cos",
 	})
-	if first.Channel == "general" || first.Channel == "" {
-		t.Fatalf("expected first issue to mint its own channel, got %q", first.Channel)
+	if first.Channel != createdFrom {
+		t.Fatalf("first issue must stay in the channel it was created from, got %q", first.Channel)
 	}
 
-	// Second top-level Issue (NO parent_issue_id) created from inside the first
-	// Issue's chat — it arrives carrying the first Issue's channel.
+	// Second top-level Issue (NO parent_issue_id) created from the same chat.
 	second := post(map[string]any{
 		"action":     "create",
-		"title":      "Outbound email reply agent",
+		"title":      "Outbound email reply bot",
 		"details":    "Top-level issue two",
-		"created_by": "ceo",
+		"created_by": "cos",
 		"channel":    first.Channel,
 	})
 	if strings.TrimSpace(second.ParentIssueID) != "" {
 		t.Fatalf("expected a top-level issue (no parent), got parent %q", second.ParentIssueID)
 	}
-	// The bug: the second issue shared the first's channel.
-	if second.Channel == first.Channel {
-		t.Fatalf("second top-level Issue must not share the first Issue's channel %q", first.Channel)
+	if second.Channel != first.Channel {
+		t.Fatalf("second issue must stay with the first in %q, got %q", first.Channel, second.Channel)
 	}
-	expectedSlug := normalizeChannelSlug("task-" + second.ID)
-	if second.Channel != expectedSlug {
-		t.Fatalf("expected second issue channel %q, got %q", expectedSlug, second.Channel)
+	assertNoPerTaskChannels(t, b)
+	// One room, both Issues: the channel lists them together and each is still
+	// its own task row.
+	if first.ID == second.ID {
+		t.Fatalf("expected two distinct issues, got the same id %q", first.ID)
 	}
-	// Each channel holds exactly its own task — no shared timeline.
-	if got := len(b.ChannelTasks(first.Channel)); got != 1 {
-		t.Fatalf("expected one task in first channel %q, got %d", first.Channel, got)
-	}
-	if got := len(b.ChannelTasks(second.Channel)); got != 1 {
-		t.Fatalf("expected one task in second channel %q, got %d", second.Channel, got)
+	if got := len(b.ChannelTasks(createdFrom)); got != 2 {
+		t.Fatalf("expected both issues listed in %q, got %d", createdFrom, got)
 	}
 }
 
@@ -1081,7 +1148,7 @@ func TestBrokerTaskPlanAssignsWorktreeForLocalWorktreeTask(t *testing.T) {
 	base := fmt.Sprintf("http://%s", b.Addr())
 	body, _ := json.Marshal(map[string]any{
 		"channel":    "general",
-		"created_by": "ceo",
+		"created_by": "cos",
 		"tasks": []map[string]any{
 			{
 				"title":          "Build intake dry-run review bundle",
@@ -1235,7 +1302,7 @@ func TestBrokerTaskCreateAddsAssignedOwnerToChannelMembers(t *testing.T) {
 		"channel":    "youtube-factory",
 		"title":      "Restore remotion dependency path",
 		"details":    "Unblock the real render lane.",
-		"created_by": "ceo",
+		"created_by": "cos",
 		"owner":      "builder",
 		"task_type":  "feature",
 	})
@@ -1275,7 +1342,7 @@ func TestBrokerResumeTaskUnblocksAndSchedulesOwnerLane(t *testing.T) {
 		Title:         "Retry kickoff send",
 		Details:       "429 RESOURCE_EXHAUSTED. Retry after 2026-04-15T22:00:29.610Z.",
 		Owner:         "builder",
-		CreatedBy:     "ceo",
+		CreatedBy:     "cos",
 		TaskType:      "follow_up",
 		ExecutionMode: "live_external",
 	})
@@ -1323,7 +1390,7 @@ func TestBrokerResumeTaskStripsRateLimitMarker(t *testing.T) {
 		Title:         "Retry kickoff send",
 		Details:       preBlockContext + "\n" + rateLimitLine,
 		Owner:         "builder",
-		CreatedBy:     "ceo",
+		CreatedBy:     "cos",
 		TaskType:      "follow_up",
 		ExecutionMode: "live_external",
 	})
@@ -1369,7 +1436,7 @@ func TestBrokerResumeTaskPreservesDetailsWithoutMarker(t *testing.T) {
 		Title:     "Dependent kickoff",
 		Details:   detailsNoMarker,
 		Owner:     "builder",
-		CreatedBy: "ceo",
+		CreatedBy: "cos",
 		TaskType:  "follow_up",
 	})
 	if err != nil {
@@ -1413,14 +1480,14 @@ func TestBrokerUnblockDependentsStripsRateLimitMarker(t *testing.T) {
 	b.tasks = []teamTask{
 		{
 			ID: "task-parent", Channel: "client-loop", Title: "Prereq",
-			Owner: "builder", status: "done", CreatedBy: "ceo",
+			Owner: "builder", status: "done", CreatedBy: "cos",
 			TaskType: "feature", ExecutionMode: "local_worktree",
 			reviewState: "approved", CreatedAt: now, UpdatedAt: now,
 		},
 		{
 			ID: "task-child", Channel: "client-loop", Title: "Dependent kickoff",
 			Owner: "builder", status: "blocked", blocked: true,
-			CreatedBy: "ceo", TaskType: "feature", ExecutionMode: "live_external",
+			CreatedBy: "cos", TaskType: "feature", ExecutionMode: "live_external",
 			DependsOn: []string{"task-parent"},
 			Details:   "Original goal: ship dependent kickoff.\n429 RESOURCE_EXHAUSTED. Retry after 2026-04-15T22:00:29.610Z.",
 			CreatedAt: now, UpdatedAt: now,
@@ -1459,7 +1526,7 @@ func TestBrokerResumeKeepsTaskBlockedByRealDependency(t *testing.T) {
 		Channel:       "client-loop",
 		Title:         "Send kickoff email",
 		Owner:         "builder",
-		CreatedBy:     "ceo",
+		CreatedBy:     "cos",
 		TaskType:      "follow_up",
 		ExecutionMode: "live_external",
 	})
@@ -1470,7 +1537,7 @@ func TestBrokerResumeKeepsTaskBlockedByRealDependency(t *testing.T) {
 		Channel:       "client-loop",
 		Title:         "Send second kickoff email",
 		Owner:         "builder",
-		CreatedBy:     "ceo",
+		CreatedBy:     "cos",
 		TaskType:      "follow_up",
 		ExecutionMode: "live_external",
 		DependsOn:     []string{active.ID},
@@ -1509,7 +1576,7 @@ func TestBrokerResumeKeepsTaskBlockedByRealDependency(t *testing.T) {
 // synthetic serialization is gone.)
 func TestBrokerUnblockDependentsActivatesAllNonDependentLanes(t *testing.T) {
 	b := newTestBroker(t)
-	ensureTestMemberAccess(b, "youtube-factory", "ceo", "CEO")
+	ensureTestMemberAccess(b, "youtube-factory", "cos", "CEO")
 	ensureTestMemberAccess(b, "youtube-factory", "executor", "Executor")
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -1520,7 +1587,7 @@ func TestBrokerUnblockDependentsActivatesAllNonDependentLanes(t *testing.T) {
 			Title:         "Finish prerequisite slice",
 			Owner:         "executor",
 			status:        "done",
-			CreatedBy:     "ceo",
+			CreatedBy:     "cos",
 			TaskType:      "feature",
 			ExecutionMode: "local_worktree",
 			reviewState:   "approved",
@@ -1534,7 +1601,7 @@ func TestBrokerUnblockDependentsActivatesAllNonDependentLanes(t *testing.T) {
 			Owner:         "executor",
 			status:        "blocked",
 			blocked:       true,
-			CreatedBy:     "ceo",
+			CreatedBy:     "cos",
 			TaskType:      "feature",
 			ExecutionMode: "live_external",
 			DependsOn:     []string{"task-setup"},
@@ -1548,7 +1615,7 @@ func TestBrokerUnblockDependentsActivatesAllNonDependentLanes(t *testing.T) {
 			Owner:         "executor",
 			status:        "blocked",
 			blocked:       true,
-			CreatedBy:     "ceo",
+			CreatedBy:     "cos",
 			TaskType:      "feature",
 			ExecutionMode: "live_external",
 			DependsOn:     []string{"task-setup"},
@@ -1562,7 +1629,7 @@ func TestBrokerUnblockDependentsActivatesAllNonDependentLanes(t *testing.T) {
 			Owner:         "executor",
 			status:        "blocked",
 			blocked:       true,
-			CreatedBy:     "ceo",
+			CreatedBy:     "cos",
 			TaskType:      "feature",
 			ExecutionMode: "live_external",
 			DependsOn:     []string{"task-setup"},
@@ -1600,7 +1667,7 @@ func TestBrokerTaskPlanRejectsTheaterTaskInLiveDeliveryLane(t *testing.T) {
 	base := fmt.Sprintf("http://%s", b.Addr())
 	body, _ := json.Marshal(map[string]any{
 		"channel":    "client-delivery",
-		"created_by": "ceo",
+		"created_by": "cos",
 		"tasks": []map[string]any{
 			{
 				"title":          "Generate consulting review packet artifact from the updated blueprint",
@@ -1640,7 +1707,7 @@ func TestBrokerTaskCreateRejectsLiveBusinessTheater(t *testing.T) {
 		"channel":        "general",
 		"title":          "Create one new Notion proof packet for the client handoff",
 		"details":        "Use live external execution and keep the review bundle in sync.",
-		"created_by":     "ceo",
+		"created_by":     "cos",
 		"owner":          "builder",
 		"task_type":      "launch",
 		"execution_mode": "live_external",
@@ -1676,7 +1743,7 @@ func TestBrokerTaskCompleteRejectsLiveBusinessTheater(t *testing.T) {
 		Details:       "Use live external execution and keep the review bundle in sync.",
 		Owner:         "builder",
 		status:        "in_progress",
-		CreatedBy:     "ceo",
+		CreatedBy:     "cos",
 		TaskType:      "launch",
 		ExecutionMode: "live_external",
 		CreatedAt:     "2026-04-15T00:00:00Z",
@@ -1690,7 +1757,7 @@ func TestBrokerTaskCompleteRejectsLiveBusinessTheater(t *testing.T) {
 		"action":     "complete",
 		"channel":    "general",
 		"id":         "task-1",
-		"created_by": "ceo",
+		"created_by": "cos",
 	})
 	req, _ := http.NewRequest(http.MethodPost, base+"/tasks", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+b.Token())
@@ -1729,7 +1796,7 @@ func TestBrokerTaskUpdateRollsBackBrokerSideEffectsOnSaveFailure(t *testing.T) {
 			Title:     "Implement reusable importer",
 			Owner:     "builder",
 			status:    "in_progress",
-			CreatedBy: "ceo",
+			CreatedBy: "cos",
 			TaskType:  "feature",
 			CreatedAt: "2026-04-15T00:00:00Z",
 			UpdatedAt: "2026-04-15T00:00:00Z",
@@ -1739,7 +1806,7 @@ func TestBrokerTaskUpdateRollsBackBrokerSideEffectsOnSaveFailure(t *testing.T) {
 			Channel:   "general",
 			Title:     "Follow-up importer docs",
 			status:    "open",
-			CreatedBy: "ceo",
+			CreatedBy: "cos",
 			TaskType:  "feature",
 			DependsOn: []string{"task-1"},
 			blocked:   true,
@@ -1755,7 +1822,7 @@ func TestBrokerTaskUpdateRollsBackBrokerSideEffectsOnSaveFailure(t *testing.T) {
 		"action":     "complete",
 		"channel":    "general",
 		"id":         "task-1",
-		"created_by": "ceo",
+		"created_by": "cos",
 	})
 	req, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("http://%s/tasks", b.Addr()), bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+b.Token())
@@ -1820,7 +1887,7 @@ func TestBrokerStoresLedgerAndReviewLifecycle(t *testing.T) {
 		Title:            "Build signup conversion fix",
 		Details:          "Own the CTA and onboarding flow.",
 		Owner:            "fe",
-		CreatedBy:        "ceo",
+		CreatedBy:        "cos",
 		ThreadID:         "msg-1",
 		TaskType:         "feature",
 		SourceSignalID:   signals[0].ID,
@@ -1889,7 +1956,7 @@ func TestBrokerReleaseTaskCleansWorktree(t *testing.T) {
 		Channel:   "general",
 		Title:     "Build signup conversion fix",
 		Owner:     "fe",
-		CreatedBy: "ceo",
+		CreatedBy: "cos",
 		TaskType:  "feature",
 	})
 	if err != nil || reused {
@@ -1901,7 +1968,7 @@ func TestBrokerReleaseTaskCleansWorktree(t *testing.T) {
 		"action":     "release",
 		"channel":    "general",
 		"id":         task.ID,
-		"created_by": "ceo",
+		"created_by": "cos",
 	})
 	req, _ := http.NewRequest(http.MethodPost, base+"/tasks", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+b.Token())
@@ -1948,7 +2015,7 @@ func TestBrokerApproveRetainsLocalWorktree(t *testing.T) {
 		Channel:   "general",
 		Title:     "Build signup conversion fix",
 		Owner:     "fe",
-		CreatedBy: "ceo",
+		CreatedBy: "cos",
 		TaskType:  "feature",
 	})
 	if err != nil || reused {
@@ -1960,7 +2027,7 @@ func TestBrokerApproveRetainsLocalWorktree(t *testing.T) {
 		"action":     "complete",
 		"channel":    "general",
 		"id":         task.ID,
-		"created_by": "ceo",
+		"created_by": "cos",
 	})
 	req, _ := http.NewRequest(http.MethodPost, base+"/tasks", bytes.NewReader(completeBody))
 	req.Header.Set("Authorization", "Bearer "+b.Token())
@@ -1975,7 +2042,7 @@ func TestBrokerApproveRetainsLocalWorktree(t *testing.T) {
 		"action":     "approve",
 		"channel":    "general",
 		"id":         task.ID,
-		"created_by": "ceo",
+		"created_by": "cos",
 	})
 	req, _ = http.NewRequest(http.MethodPost, base+"/tasks", bytes.NewReader(approveBody))
 	req.Header.Set("Authorization", "Bearer "+b.Token())
@@ -2023,12 +2090,22 @@ func ensureTestMemberAccess(b *Broker, channel, slug, name string) {
 		if !containsString(b.channels[i].Members, slug) {
 			b.channels[i].Members = append(b.channels[i].Members, slug)
 		}
+		if !containsString(b.channels[i].Members, "cos") {
+			b.channels[i].Members = append(b.channels[i].Members, "cos")
+		}
 		return
 	}
 	b.channels = append(b.channels, teamChannel{
-		Slug:    normalizeChannelSlug(channel),
-		Name:    normalizeChannelSlug(channel),
-		Members: []string{slug},
+		Slug: normalizeChannelSlug(channel),
+		Name: normalizeChannelSlug(channel),
+		// Mirror production: createChannel seeds every non-DM channel with
+		// the CEO (broker_office_channels.go, `final := append([]string{"cos"},
+		// …)`). Fixtures used to omit it and still work because the CEO held a
+		// blanket channel-access bypass; membership is authoritative for every
+		// bot now, so a fixture without the CEO is a fixture that does not
+		// look like a real workspace. DMs are the deliberate exception and are
+		// built explicitly elsewhere — never through this helper.
+		Members: []string{slug, "cos"},
 	})
 }
 
@@ -2055,7 +2132,7 @@ func TestBrokerHandlePostTaskRejectsFalseReadOnlyBlockForWritableWorktree(t *tes
 		Channel:       "general",
 		Title:         "Implement the first runnable generator slice",
 		Owner:         "eng",
-		CreatedBy:     "ceo",
+		CreatedBy:     "cos",
 		TaskType:      "feature",
 		ExecutionMode: "local_worktree",
 	})
@@ -2068,7 +2145,7 @@ func TestBrokerHandlePostTaskRejectsFalseReadOnlyBlockForWritableWorktree(t *tes
 		"action":     "block",
 		"channel":    "general",
 		"id":         task.ID,
-		"created_by": "ceo",
+		"created_by": "cos",
 		"details":    "This turn is running in a read-only filesystem sandbox. Need a writable workspace.",
 	})
 	req, _ := http.NewRequest(http.MethodPost, base+"/tasks", bytes.NewReader(body))
@@ -2118,7 +2195,7 @@ func TestBrokerHandlePostTaskCapabilityGapCreatesSelfHealingTask(t *testing.T) {
 		Channel:       "general",
 		Title:         "Post client launch update to Slack",
 		Owner:         "eng",
-		CreatedBy:     "ceo",
+		CreatedBy:     "cos",
 		TaskType:      "follow_up",
 		ExecutionMode: "office",
 	})
@@ -2169,12 +2246,12 @@ func TestBrokerHandlePostTaskCapabilityGapCreatesSelfHealingTask(t *testing.T) {
 	}
 	// Self-heal records render as Issues in the FE; PipelineID stays
 	// "incident" so isSelfHealingTask still recognises them.
-	if healing.Owner != "ceo" || healing.TaskType != "issue" || healing.PipelineID != "incident" || healing.ExecutionMode != "office" {
-		t.Fatalf("expected office issue/incident owned by ceo, got %+v", healing)
+	if healing.Owner != "cos" || healing.TaskType != "issue" || healing.PipelineID != "incident" || healing.ExecutionMode != "office" {
+		t.Fatalf("expected office issue/incident owned by cos, got %+v", healing)
 	}
-	// The self-heal title should follow the new "[@<agent>] <verb>: <parent>"
+	// The self-heal title should follow the new "[@<bot>] <verb>: <parent>"
 	// shape with the parent title carried through.
-	wantTitle := selfHealingTaskTitle("eng", task.ID, blocked.Title, agent.EscalationCapabilityGap)
+	wantTitle := selfHealingTaskTitle("eng", task.ID, blocked.Title, bot.EscalationCapabilityGap)
 	if healing.Title != wantTitle {
 		t.Fatalf("expected self-heal title %q, got %q", wantTitle, healing.Title)
 	}
@@ -2197,7 +2274,7 @@ func TestBrokerHandlePostTaskNonCapabilityBlockDoesNotCreateSelfHealingTask(t *t
 		Channel:   "general",
 		Title:     "Wait for customer approval",
 		Owner:     "eng",
-		CreatedBy: "ceo",
+		CreatedBy: "cos",
 		TaskType:  "follow_up",
 	})
 	if err != nil {
@@ -2208,7 +2285,7 @@ func TestBrokerHandlePostTaskNonCapabilityBlockDoesNotCreateSelfHealingTask(t *t
 		"action":     "block",
 		"channel":    "general",
 		"id":         task.ID,
-		"created_by": "ceo",
+		"created_by": "cos",
 		"details":    "Waiting on customer approval before sending the update.",
 	})
 	req, _ := http.NewRequest(http.MethodPost, "http://"+b.Addr()+"/tasks", bytes.NewReader(body))
@@ -2243,7 +2320,7 @@ func TestBrokerHandlePostTaskResumeUnblocksAfterCapabilityRepair(t *testing.T) {
 		Channel:   "general",
 		Title:     "Send the launch update",
 		Owner:     "eng",
-		CreatedBy: "ceo",
+		CreatedBy: "cos",
 		TaskType:  "follow_up",
 	})
 	if err != nil {
@@ -2257,7 +2334,7 @@ func TestBrokerHandlePostTaskResumeUnblocksAfterCapabilityRepair(t *testing.T) {
 		"action":     "resume",
 		"channel":    "general",
 		"id":         task.ID,
-		"created_by": "ceo",
+		"created_by": "cos",
 		"details":    "Capability repaired: Slack integration is available; retry the original update.",
 	})
 	req, _ := http.NewRequest(http.MethodPost, "http://"+b.Addr()+"/tasks", bytes.NewReader(body))
@@ -2306,7 +2383,7 @@ func TestBrokerBlockTaskRejectsFalseReadOnlyBlockForWritableWorktree(t *testing.
 		Channel:       "general",
 		Title:         "Implement the first runnable generator slice",
 		Owner:         "eng",
-		CreatedBy:     "ceo",
+		CreatedBy:     "cos",
 		TaskType:      "feature",
 		ExecutionMode: "local_worktree",
 	})
@@ -2362,7 +2439,7 @@ func TestBrokerEnsurePlannedTaskRunsWorktreeOwnerLanesConcurrently(t *testing.T)
 		Title:         "Build the homepage MVP",
 		Details:       "Ship the first runnable site slice.",
 		Owner:         "executor",
-		CreatedBy:     "ceo",
+		CreatedBy:     "cos",
 		TaskType:      "feature",
 		ExecutionMode: "local_worktree",
 	})
@@ -2374,7 +2451,7 @@ func TestBrokerEnsurePlannedTaskRunsWorktreeOwnerLanesConcurrently(t *testing.T)
 		Title:         "Define the upload path",
 		Details:       "Wire the next implementation slice after the homepage.",
 		Owner:         "executor",
-		CreatedBy:     "ceo",
+		CreatedBy:     "cos",
 		TaskType:      "feature",
 		ExecutionMode: "local_worktree",
 	})
@@ -2412,7 +2489,7 @@ func TestBrokerEnsurePlannedTaskRunsNonDependentLiveExternalConcurrently(t *test
 		Channel:       "general",
 		Title:         "Send the launch announcement",
 		Owner:         "executor",
-		CreatedBy:     "ceo",
+		CreatedBy:     "cos",
 		TaskType:      "follow_up",
 		ExecutionMode: "live_external",
 	})
@@ -2423,7 +2500,7 @@ func TestBrokerEnsurePlannedTaskRunsNonDependentLiveExternalConcurrently(t *test
 		Channel:       "general",
 		Title:         "Send the follow-up announcement",
 		Owner:         "executor",
-		CreatedBy:     "ceo",
+		CreatedBy:     "cos",
 		TaskType:      "follow_up",
 		ExecutionMode: "live_external",
 	})
@@ -2445,24 +2522,33 @@ func TestBrokerEnsurePlannedTaskRunsNonDependentLiveExternalConcurrently(t *test
 	}
 }
 
-// TestBrokerTaskPlanMintsPerTaskChannelForBusinessObjective verifies that a
-// business-objective task submitted against "general" gets its own dedicated
-// task-<id> channel instead of being grouped into a recent execution channel
-// (the old behaviour, removed).  The task must NOT land in "general" and must
-// NOT land in any pre-existing shared channel (e.g. "client-loop").
-func TestBrokerTaskPlanMintsPerTaskChannelForBusinessObjective(t *testing.T) {
+// TestBrokerTaskPlanKeepsTaskInTheSubmittedChannel verifies that a task plan
+// leaves its tasks in the channel it was submitted against.
+//
+// It used to assert the reverse — that such a task was pushed out into a
+// dedicated task-<id> room. Per-task rooms are gone because they split the
+// roster: a human @-mentioning a teammate inside a task room was addressing
+// someone who was not in it. The half of the old contract that survives
+// unchanged is the negative one, and it is the reason this test pre-seeds
+// "client-loop": a task plan must never be absorbed into some unrelated
+// pre-existing execution channel just because it was recently active.
+func TestBrokerTaskPlanKeepsTaskInTheSubmittedChannel(t *testing.T) {
 	setPrepareTaskWorktreeForTest(t, func(taskID string) (string, string, error) {
 		return t.TempDir(), "wuphf-" + taskID, nil
 	})
 	setCleanupTaskWorktreeForTest(t, func(path, branch string) error { return nil })
 	b := newTestBroker(t)
-	ensureTestMemberAccess(b, "general", "builder", "Builder")
+	// The channel the plan is submitted against. Named rather than repeated as a
+	// literal: #general is scheduled for removal, and the contract is "stays in
+	// the submitted channel", not the name of that channel.
+	submittedTo := "general"
+	ensureTestMemberAccess(b, submittedTo, "builder", "Builder")
 	// Pre-existing shared channel — must NOT absorb the new task.
 	b.channels = append(b.channels, teamChannel{
 		Slug:      "client-loop",
 		Name:      "client-loop",
-		Members:   []string{"ceo", "builder"},
-		CreatedBy: "ceo",
+		Members:   []string{"cos", "builder"},
+		CreatedBy: "cos",
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
 	})
 	if err := b.StartOnPort(0); err != nil {
@@ -2472,8 +2558,8 @@ func TestBrokerTaskPlanMintsPerTaskChannelForBusinessObjective(t *testing.T) {
 
 	base := fmt.Sprintf("http://%s", b.Addr())
 	body, _ := json.Marshal(map[string]any{
-		"channel":    "general",
-		"created_by": "ceo",
+		"channel":    submittedTo,
+		"created_by": "cos",
 		"tasks": []map[string]any{
 			{
 				"title":          "Create the client-facing operating brief",
@@ -2507,41 +2593,39 @@ func TestBrokerTaskPlanMintsPerTaskChannelForBusinessObjective(t *testing.T) {
 		t.Fatalf("expected one task, got %+v", result.Tasks)
 	}
 	task := result.Tasks[0]
-	// Must have its own dedicated channel, not "general" and not "client-loop".
-	if task.Channel == "general" {
-		t.Fatalf("expected dedicated per-task channel, got general: %+v", task)
+	// Stays where the plan was submitted, and is NOT absorbed by the
+	// pre-existing client-loop channel.
+	if task.Channel != submittedTo {
+		t.Fatalf("expected the task to stay in the submitted channel %q, got %q: %+v", submittedTo, task.Channel, task)
 	}
 	if task.Channel == "client-loop" {
-		t.Fatalf("expected dedicated per-task channel, not the pre-existing client-loop: %+v", task)
+		t.Fatalf("a pre-existing execution channel must not absorb a new task: %+v", task)
 	}
-	// Channel slug is normalised (lowercased) by createChannelLocked.
-	expectedSlug := normalizeChannelSlug("task-" + task.ID)
-	if task.Channel != expectedSlug {
-		t.Fatalf("expected channel %q, got %q", expectedSlug, task.Channel)
-	}
-	// The minted channel must be discoverable via the broker and must link
-	// back to the task via TaskID.
+	assertNoPerTaskChannels(t, b)
+	// The owner is a member of the room the task landed in, so an @mention
+	// there reaches them — the guarantee per-task channels used to provide by
+	// seeding owner + CEO into a private room.
 	b.mu.Lock()
-	var mintedCh *teamChannel
+	var office *teamChannel
 	for i := range b.channels {
-		if b.channels[i].Slug == expectedSlug {
-			mintedCh = &b.channels[i]
+		if b.channels[i].Slug == submittedTo {
+			office = &b.channels[i]
 			break
 		}
 	}
 	b.mu.Unlock()
-	if mintedCh == nil {
-		t.Fatalf("expected channel %q to exist in broker, not found", expectedSlug)
+	if office == nil {
+		t.Fatalf("expected the %q channel to exist", submittedTo)
 	}
-	if mintedCh.TaskID != task.ID {
-		t.Fatalf("expected channel TaskID=%q, got %q", task.ID, mintedCh.TaskID)
+	if !stringSliceContainsFold(office.Members, "builder") {
+		t.Fatalf("expected builder (task owner) to be a member of %q, got %v", submittedTo, office.Members)
 	}
-	// "builder" (task owner) and "ceo" must be members.
-	if !stringSliceContainsFold(mintedCh.Members, "ceo") {
-		t.Fatalf("expected ceo to be a channel member, got %v", mintedCh.Members)
+	// The task is discoverable from that room.
+	if got := len(b.ChannelTasks(submittedTo)); got != 1 {
+		t.Fatalf("expected the task listed in %q, got %d", submittedTo, got)
 	}
-	if !stringSliceContainsFold(mintedCh.Members, "builder") {
-		t.Fatalf("expected builder (task owner) to be a channel member, got %v", mintedCh.Members)
+	if got := len(b.ChannelTasks("client-loop")); got != 0 {
+		t.Fatalf("expected client-loop to hold no tasks, got %d", got)
 	}
 }
 
@@ -2565,7 +2649,7 @@ func TestBrokerTaskPlanReusesExistingActiveLane(t *testing.T) {
 		Title:         "Create live client workspace in Google Drive",
 		Details:       "First pass.",
 		Owner:         "builder",
-		CreatedBy:     "ceo",
+		CreatedBy:     "cos",
 		TaskType:      "follow_up",
 		ExecutionMode: "office",
 	})
@@ -2576,10 +2660,10 @@ func TestBrokerTaskPlanReusesExistingActiveLane(t *testing.T) {
 	base := fmt.Sprintf("http://%s", b.Addr())
 	body, _ := json.Marshal(map[string]any{
 		"channel": "general",
-		// created_by=ceo always passes the access check; reuse is now
+		// created_by=cos always passes the access check; reuse is now
 		// channel-agnostic so the existing task in client-loop is found
 		// regardless of the requested channel.
-		"created_by": "ceo",
+		"created_by": "cos",
 		"tasks": []map[string]any{
 			{
 				"title":          "Create live client workspace in Google Drive",
@@ -2627,103 +2711,105 @@ func TestBrokerTaskPlanReusesExistingActiveLane(t *testing.T) {
 	}
 }
 
-// TestPerTaskChannelMintedForBusinessObjective verifies that:
-//   - A new task submitted against "general" lands in its own dedicated
-//     "task-<id>" channel — including a plain task whose title has no
-//     "business objective" keywords (the keyword gate was dropped on
-//     2026-06-03 so every real task spins up a channel, per the vision).
-//   - The minted channel has TaskID set and includes ceo + owner as
-//     members.
-//   - An explicit non-general channel request is kept as-is.
+// TestTaskStaysInTheChannelItWasCreatedFrom verifies, end-to-end through
+// EnsurePlannedTask, that a task's channel is simply the channel it was created
+// from:
+//   - a task created from the office channel stays there — whether or not its
+//     title reads like a business objective;
+//   - an explicit project-channel request is kept as-is (unchanged);
+//   - no task-<id> channel is minted for any of them.
 //
-// The internal-plumbing guards (System / incident / sub-task stay in
-// #general or on the parent) are covered by
-// TestShouldMintPerTaskChannelGuards below.
-func TestPerTaskChannelMintedForBusinessObjective(t *testing.T) {
+// This test used to assert the first bullet's opposite: every task, keyword-less
+// ones included, was pushed out into its own "task-<id>" room seeded with the
+// owner and the CEO. That model is gone. A private room per task meant the human
+// was talking to a two-member audience: @-mentioning any other teammate in it
+// addressed someone who was not there (the @designer hand-off failure of
+// 2026-08-22). Tasks keep their title, owner, and status in the Tasks surface;
+// the conversation happens where the roster already is.
+//
+// The office channel is named in a variable rather than inlined because
+// #general is scheduled for removal; the contract is "stays where it was
+// created", not the name of that room.
+//
+// The unit-level guard for every task shape is TestNoPerTaskChannels below.
+func TestTaskStaysInTheChannelItWasCreatedFrom(t *testing.T) {
 	setPrepareTaskWorktreeForTest(t, func(taskID string) (string, string, error) {
 		return t.TempDir(), "wuphf-" + taskID, nil
 	})
 	setCleanupTaskWorktreeForTest(t, func(path, branch string) error { return nil })
 
 	b := newTestBroker(t)
-	ensureTestMemberAccess(b, "general", "builder", "Builder")
+	createdFrom := "general"
+	ensureTestMemberAccess(b, createdFrom, "builder", "Builder")
 	if err := b.StartOnPort(0); err != nil {
 		t.Fatalf("start broker: %v", err)
 	}
 	defer b.Stop()
 
-	// --- Case 1: business-objective task → gets task-<id> channel ---
+	// --- Case 1: business-objective task → stays where it was created ---
 	task1, _, err := b.EnsurePlannedTask(plannedTaskInput{
-		Channel:       "general",
+		Channel:       createdFrom,
 		Title:         "Launch the client-facing sales campaign",
 		Details:       "Deliver the customer-ready marketing materials.",
 		Owner:         "builder",
-		CreatedBy:     "ceo",
+		CreatedBy:     "cos",
 		TaskType:      "issue",
 		ExecutionMode: "office",
 	})
 	if err != nil {
 		t.Fatalf("EnsurePlannedTask business objective: %v", err)
 	}
-	if task1.Channel == "general" {
-		t.Fatalf("expected business-objective task to leave general, got %+v", task1)
-	}
-	// Channel slug is normalised (lowercased) by createChannelLocked.
-	expectedSlug1 := normalizeChannelSlug("task-" + task1.ID)
-	if task1.Channel != expectedSlug1 {
-		t.Fatalf("expected channel %q, got %q", expectedSlug1, task1.Channel)
+	if task1.Channel != createdFrom {
+		t.Fatalf("expected business-objective task to stay in %q, got %+v", createdFrom, task1)
 	}
 
+	// The owner is in the room the task landed in, so an @mention there reaches
+	// them — what the private per-task room used to guarantee for two people.
 	b.mu.Lock()
-	var ch1 *teamChannel
+	var office *teamChannel
 	for i := range b.channels {
-		if b.channels[i].Slug == expectedSlug1 {
-			ch1 = &b.channels[i]
+		if b.channels[i].Slug == createdFrom {
+			office = &b.channels[i]
 			break
 		}
 	}
 	b.mu.Unlock()
-	if ch1 == nil {
-		t.Fatalf("per-task channel %q not found", expectedSlug1)
+	if office == nil {
+		t.Fatalf("expected the %q channel to exist", createdFrom)
 	}
-	if ch1.TaskID != task1.ID {
-		t.Fatalf("channel TaskID: want %q, got %q", task1.ID, ch1.TaskID)
-	}
-	if !stringSliceContainsFold(ch1.Members, "ceo") {
-		t.Fatalf("ceo not in per-task channel members: %v", ch1.Members)
-	}
-	if !stringSliceContainsFold(ch1.Members, "builder") {
-		t.Fatalf("builder (owner) not in per-task channel members: %v", ch1.Members)
+	if !stringSliceContainsFold(office.Members, "builder") {
+		t.Fatalf("builder (owner) not a member of %q: %v", createdFrom, office.Members)
 	}
 
-	// --- Case 2: a plain task with NO business-objective keywords also
-	// mints its own channel (the keyword gate was dropped so the vision
-	// "every task spins up its own channel" holds). ---
+	// --- Case 2: a plain task with NO business-objective keywords stays too.
+	// The keyword gate was dropped in 2026-06-03 so that every task got a
+	// channel; now no task does, keywords or not. ---
 	task2, _, err := b.EnsurePlannedTask(plannedTaskInput{
-		Channel:       "general",
+		Channel:       createdFrom,
 		Title:         "Internal tooling housekeeping",
 		Owner:         "builder",
-		CreatedBy:     "ceo",
+		CreatedBy:     "cos",
 		TaskType:      "issue",
 		ExecutionMode: "office",
 	})
 	if err != nil {
 		t.Fatalf("EnsurePlannedTask plain task: %v", err)
 	}
-	if task2.Channel == "general" {
-		t.Fatalf("expected plain (keyword-less) task to mint its own channel, got general: %+v", task2)
-	}
-	if task2.Channel != normalizeChannelSlug("task-"+task2.ID) {
-		t.Fatalf("expected channel %q, got %q", normalizeChannelSlug("task-"+task2.ID), task2.Channel)
+	if task2.Channel != createdFrom {
+		t.Fatalf("expected plain (keyword-less) task to stay in %q, got %+v", createdFrom, task2)
 	}
 
-	// --- Case 3: explicit non-general channel is kept as-is ---
+	// --- Case 3: an explicit project channel is kept as-is ---
+	// The creating actor has to be a member too: membership is authoritative for
+	// every bot, the CEO included, so a create into a project channel it is not
+	// in is denied.
 	ensureTestMemberAccess(b, "youtube-factory", "builder", "Builder")
+	ensureTestMemberAccess(b, "youtube-factory", "cos", "CEO")
 	task3, _, err := b.EnsurePlannedTask(plannedTaskInput{
 		Channel:       "youtube-factory",
 		Title:         "Publish the YouTube channel launch video",
 		Owner:         "builder",
-		CreatedBy:     "ceo",
+		CreatedBy:     "cos",
 		TaskType:      "issue",
 		ExecutionMode: "office",
 	})
@@ -2733,50 +2819,58 @@ func TestPerTaskChannelMintedForBusinessObjective(t *testing.T) {
 	if task3.Channel != "youtube-factory" {
 		t.Fatalf("expected explicit channel youtube-factory, got %q", task3.Channel)
 	}
+
+	// Not one room was minted across any of the three.
+	assertNoPerTaskChannels(t, b)
 }
 
-// TestShouldMintPerTaskChannelGuards pins the channel-minting gate. Every real
-// top-level task mints its own channel when it would otherwise default to
-// "general" OR when it was created from inside another task's per-task channel
-// (ownedByAnotherTask) — so a new Issue spun up from an existing Issue's chat
-// never piles into that chat. Only the two internal guards (system task /
-// incident self-heal) withhold a channel. Sub-issues always mint their OWN
-// channel, separate from the parent. A genuinely explicit, non-per-task shared
-// channel (e.g. a project/bridged channel) is left as-is.
-func TestShouldMintPerTaskChannelGuards(t *testing.T) {
+// TestNoPerTaskChannels pins the one-room contract: no task, of any shape,
+// gets its own chat channel. The office is one room (#general) so every
+// teammate is present for every conversation; a task carries its title,
+// description, owner, and status in the Tasks surface instead of a private
+// room. Regression guard for the fragmentation this replaced, where
+// @-mentioning a teammate inside a per-task channel addressed someone who was
+// not in it.
+func TestNoPerTaskChannels(t *testing.T) {
 	cases := []struct {
 		name             string
 		channel          string
 		ownedByOtherTask bool
 		task             teamTask
-		want             bool
 	}{
-		{"plain keyword-less task mints", "general", false, teamTask{Title: "Tidy up the backlog"}, true},
-		{"business-objective task mints", "general", false, teamTask{Title: "Launch the sales campaign"}, true},
-		{"system task stays in general", "general", false, teamTask{Title: "Backup & Migration", System: true}, false},
-		{"incident self-heal stays in general", "general", false, teamTask{Title: "Recover", PipelineID: "incident"}, false},
-		{"sub-task mints its own channel", "general", false, teamTask{Title: "child", ParentIssueID: "task-1"}, true},
-		{"sub-task mints even when handed the parent's channel", "task-1", true, teamTask{Title: "child", ParentIssueID: "task-1"}, true},
-		{"sub-task incident self-heal still stays in general", "general", false, teamTask{Title: "child", ParentIssueID: "task-1", PipelineID: "incident"}, false},
-		{"top-level task created in ANOTHER task's channel mints its own", "task-22", true, teamTask{Title: "Outbound email reply agent"}, true},
-		{"system task in another task's channel still does not mint", "task-22", true, teamTask{Title: "Backup", System: true}, false},
-		{"explicit non-per-task channel kept", "youtube-factory", false, teamTask{Title: "Publish the launch video"}, false},
-		{"empty task in general still mints", "general", false, teamTask{}, true},
+		{"plain task from general", "general", false, teamTask{Title: "Tidy up the backlog"}},
+		{"business objective from general", "general", false, teamTask{Title: "Launch the sales campaign"}},
+		{"system task", "general", false, teamTask{Title: "Backup & Migration", System: true}},
+		{"incident self-heal", "general", false, teamTask{Title: "Recover", PipelineID: "incident"}},
+		{"sub-task", "general", false, teamTask{Title: "child", ParentIssueID: "task-1"}},
+		{"sub-task handed the parent channel", "task-1", true, teamTask{Title: "child", ParentIssueID: "task-1"}},
+		{"task created inside another task's legacy channel", "task-22", true, teamTask{Title: "Outbound email reply bot"}},
+		{"explicit shared channel", "youtube-factory", false, teamTask{Title: "Publish the launch video"}},
+		{"empty task", "general", false, teamTask{}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := shouldMintPerTaskChannel(tc.channel, tc.ownedByOtherTask, &tc.task)
-			if got != tc.want {
-				t.Fatalf("shouldMintPerTaskChannel(%q, %v, %+v) = %v, want %v", tc.channel, tc.ownedByOtherTask, tc.task, got, tc.want)
+			if shouldMintPerTaskChannel(tc.channel, tc.ownedByOtherTask, &tc.task) {
+				t.Fatalf("shouldMintPerTaskChannel(%q, %v, %+v) = true; tasks must stay in the channel they were created from", tc.channel, tc.ownedByOtherTask, tc.task)
 			}
 		})
+	}
+	if shouldMintPerTaskChannel("general", false, nil) {
+		t.Fatal("nil task must not mint a channel")
 	}
 }
 
 // TestReuseIsChannelAgnostic verifies that findReusableTaskLocked finds
 // an existing task even when the incoming create request names a different
-// channel.  This is the dedup invariant for the new per-task-channel world:
-// submitting the same title twice must never create a second task row.
+// channel.  Submitting the same title twice must never create a second task
+// row.
+//
+// The first task used to be seeded by creating it from "general" and letting it
+// be pushed out into its own task-<id> channel, which is what made the second
+// (general) submit cross a channel boundary. The one-room model mints no such
+// channel, so the divergence is now set up the way it still occurs in
+// production: the task lives in an explicit project channel and the same title
+// is re-submitted from the office channel.
 func TestReuseIsChannelAgnostic(t *testing.T) {
 	setPrepareTaskWorktreeForTest(t, func(taskID string) (string, string, error) {
 		return t.TempDir(), "wuphf-" + taskID, nil
@@ -2785,25 +2879,30 @@ func TestReuseIsChannelAgnostic(t *testing.T) {
 
 	b := newTestBroker(t)
 	ensureTestMemberAccess(b, "general", "builder", "Builder")
+	ensureTestMemberAccess(b, "client-loop", "builder", "Builder")
+	// The creating actor has to be a member too: membership is authoritative for
+	// every bot, the CEO included, so a create into a project channel it is not
+	// in is denied.
+	ensureTestMemberAccess(b, "client-loop", "cos", "CEO")
 	if err := b.StartOnPort(0); err != nil {
 		t.Fatalf("start broker: %v", err)
 	}
 	defer b.Stop()
 
-	// Create the initial task in its per-task channel.
+	// Create the initial task in an explicit project channel.
 	first, _, err := b.EnsurePlannedTask(plannedTaskInput{
-		Channel:       "general",
+		Channel:       "client-loop",
 		Title:         "Launch the client revenue pipeline",
 		Owner:         "builder",
-		CreatedBy:     "ceo",
+		CreatedBy:     "cos",
 		TaskType:      "issue",
 		ExecutionMode: "office",
 	})
 	if err != nil {
 		t.Fatalf("first EnsurePlannedTask: %v", err)
 	}
-	if first.Channel == "general" {
-		t.Fatalf("first task should have gotten a per-task channel: %+v", first)
+	if first.Channel != "client-loop" {
+		t.Fatalf("first task should stay in the channel it was created from: %+v", first)
 	}
 
 	// Submit the same title a second time against "general" — must reuse.
@@ -2811,7 +2910,7 @@ func TestReuseIsChannelAgnostic(t *testing.T) {
 		Channel:       "general",
 		Title:         "Launch the client revenue pipeline",
 		Owner:         "builder",
-		CreatedBy:     "ceo",
+		CreatedBy:     "cos",
 		TaskType:      "issue",
 		ExecutionMode: "office",
 	})
@@ -2823,6 +2922,10 @@ func TestReuseIsChannelAgnostic(t *testing.T) {
 	}
 	if second.ID != first.ID {
 		t.Fatalf("expected same task ID on reuse: first=%s second=%s", first.ID, second.ID)
+	}
+	// Reuse does not relocate the task into the requesting channel.
+	if second.Channel != "client-loop" {
+		t.Fatalf("reuse must leave the task where it lives, got %q", second.Channel)
 	}
 	// Exactly one task row must exist.
 	if got := len(b.AllTasks()); got != 1 {
@@ -2876,7 +2979,7 @@ func TestBrokerBlockTaskAllowsReadOnlyBlockWhenWriteProbeFails(t *testing.T) {
 		Channel:       "general",
 		Title:         "Implement the first runnable generator slice",
 		Owner:         "eng",
-		CreatedBy:     "ceo",
+		CreatedBy:     "cos",
 		TaskType:      "feature",
 		ExecutionMode: "local_worktree",
 	})
@@ -2915,7 +3018,7 @@ func TestBrokerCompleteClosesReviewTaskAndUnblocksDependents(t *testing.T) {
 		Channel:       "general",
 		Title:         "Audit the repo and design the automation architecture",
 		Owner:         "eng",
-		CreatedBy:     "ceo",
+		CreatedBy:     "cos",
 		TaskType:      "research",
 		ExecutionMode: "local_worktree",
 	})
@@ -2926,7 +3029,7 @@ func TestBrokerCompleteClosesReviewTaskAndUnblocksDependents(t *testing.T) {
 		Channel:       "general",
 		Title:         "Implement the v0 automated content factory",
 		Owner:         "eng",
-		CreatedBy:     "ceo",
+		CreatedBy:     "cos",
 		TaskType:      "feature",
 		ExecutionMode: "local_worktree",
 		DependsOn:     []string{architecture.ID},
@@ -2940,6 +3043,12 @@ func TestBrokerCompleteClosesReviewTaskAndUnblocksDependents(t *testing.T) {
 
 	base := fmt.Sprintf("http://%s", b.Addr())
 	post := func(payload map[string]any) teamTask {
+		// No default room any more: a mutation that names no channel is
+		// refused on purpose. These cases are not testing that rule, so the
+		// helper supplies the fixture's room.
+		if _, ok := payload["channel"]; !ok {
+			payload["channel"] = GeneralChannelSlug
+		}
 		body, _ := json.Marshal(payload)
 		req, _ := http.NewRequest(http.MethodPost, base+"/tasks", bytes.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+b.Token())
@@ -2966,7 +3075,7 @@ func TestBrokerCompleteClosesReviewTaskAndUnblocksDependents(t *testing.T) {
 		"action":     "complete",
 		"channel":    "general",
 		"id":         architecture.ID,
-		"created_by": "ceo",
+		"created_by": "cos",
 	})
 	if reviewReady.Status() != "review" || reviewReady.ReviewState() != "ready_for_review" {
 		t.Fatalf("expected first complete to move task into review, got %+v", reviewReady)
@@ -2976,7 +3085,7 @@ func TestBrokerCompleteClosesReviewTaskAndUnblocksDependents(t *testing.T) {
 		"action":     "complete",
 		"channel":    "general",
 		"id":         architecture.ID,
-		"created_by": "ceo",
+		"created_by": "cos",
 	})
 	if closed.Status() != "done" || closed.ReviewState() != "approved" {
 		t.Fatalf("expected second complete to close review task, got %+v", closed)
@@ -3020,6 +3129,12 @@ func TestBrokerCreateTaskReusesCompletedDependencyWorktree(t *testing.T) {
 
 	base := fmt.Sprintf("http://%s", b.Addr())
 	post := func(payload map[string]any) teamTask {
+		// No default room any more: a mutation that names no channel is
+		// refused on purpose. These cases are not testing that rule, so the
+		// helper supplies the fixture's room.
+		if _, ok := payload["channel"]; !ok {
+			payload["channel"] = GeneralChannelSlug
+		}
 		body, _ := json.Marshal(payload)
 		req, _ := http.NewRequest(http.MethodPost, base+"/tasks", bytes.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+b.Token())
@@ -3046,7 +3161,7 @@ func TestBrokerCreateTaskReusesCompletedDependencyWorktree(t *testing.T) {
 		"action":         "create",
 		"title":          "Ship the dry-run approval packet generator",
 		"details":        "Initial consulting delivery slice",
-		"created_by":     "ceo",
+		"created_by":     "cos",
 		"owner":          "builder",
 		"thread_id":      "msg-1",
 		"execution_mode": "local_worktree",
@@ -3060,7 +3175,7 @@ func TestBrokerCreateTaskReusesCompletedDependencyWorktree(t *testing.T) {
 		"action":     "complete",
 		"channel":    "general",
 		"id":         first.ID,
-		"created_by": "ceo",
+		"created_by": "cos",
 	})
 	if reviewReady.Status() != "review" || reviewReady.ReviewState() != "ready_for_review" {
 		t.Fatalf("expected first complete to move task into review, got %+v", reviewReady)
@@ -3070,7 +3185,7 @@ func TestBrokerCreateTaskReusesCompletedDependencyWorktree(t *testing.T) {
 		"action":     "approve",
 		"channel":    "general",
 		"id":         first.ID,
-		"created_by": "ceo",
+		"created_by": "cos",
 	})
 	if approved.Status() != "done" || approved.ReviewState() != "approved" {
 		t.Fatalf("expected approve to close task, got %+v", approved)
@@ -3080,7 +3195,7 @@ func TestBrokerCreateTaskReusesCompletedDependencyWorktree(t *testing.T) {
 		"action":         "create",
 		"title":          "Render the approval packet into a reviewable dry-run bundle",
 		"details":        "Reuse the existing generator worktree",
-		"created_by":     "ceo",
+		"created_by":     "cos",
 		"owner":          "builder",
 		"thread_id":      "msg-2",
 		"execution_mode": "local_worktree",
@@ -3251,7 +3366,7 @@ func TestBrokerCompleteAlreadyDoneTaskStaysApproved(t *testing.T) {
 		Channel:       "general",
 		Title:         "Ship publish-pack output",
 		Owner:         "eng",
-		CreatedBy:     "ceo",
+		CreatedBy:     "cos",
 		TaskType:      "feature",
 		ExecutionMode: "local_worktree",
 	})
@@ -3261,6 +3376,12 @@ func TestBrokerCompleteAlreadyDoneTaskStaysApproved(t *testing.T) {
 
 	base := fmt.Sprintf("http://%s", b.Addr())
 	post := func(payload map[string]any) teamTask {
+		// No default room any more: a mutation that names no channel is
+		// refused on purpose. These cases are not testing that rule, so the
+		// helper supplies the fixture's room.
+		if _, ok := payload["channel"]; !ok {
+			payload["channel"] = GeneralChannelSlug
+		}
 		body, _ := json.Marshal(payload)
 		req, _ := http.NewRequest(http.MethodPost, base+"/tasks", bytes.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+b.Token())
@@ -3287,7 +3408,7 @@ func TestBrokerCompleteAlreadyDoneTaskStaysApproved(t *testing.T) {
 		"action":     "complete",
 		"channel":    "general",
 		"id":         task.ID,
-		"created_by": "ceo",
+		"created_by": "cos",
 	})
 	if reviewReady.Status() != "review" || reviewReady.ReviewState() != "ready_for_review" {
 		t.Fatalf("expected first complete to move task into review, got %+v", reviewReady)
@@ -3297,7 +3418,7 @@ func TestBrokerCompleteAlreadyDoneTaskStaysApproved(t *testing.T) {
 		"action":     "approve",
 		"channel":    "general",
 		"id":         task.ID,
-		"created_by": "ceo",
+		"created_by": "cos",
 	})
 	if approved.Status() != "done" || approved.ReviewState() != "approved" {
 		t.Fatalf("expected approve to close task, got %+v", approved)
@@ -3307,7 +3428,7 @@ func TestBrokerCompleteAlreadyDoneTaskStaysApproved(t *testing.T) {
 		"action":     "complete",
 		"channel":    "general",
 		"id":         task.ID,
-		"created_by": "ceo",
+		"created_by": "cos",
 	})
 	if repeatedComplete.Status() != "done" || repeatedComplete.ReviewState() != "approved" {
 		t.Fatalf("expected repeated complete to stay done/approved, got %+v", repeatedComplete)
@@ -3340,7 +3461,7 @@ func TestInFlightTasksReturnsOnlyNonTerminalOwned(t *testing.T) {
 		{ID: "t4", Title: "Canceled task", Owner: "be", status: "canceled"},
 		{ID: "t5", Title: "Cancelled task", Owner: "be", status: "cancelled"},
 		{ID: "t6", Title: "Pending with owner", Owner: "pm", status: "pending"},
-		{ID: "t7", Title: "Open with owner", Owner: "ceo", status: "open"},
+		{ID: "t7", Title: "Open with owner", Owner: "cos", status: "open"},
 	}
 	b.mu.Unlock()
 
@@ -3428,8 +3549,8 @@ func TestBrokerMemoryWorkflowCompletionGateAndOverride(t *testing.T) {
 	createResp, raw := postTask(map[string]any{
 		"action":     "create",
 		"title":      "Research prior context for onboarding",
-		"created_by": "ceo",
-		"owner":      "ceo",
+		"created_by": "cos",
+		"owner":      "cos",
 		"task_type":  "research",
 	})
 	if createResp.StatusCode != http.StatusOK {
@@ -3448,7 +3569,7 @@ func TestBrokerMemoryWorkflowCompletionGateAndOverride(t *testing.T) {
 	completeResp, raw := postTask(map[string]any{
 		"action":     "complete",
 		"id":         created.Task.ID,
-		"created_by": "ceo",
+		"created_by": "cos",
 	})
 	if completeResp.StatusCode != http.StatusConflict {
 		t.Fatalf("expected completion conflict, got status=%d body=%s", completeResp.StatusCode, raw)
@@ -3460,7 +3581,7 @@ func TestBrokerMemoryWorkflowCompletionGateAndOverride(t *testing.T) {
 	overrideResp, raw := postTask(map[string]any{
 		"action":                          "complete",
 		"id":                              created.Task.ID,
-		"created_by":                      "ceo",
+		"created_by":                      "cos",
 		"memory_workflow_override":        true,
 		"memory_workflow_override_reason": "Human reviewed and accepted missing memory evidence.",
 	})
@@ -3480,7 +3601,7 @@ func TestBrokerMemoryWorkflowCompletionGateAndOverride(t *testing.T) {
 	if wf == nil || wf.Status != MemoryWorkflowStatusOverridden || wf.Override == nil {
 		t.Fatalf("expected recorded override, got %+v", wf)
 	}
-	if wf.Override.Actor != "ceo" || wf.Override.Reason == "" || wf.Override.Timestamp == "" {
+	if wf.Override.Actor != "cos" || wf.Override.Reason == "" || wf.Override.Timestamp == "" {
 		t.Fatalf("override metadata missing: %+v", wf.Override)
 	}
 }
@@ -3510,8 +3631,8 @@ func TestBrokerMemoryWorkflowCompletionGateRerunsForExistingDoneTask(t *testing.
 	createResp, raw := postTask(map[string]any{
 		"action":     "create",
 		"title":      "Compare pricing pages",
-		"created_by": "ceo",
-		"owner":      "ceo",
+		"created_by": "cos",
+		"owner":      "cos",
 		"task_type":  "feature",
 	})
 	if createResp.StatusCode != http.StatusOK {
@@ -3526,7 +3647,7 @@ func TestBrokerMemoryWorkflowCompletionGateRerunsForExistingDoneTask(t *testing.
 	completeResp, raw := postTask(map[string]any{
 		"action":     "complete",
 		"id":         created.Task.ID,
-		"created_by": "ceo",
+		"created_by": "cos",
 	})
 	if completeResp.StatusCode != http.StatusOK {
 		t.Fatalf("complete status=%d body=%s", completeResp.StatusCode, raw)
@@ -3535,7 +3656,7 @@ func TestBrokerMemoryWorkflowCompletionGateRerunsForExistingDoneTask(t *testing.
 	updateResp, raw := postTask(map[string]any{
 		"action":     "reassign",
 		"id":         created.Task.ID,
-		"created_by": "ceo",
+		"created_by": "cos",
 		"owner":      "pm",
 		"task_type":  "process_research",
 	})
@@ -3556,11 +3677,11 @@ func TestBrokerTaskPlanInitializesMemoryWorkflow(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]any{
 		"channel":    "general",
-		"created_by": "ceo",
+		"created_by": "cos",
 		"tasks": []map[string]any{
 			{
 				"title":     "Map support process memory",
-				"assignee":  "ceo",
+				"assignee":  "cos",
 				"task_type": "process-research",
 			},
 		},
@@ -3622,20 +3743,20 @@ func TestBrokerReusedTaskPreservesAndRecomputesMemoryWorkflow(t *testing.T) {
 	created := postTask(map[string]any{
 		"action":     "create",
 		"title":      "Research prior context for onboarding",
-		"created_by": "ceo",
-		"owner":      "ceo",
+		"created_by": "cos",
+		"owner":      "cos",
 		"task_type":  "research",
 		"thread_id":  "thread-1",
 	})
-	if _, found, changed, err := b.RecordTaskMemoryCapture(created.ID, "ceo", MemoryWorkflowArtifact{Backend: "markdown", Source: "notebook", Path: "agents/ceo/notebook/onboarding.md"}); err != nil || !found || !changed {
+	if _, found, changed, err := b.RecordTaskMemoryCapture(created.ID, "cos", MemoryWorkflowArtifact{Backend: "markdown", Source: "notebook", Path: "agents/cos/notebook/onboarding.md"}); err != nil || !found || !changed {
 		t.Fatalf("record capture found=%v changed=%v err=%v", found, changed, err)
 	}
 
 	reused := postTask(map[string]any{
 		"action":     "create",
 		"title":      "Research prior context for onboarding",
-		"created_by": "ceo",
-		"owner":      "ceo",
+		"created_by": "cos",
+		"owner":      "cos",
 		"task_type":  "feature",
 		"thread_id":  "thread-1",
 	})
@@ -3666,8 +3787,8 @@ func TestBrokerTaskMemoryWorkflowReportsIdempotentNoOp(t *testing.T) {
 	createBody, _ := json.Marshal(map[string]any{
 		"action":     "create",
 		"title":      "Research prior context for onboarding",
-		"created_by": "ceo",
-		"owner":      "ceo",
+		"created_by": "cos",
+		"owner":      "cos",
 		"task_type":  "research",
 	})
 	req, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("http://%s/tasks", b.Addr()), bytes.NewReader(createBody))
@@ -3768,8 +3889,8 @@ func TestBrokerTaskMemoryWorkflowRecordsBatchedArtifacts(t *testing.T) {
 	createBody, _ := json.Marshal(map[string]any{
 		"action":     "create",
 		"title":      "Research prior context for onboarding",
-		"created_by": "ceo",
-		"owner":      "ceo",
+		"created_by": "cos",
+		"owner":      "cos",
 		"task_type":  "research",
 	})
 	req, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("http://%s/tasks", b.Addr()), bytes.NewReader(createBody))
@@ -3847,8 +3968,8 @@ func TestBrokerTaskMemoryWorkflowPrevalidatesBatchedArtifacts(t *testing.T) {
 	createBody, _ := json.Marshal(map[string]any{
 		"action":     "create",
 		"title":      "Research prior context for onboarding",
-		"created_by": "ceo",
-		"owner":      "ceo",
+		"created_by": "cos",
+		"owner":      "cos",
 		"task_type":  "research",
 	})
 	req, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("http://%s/tasks", b.Addr()), bytes.NewReader(createBody))
@@ -3918,8 +4039,8 @@ func TestBrokerTaskMemoryWorkflowAcceptsContextToolEventShape(t *testing.T) {
 	createBody, _ := json.Marshal(map[string]any{
 		"action":     "create",
 		"title":      "Research prior context for renewal process",
-		"created_by": "ceo",
-		"owner":      "ceo",
+		"created_by": "cos",
+		"owner":      "cos",
 		"task_type":  "research",
 	})
 	req, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("http://%s/tasks", b.Addr()), bytes.NewReader(createBody))

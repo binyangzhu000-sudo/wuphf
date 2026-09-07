@@ -59,16 +59,16 @@ func handleTeamRuntimeState(ctx context.Context, _ *mcp.CallToolRequest, args Te
 	}
 
 	mode := team.SessionModeOffice
-	directAgent := ""
+	directBot := ""
 	if isOneOnOneMode() {
 		mode = team.SessionModeOneOnOne
-		directAgent = team.NormalizeOneOnOneAgent(os.Getenv("WUPHF_ONE_ON_ONE_AGENT"))
+		directBot = team.NormalizeOneOnOneBot(os.Getenv("WUPHF_ONE_ON_ONE_AGENT"))
 	}
 
 	snapshot := team.BuildRuntimeSnapshot(team.RuntimeSnapshotInput{
 		Channel:     taskChannel,
 		SessionMode: mode,
-		DirectAgent: directAgent,
+		DirectBot:   directBot,
 		Tasks:       convertRuntimeTasks(tasks),
 		Requests:    requests,
 		Recent:      recent,
@@ -166,7 +166,14 @@ func handleTeamTask(ctx context.Context, _ *mcp.CallToolRequest, args TeamTaskAr
 	case "claim":
 		payload["owner"] = mySlug
 	case "assign":
+		// "assign" means hand this to someone else, so it maps to the broker's
+		// reassign — NOT its assign. The broker has both, and they are not
+		// equivalent: assign is a copy of claim (force status to in_progress,
+		// notify nobody), while reassign keeps a done/review task where it is
+		// and tells the previous owner they lost it. Routing here means one
+		// concept has one behaviour, and the correct one.
 		payload["owner"] = strings.TrimSpace(args.Owner)
+		payload["action"] = "reassign"
 	case "create":
 		owner := strings.TrimSpace(args.Owner)
 		if owner == "" {
@@ -188,6 +195,7 @@ func handleTeamTask(ctx context.Context, _ *mcp.CallToolRequest, args TeamTaskAr
 			ExecutionMode  string `json:"execution_mode"`
 			WorktreePath   string `json:"worktree_path"`
 			WorktreeBranch string `json:"worktree_branch"`
+			Details        string `json:"details"`
 		} `json:"task"`
 	}
 	if err := brokerPostJSON(ctx, "/tasks", payload, &result); err != nil {
@@ -204,7 +212,33 @@ func handleTeamTask(ctx context.Context, _ *mcp.CallToolRequest, args TeamTaskAr
 		text += " · working_directory " + path
 	}
 	text += " — " + result.Task.Title
+	// An app build gets a project pre-scaffolded by the broker; the brief
+	// naming it is appended to the task details, which the creating agent
+	// never re-reads. Echo it here so the agent builds in that project (a
+	// human eval watched an agent rebuild from scratch in /tmp and run out
+	// of turns before publishing).
+	if brief := appWorkspaceBriefFrom(result.Task.Details); brief != "" {
+		text += "\n\n" + brief
+	}
 	return textResult(text), nil, nil
+}
+
+// appWorkspaceBriefMarker mirrors team.appWorkspaceBriefMarker; the teammcp
+// package cannot import team.
+const appWorkspaceBriefMarker = "App workspace ready:"
+
+// appWorkspaceBriefFrom returns the workspace brief paragraph embedded in
+// task details, or "" when the task has none.
+func appWorkspaceBriefFrom(details string) string {
+	idx := strings.Index(details, appWorkspaceBriefMarker)
+	if idx < 0 {
+		return ""
+	}
+	brief := details[idx:]
+	if end := strings.Index(brief, "\n\n"); end >= 0 {
+		brief = brief[:end]
+	}
+	return strings.TrimSpace(brief)
 }
 
 func fetchTeamTasks(ctx context.Context, args TeamTasksArgs) (string, []brokerTaskSummary, error) {
@@ -341,7 +375,7 @@ func fetchRuntimeMessages(ctx context.Context, channel, mySlug string, limit int
 	values.Set("channel", channel)
 	if slug := strings.TrimSpace(resolveSlugOptional(mySlug)); slug != "" {
 		values.Set("my_slug", slug)
-		applyAgentMessageScope(values, slug, "agent")
+		applyBotMessageScope(values, slug, "agent")
 	}
 	switch {
 	case limit <= 0:

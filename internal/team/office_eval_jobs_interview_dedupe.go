@@ -2,13 +2,13 @@ package team
 
 // office_eval_jobs_interview_dedupe.go — the `interview-dedupe` eval job.
 //
-// Live smoke run: FIVE agents asked the human the same "which CRM?"
+// Live smoke run: FIVE bots asked the human the same "which CRM?"
 // question in five separate blocking interviews; answering one did not
 // ground the rest. This job replays that failure at the HTTP layer with
 // the exact wire the MCP human_interview tool fires (POST /requests →
 // poll GET /interview/answer):
 //
-//	(a) two agents raise semantically-similar questions → ONE pending card,
+//	(a) two bots raise semantically-similar questions → ONE pending card,
 //	    second asker attached as also_asking;
 //	(b) answering the one card fans the answer out to BOTH askers (same
 //	    request id, both polls carry the answer, both tagged in the
@@ -64,24 +64,24 @@ func evalJobInterviewDedupe(fx *officeEvalFixture, r *OfficeEvalReport) error {
 		return ids
 	}
 
-	// ── (a) two agents, same question, different phrasing → ONE card ───────
+	// ── (a) two bots, same question, different phrasing → ONE card ───────
 	const q1 = "Which CRM should the team standardize on for the pilot — HubSpot or Salesforce?"
 	const q1Rephrased = "Which CRM do you want us to standardize on: HubSpot or Salesforce?"
 	st1, first, err := postInterview("eng", q1)
 	if err != nil {
 		return err
 	}
-	st2, second, err := postInterview("ceo", q1Rephrased)
+	st2, second, err := postInterview("cos", q1Rephrased)
 	if err != nil {
 		return err
 	}
 	pending := pendingInterviewIDs()
-	r.add(job, "a second agent asking a similar question merges onto the existing card (one pending interview)",
+	r.add(job, "a second bot asking a similar question merges onto the existing card (one pending interview)",
 		st1 == http.StatusOK && st2 == http.StatusOK && first.ID != "" &&
 			second.Deduped && second.ID == first.ID && len(pending) == 1,
 		fmt.Sprintf("first=%s second=%s deduped=%v pending=%d", first.ID, second.ID, second.Deduped, len(pending)), "")
 	r.add(job, "the merged asker rides the existing request as an also_asking subscriber",
-		len(second.Request.AlsoAsking) == 1 && second.Request.AlsoAsking[0] == "ceo",
+		len(second.Request.AlsoAsking) == 1 && second.Request.AlsoAsking[0] == "cos",
 		fmt.Sprintf("also_asking=%v", second.Request.AlsoAsking), "")
 
 	// ── (b) one human answer grounds BOTH askers ────────────────────────────
@@ -92,7 +92,7 @@ func evalJobInterviewDedupe(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	if err != nil {
 		return err
 	}
-	// Both agents poll the SAME id (the dedupe handed ceo eng's request id),
+	// Both bots poll the SAME id (the dedupe handed cos eng's request id),
 	// so one GET per asker is exactly the wire each poll loop fires.
 	pollOK := true
 	for range 2 {
@@ -121,7 +121,7 @@ func evalJobInterviewDedupe(fx *officeEvalFixture, r *OfficeEvalReport) error {
 		}
 	}
 	fanout := answerMsg != nil && len(answerMsg.Tagged) == 2 &&
-		answerMsg.Tagged[0] == "eng" && answerMsg.Tagged[1] == "ceo"
+		answerMsg.Tagged[0] == "eng" && answerMsg.Tagged[1] == "cos"
 	r.add(job, "answering the one card delivers the answer to BOTH askers' polls and tags both",
 		ansStatus == http.StatusOK && pollOK && fanout,
 		fmt.Sprintf("answer=%d body=%s pollOK=%v fanout=%v", ansStatus, truncate(ansBody, 80), pollOK, fanout), "")
@@ -143,7 +143,7 @@ func evalJobInterviewDedupe(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	if err != nil {
 		return err
 	}
-	st5, diffB, err := postInterview("ceo", "Should we send the renewal email to Acme before their QBR?")
+	st5, diffB, err := postInterview("cos", "Should we send the renewal email to Acme before their QBR?")
 	if err != nil {
 		return err
 	}
@@ -175,7 +175,7 @@ func evalJobInterviewDedupe(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	if err != nil {
 		return err
 	}
-	st7, apprB, err := postApproval("ceo", "ceo:gmail:send:corti")
+	st7, apprB, err := postApproval("cos", "cos:gmail:send:corti")
 	if err != nil {
 		return err
 	}

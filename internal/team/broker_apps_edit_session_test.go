@@ -4,23 +4,42 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"testing"
 )
 
 // TestAppEditSessionLazilyMintsChannel locks in the modify-wedge fix: an app
-// with no edit thread (the state every app registered via POST /apps starts in,
-// and the state every app minted before edit-channel stamping is stuck in) must
-// become editable on demand. Opening an edit session mints a task-<id> channel,
-// binds it to the app, and is idempotent. This is the regression for "the Edit
-// option isn't there" — before the endpoint existed the FE had no channel to
-// bind and hid Edit forever.
+// with no edit thread (the state every app registered via POST /apps starts in)
+// must become editable on demand. Opening an edit session mints the app's
+// dedicated `app-<appid>` channel, binds it to the app, backs it with a real App
+// Builder task, and is idempotent. This is the regression for "the Edit option
+// isn't there" — the FE gates Edit on app.editChannel, so an unbound app hides
+// Edit forever.
+//
+// The minted slug used to be `task-<id>`, derived from whatever channel the
+// backing task landed in. The one-room change removed per-task channels, so that
+// task landed in #general, the stamp skipped "team" on purpose, and nothing
+// was ever bound: this endpoint 500'd with "edit session created but no channel
+// was bound" and every app in the workspace became un-editable.
+//
+// The slug now comes from the APP id instead, which is what makes it
+// unambiguous — one app, one thread — where "team" would have had every app
+// claiming the same channel and appForEditChannel, appBuilderRunTaskID and
+// appBuildChatSnippet unable to tell them apart. It is not a room the roster
+// navigates into: ChannelList hides the `app-` prefix exactly as it hides
+// `task-`, and the thread renders only inside that app's Edit panel.
 func TestAppEditSessionLazilyMintsChannel(t *testing.T) {
 	// Isolate the app store under a temp runtime home (appStore() reads
 	// CustomAppsRootDir lazily, so set it before the first /apps call).
 	t.Setenv("WUPHF_RUNTIME_HOME", t.TempDir())
 
 	b := newTestBroker(t)
+	// The App Builder is hired rather than assumed. It is retired as a DEFAULT
+	// bot, and ensureAppEditChannelLocked deliberately refuses to invent a
+	// member the roster does not have — so in a lead-only office the minted
+	// thread comes back holding only the CEO, and the membership assertion
+	// below would be testing the absence of the bot instead of the minting
+	// rule. app-builder is still a legal bot, so the fixture creates one.
+	hireSpecialists(t, b, appBuilderSlug)
 	if err := b.StartOnPort(0); err != nil {
 		t.Fatalf("start broker: %v", err)
 	}
@@ -30,7 +49,7 @@ func TestAppEditSessionLazilyMintsChannel(t *testing.T) {
 	// Register an app the way a legacy app exists: published, but with NO edit
 	// channel — register_app never stamps one, only a task create does.
 	body, _ := json.Marshal(map[string]any{"name": "Legacy Tool", "html": validAppHTML})
-	created := postAppsAsAgent(t, base+"/apps", b.Token(), appBuilderSlug, body)
+	created := postAppsAsBot(t, base+"/apps", b.Token(), appBuilderSlug, body)
 	app, _ := created["app"].(map[string]any)
 	id, _ := app["id"].(string)
 	if id == "" {
@@ -40,14 +59,29 @@ func TestAppEditSessionLazilyMintsChannel(t *testing.T) {
 		t.Fatalf("a fresh register should carry no edit channel, got %q", ch)
 	}
 
-	// Open an edit session → mints a task-<id> channel and returns it.
-	session := postAppsAsAgent(t, base+"/apps/"+id+"/edit-session", b.Token(), appBuilderSlug, []byte("{}"))
+	// Open an edit session → mints the app's own channel and returns it.
+	session := postAppsAsBot(t, base+"/apps/"+id+"/edit-session", b.Token(), appBuilderSlug, []byte("{}"))
 	ch1, _ := session["channel"].(string)
 	if ch1 == "" {
 		t.Fatalf("edit-session returned no channel: %v", session)
 	}
-	if !strings.HasPrefix(ch1, "task-") {
-		t.Fatalf("edit channel = %q, want a task-<id> slug", ch1)
+	if want := appEditChannelSlug(id); ch1 != want {
+		t.Fatalf("edit channel = %q, want the app's own slug %q", ch1, want)
+	}
+	// Never the office channel: that is the binding that broke, and it would
+	// mount the whole office chat inside the app's Edit panel.
+	if ch1 == "team" {
+		t.Fatalf("an app's edit thread must never be the team channel")
+	}
+	// It is a real channel, not a dangling slug.
+	b.mu.Lock()
+	minted := b.findChannelLocked(ch1)
+	b.mu.Unlock()
+	if minted == nil {
+		t.Fatalf("edit channel %q was returned but never created", ch1)
+	}
+	if !stringSliceContainsFold(minted.Members, appBuilderSlug) {
+		t.Fatalf("app builder must be a member of the edit thread, got %v", minted.Members)
 	}
 
 	// The app's manifest now carries that channel, so the FE can bind Edit.
@@ -58,7 +92,7 @@ func TestAppEditSessionLazilyMintsChannel(t *testing.T) {
 	}
 
 	// A real App Builder task backs that channel, so a human post there wakes
-	// the agent through the task_followup path (the channel is not a dangling
+	// the bot through the task_followup path (the channel is not a dangling
 	// slug pointing at nothing).
 	b.mu.Lock()
 	var backing *teamTask
@@ -77,7 +111,7 @@ func TestAppEditSessionLazilyMintsChannel(t *testing.T) {
 	}
 
 	// Idempotent: a second open returns the SAME channel and spawns no new task.
-	session2 := postAppsAsAgent(t, base+"/apps/"+id+"/edit-session", b.Token(), appBuilderSlug, []byte("{}"))
+	session2 := postAppsAsBot(t, base+"/apps/"+id+"/edit-session", b.Token(), appBuilderSlug, []byte("{}"))
 	if ch2, _ := session2["channel"].(string); ch2 != ch1 {
 		t.Fatalf("second edit-session returned %q, want the same channel %q", ch2, ch1)
 	}
@@ -94,9 +128,9 @@ func TestAppEditSessionLazilyMintsChannel(t *testing.T) {
 	}
 }
 
-// TestAppEditSessionRestrictedToWriters locks the gate: a random agent holding
-// the broker token must not open an edit session (it spawns an App Builder
-// task); only the App Builder or a human session may.
+// TestAppEditSessionRestrictedToWriters locks the gate: a slug that is not on
+// the roster must not open an edit session (it spawns a build task); only an
+// bot with the app-building skill or a human session may.
 func TestAppEditSessionRestrictedToWriters(t *testing.T) {
 	t.Setenv("WUPHF_RUNTIME_HOME", t.TempDir())
 
@@ -108,11 +142,11 @@ func TestAppEditSessionRestrictedToWriters(t *testing.T) {
 	base := fmt.Sprintf("http://%s", b.Addr())
 
 	body, _ := json.Marshal(map[string]any{"name": "Gated Tool", "html": validAppHTML})
-	created := postAppsAsAgent(t, base+"/apps", b.Token(), appBuilderSlug, body)
+	created := postAppsAsBot(t, base+"/apps", b.Token(), appBuilderSlug, body)
 	app, _ := created["app"].(map[string]any)
 	id, _ := app["id"].(string)
 
-	if code := postAppsStatus(t, base+"/apps/"+id+"/edit-session", b.Token(), "ceo", []byte("{}")); code != http.StatusForbidden {
+	if code := postAppsStatus(t, base+"/apps/"+id+"/edit-session", b.Token(), "intruder", []byte("{}")); code != http.StatusForbidden {
 		t.Fatalf("non-writer edit-session: got %d, want 403", code)
 	}
 }

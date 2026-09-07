@@ -49,6 +49,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/nex-crm/wuphf/internal/config"
@@ -387,7 +388,7 @@ func (r *Repo) Commit(ctx context.Context, slug, relPath, content, mode, message
 	}
 
 	// If the content is byte-identical to what's already committed (e.g. an
-	// agent retrying with the exact same body), `git add` stages nothing new
+	// bot retrying with the exact same body), `git add` stages nothing new
 	// and `git commit` would fail with "nothing to commit." Detect that and
 	// return a no-op success — the caller's contract is "make the content
 	// current," which it already is. We return the current HEAD so downstream
@@ -543,12 +544,12 @@ func (r *Repo) CommitArchive(ctx context.Context, relPath, tombstone, archivePat
 // are untracked — on a later crash they get folded into a `wuphf-recovery`
 // commit, which is misleading in an audit view. With it, the first commit
 // for every skeleton article is attributable to the bootstrap step, not to
-// some later recovery pass or to an agent that happened to edit the file.
+// some later recovery pass or to a bot that happened to edit the file.
 //
 // The author slug `wuphf-bootstrap` is deliberate: it is visually distinct
-// from both the per-agent slugs (operator/planner/…) and the two reserved
+// from both the per-bot slugs (operator/planner/…) and the two reserved
 // system slugs (`system`, `wuphf-recovery`). Audit views can filter or
-// colour it differently from real human / agent edits.
+// colour it differently from real human / bot edits.
 func (r *Repo) CommitBootstrap(ctx context.Context, message string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -850,10 +851,10 @@ type AuditEntry struct {
 //     downstream audit tooling (CSV export, compliance review, SOC2
 //     artefact generation, etc.) can work without re-shelling to git.
 //  2. Bootstrap (`wuphf-bootstrap`), recovery (`wuphf-recovery`), and
-//     system (`system`) authors are surfaced alongside agent slugs. Audit
+//     system (`system`) authors are surfaced alongside bot slugs. Audit
 //     tools can filter them out by author, but the default feed is the
 //     complete lineage — hiding bootstrap would create a false impression
-//     that articles "appeared" at first-agent-write time.
+//     that articles "appeared" at first-bot-write time.
 //
 // limit <= 0 returns everything. since.IsZero() returns everything regardless
 // of age; otherwise only commits strictly newer than `since` are returned.
@@ -981,7 +982,7 @@ func (r *Repo) regenerateIndexLocked() error {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		// Exclude archived tombstones from the index so agents consuming
+		// Exclude archived tombstones from the index so bots consuming
 		// index/all.md don't follow links to archived content.
 		if content, cerr := os.ReadFile(path); cerr == nil && parseFrontmatterBool(string(content), "archived") {
 			return nil
@@ -1007,7 +1008,7 @@ func (r *Repo) regenerateIndexLocked() error {
 
 	var buf strings.Builder
 	buf.WriteString("# Team wiki index\n\n")
-	buf.WriteString("_Auto-generated. Do not edit by hand — agents regenerate this on every commit._\n\n")
+	buf.WriteString("_Auto-generated. Do not edit by hand — bots regenerate this on every commit._\n\n")
 	if len(entries) == 0 {
 		buf.WriteString("_No articles yet._\n")
 	} else {
@@ -1168,7 +1169,7 @@ func (r *Repo) stageAllLocked(ctx context.Context) error {
 // is byte-identical to HEAD by the time the watcher's debounce fires, so
 // there is nothing external to attribute. Without this check the watcher
 // stamped a fresh `last_human_edit_ts` sentinel on every echo — content
-// always differed, so every agent-authored commit was followed by a
+// always differed, so every bot-authored commit was followed by a
 // human-attributed "wiki: external edit" commit, and that sentinel commit
 // re-triggered the watcher into a commit storm (B3 + B4: the v3 run's
 // all-human git history and "173 revisions" on a minutes-old article).
@@ -1196,7 +1197,7 @@ func (r *Repo) runGitLocked(ctx context.Context, slug string, args ...string) (s
 // runGitLockedAs runs `git` with an explicit author name + email. Used
 // for human wiki edits where we want the user's real git identity on
 // the commit (e.g. `Sarah Chen <sarah@acme.com>`) instead of the
-// synthetic slug@wuphf.local pattern used for agents.
+// synthetic slug@wuphf.local pattern used for bots.
 //
 // Caller must hold r.mu.
 func (r *Repo) runGitLockedAs(ctx context.Context, name, email string, args ...string) (string, error) {
@@ -1236,7 +1237,42 @@ func (r *Repo) runGitLockedAs(ctx context.Context, name, email string, args ...s
 		"GIT_TERMINAL_PROMPT=0",
 	)
 	out, err := cmd.CombinedOutput()
+	if err != nil && isTransientProcessKill(err) && ctx.Err() == nil {
+		// The OS reaped git under memory pressure rather than git failing.
+		// Retry once: the operation never ran, so this is not a semantic retry
+		// and cannot double-apply anything.
+		//
+		// This surfaced as flaky test failures whose messages named a git
+		// command and gave no hint the cause was environmental —
+		// "entity article: commit ...: git add ...: signal: killed" reads like
+		// a repo problem. Under `go test -race` on a loaded machine it hit
+		// often enough to fail unrelated assertions (t.TempDir cleanup racing
+		// a still-running write) and cost real bisection time.
+		retry := exec.CommandContext(ctx, "git", all...)
+		retry.Dir = cmd.Dir
+		retry.Env = cmd.Env
+		out, err = retry.CombinedOutput()
+	}
 	return string(out), err
+}
+
+// isTransientProcessKill reports whether err is the OS killing a subprocess
+// (SIGKILL) rather than the program exiting with a failure of its own.
+//
+// A SIGKILL here is nearly always the kernel reclaiming memory under load. It
+// says nothing about the git operation's validity, so it is worth one retry —
+// unlike a non-zero exit, which is git telling us the command was wrong and
+// which must propagate unchanged.
+func isTransientProcessKill(err error) bool {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return false
+	}
+	status, ok := exitErr.Sys().(syscall.WaitStatus)
+	if !ok {
+		return false
+	}
+	return status.Signaled() && status.Signal() == syscall.SIGKILL
 }
 
 // WikiSearchHit is a literal substring match returned by the search API.
@@ -1269,74 +1305,6 @@ func readIndexAll(repo *Repo) ([]byte, error) {
 		return nil, err
 	}
 	return bytes, nil
-}
-
-// searchArticles walks team/ and returns every line that contains the literal
-// pattern. This is intentionally not a regex — agents never get to inject
-// patterns that could DoS the search. Limit 100 hits per query.
-func searchArticles(repo *Repo, pattern string) ([]WikiSearchHit, error) {
-	pattern = strings.TrimSpace(pattern)
-	if pattern == "" {
-		return nil, fmt.Errorf("wiki: search pattern is required")
-	}
-	repo.mu.Lock()
-	defer repo.mu.Unlock()
-
-	teamDir := filepath.Join(repo.root, "team")
-	if _, err := os.Stat(teamDir); err != nil {
-		return nil, nil
-	}
-	const maxHits = 100
-	hits := make([]WikiSearchHit, 0, 16)
-	err := filepath.Walk(teamDir, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if info.IsDir() {
-			return nil
-		}
-		if !strings.HasSuffix(strings.ToLower(path), ".md") {
-			return nil
-		}
-		if len(hits) >= maxHits {
-			return filepath.SkipDir
-		}
-		data, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return nil //nolint:nilerr // non-fatal: skip unreadable file (race with delete)
-		}
-		// Skip archived tombstones — they are no longer active wiki content.
-		if parseFrontmatterBool(string(data), "archived") {
-			return nil
-		}
-		rel, _ := filepath.Rel(repo.root, path)
-		rel = filepath.ToSlash(rel)
-		scanner := bufio.NewScanner(strings.NewReader(string(data)))
-		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-		lineNo := 0
-		for scanner.Scan() {
-			lineNo++
-			line := scanner.Text()
-			if strings.Contains(line, pattern) {
-				hits = append(hits, WikiSearchHit{
-					Path:    rel,
-					Line:    lineNo,
-					Snippet: strings.TrimSpace(line),
-				})
-				if len(hits) >= maxHits {
-					return filepath.SkipDir
-				}
-			}
-		}
-		if err := scanner.Err(); err != nil {
-			return fmt.Errorf("scan %s: %w", path, err)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("wiki: search walk: %w", err)
-	}
-	return hits, nil
 }
 
 // validateArticlePath rejects paths that escape the team/ subtree.

@@ -15,8 +15,8 @@ const USAGE = {
     cost_usd: 45.7437,
   },
   session: { total_tokens: 1_250_000 },
-  agents: {
-    ceo: {
+  bots: {
+    cos: {
       input_tokens: 1_000_000,
       output_tokens: 250_000,
       cache_read_tokens: 0,

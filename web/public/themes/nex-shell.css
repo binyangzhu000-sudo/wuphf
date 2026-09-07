@@ -41,21 +41,47 @@ html[data-theme="nex-shell"] {
      the office reuses --accent as both link ink and button fill, so it has
      to read against the paper AND carry light text on a fill. ── */
   --accent: oklch(63.79% 0.1899 269.89); /* --ms-cobalt-500 */
-  --accent-bg: color-mix(
-    in srgb,
-    oklch(50.58% 0.2886 264.84) 16%,
-    transparent
-  );
+  --accent-bg: color-mix(in srgb, oklch(50.58% 0.2886 264.84) 16%, transparent);
   --accent-bg-strong: color-mix(
     in srgb,
     oklch(50.58% 0.2886 264.84) 32%,
     transparent
   );
+  /* Ink for text sitting ON an --accent fill. The comment above says --accent
+     has to "carry light text on a fill", and measured in the browser it does
+     not: this cobalt resolves to #607ffd, and white on it is 3.53:1 against a
+     4.5 bar — the primary approve buttons (.inbox-detail-action--primary,
+     .packet-action--approve, .nb-review-drawer-approve) are 13px-class body
+     text, not WCAG large text. Without this override they inherit global.css's
+     #ffffff and fail.
+     #0b0e1a measures 5.45:1. Near-black tinted toward the fill's own hue
+     rather than pure black (5.95): the house style is muted terminal contrast,
+     and the same choice was made for --cyan-on-pill. Darkening --accent itself
+     would also have worked, but that is the theme's identity colour and it
+     carries borders, links, focus rings and the mark — far too wide a blast
+     radius for ink on three buttons. --accent-fg exists so the ink can move
+     without the fill moving. */
+  --accent-fg: #0b0e1a;
 
   /* ── Status colors, softened so nothing glows on the muted surface ── */
   --green: oklch(0.76 0.11 158);
   --red: hsl(6 58% 60%);
   --red-bg: hsl(6 58% 60% / 0.12);
+
+  /* The tinted-background stops. --red-bg and --accent-bg above already
+     did this job; --green-bg, --yellow-bg and --blue-bg did not, so they
+     still resolved to global.css's light-theme pastels (93%, 91%, 95%
+     luminance) and rendered as near-white chips on this 1% paper. Setting
+     the -100 stops rather than the -bg aliases fixes the handful of call
+     sites that reach for --success-100 and friends directly too. */
+  --success-100: color-mix(in srgb, var(--green) 12%, transparent);
+  --success-200: color-mix(in srgb, var(--green) 24%, transparent);
+  --error-100: hsl(6 58% 60% / 0.12);
+  --error-200: hsl(6 58% 60% / 0.24);
+  --warning-100: color-mix(in srgb, var(--warning-400) 12%, transparent);
+  --warning-200: color-mix(in srgb, var(--warning-400) 24%, transparent);
+  --cyan-100: color-mix(in srgb, var(--accent) 14%, transparent);
+  --tertiary-100: color-mix(in srgb, var(--accent) 14%, transparent);
 
   /* ── Sidebar: the purple rail becomes the operator rail — a darker
      panel one step below the paper, dim text, ink when active. ── */
@@ -70,7 +96,11 @@ html[data-theme="nex-shell"] {
   --nex-sidebar-text-active: hsl(210 8% 88%);
 
   /* ── Inline accents (mentions, JSON syntax) track cobalt, not violet ── */
-  --mention-bg: color-mix(in srgb, oklch(50.58% 0.2886 264.84) 18%, transparent);
+  --mention-bg: color-mix(
+    in srgb,
+    oklch(50.58% 0.2886 264.84) 18%,
+    transparent
+  );
   --mention-fg: oklch(80% 0.1 272.4);
   --syntax-number: oklch(80% 0.1 272.4);
   --syntax-bool: oklch(0.79 0.1 85);
@@ -158,7 +188,11 @@ html[data-theme="nex-shell"] .task-detail-status-badge.status-done {
 html[data-theme="nex-shell"] .task-detail-status-badge.status-blocked {
   background: color-mix(in srgb, oklch(50.58% 0.2886 264.84) 18%, transparent);
   color: oklch(80% 0.1 272.4);
-  border-color: color-mix(in srgb, oklch(50.58% 0.2886 264.84) 40%, transparent);
+  border-color: color-mix(
+    in srgb,
+    oklch(50.58% 0.2886 264.84) 40%,
+    transparent
+  );
 }
 
 /* ── Insight badges — white text on bright accent washes out ── */
@@ -194,7 +228,10 @@ html[data-theme="nex-shell"] .notebook-surface {
 html[data-theme="nex-shell"] .notebook-surface .nb-shelf-item .nb-status-draft {
   color: var(--text-secondary);
 }
-html[data-theme="nex-shell"] .notebook-surface .nb-shelf-item .nb-status-review {
+html[data-theme="nex-shell"]
+  .notebook-surface
+  .nb-shelf-item
+  .nb-status-review {
   color: #ffb647;
 }
 html[data-theme="nex-shell"]
@@ -244,13 +281,11 @@ html[data-theme="nex-shell"] .notebook-surface::-webkit-scrollbar-thumb:hover {
    html[data-theme] because the slash/mention menus portal to body. ── */
 html[data-theme="nex-shell"] {
   --wk-wikilink: oklch(76.12% 0.1218 272.4);
-  --wk-amber: oklch(76.12% 0.1218 272.4);
-  --wk-amber-bg: color-mix(in srgb, oklch(50.58% 0.2886 264.84) 22%, transparent);
-  --wk-amber-banner: color-mix(
-    in srgb,
-    oklch(50.58% 0.2886 264.84) 22%,
-    transparent
-  );
+  /* --wk-amber / -bg / -banner deliberately NOT overridden here any more.
+     They used to be, and --wk-amber held the same oklch literal as the
+     --wk-wikilink above, byte for byte — so warnings and links were the same
+     colour. wiki.css now seeds all three from the --warning-* ramp, whose
+     -100/-200 stops are alpha mixes here and so stay dark on this ground. */
 
   --wk-diff-add-bg: rgba(64, 180, 116, 0.16);
   --wk-diff-add-ink: #5ad08a;

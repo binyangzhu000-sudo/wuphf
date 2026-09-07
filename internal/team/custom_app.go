@@ -1,9 +1,9 @@
 package team
 
-// custom_app.go owns the storage + validation for agent-generated internal
+// custom_app.go owns the storage + validation for bot-generated internal
 // tools ("Apps"). An App is a small, self-contained single-file web app — the
 // built output of a real Vite/React/TS project (inlined via
-// vite-plugin-singlefile by the App Builder agent) — that lives under
+// vite-plugin-singlefile by the App Builder bot) — that lives under
 // <runtime-home>/.wuphf/apps/<id>/ and renders inside a sandboxed iframe.
 //
 // Why a dedicated store instead of the wiki git worker:
@@ -59,6 +59,11 @@ const (
 	// "ready" (back-compat with manifests written before this field existed).
 	customAppStatusBuilding = "building"
 	customAppStatusReady    = "ready"
+	// customAppStatusFailed marks a pre-scaffolded app whose build task
+	// terminally blocked. Stamped by the broker so the FE reads failure off
+	// the wire instead of inferring it from a stale createdAt; a later
+	// successful register_app flips it back to ready.
+	customAppStatusFailed = "failed"
 )
 
 // customAppPreservedSrcDirs are top-level entries under src/ that a publish must
@@ -66,14 +71,14 @@ const (
 // a running dev server depends on. Keeping node_modules across a register_app
 // lets the live Vite server hot-reload the freshly published source instead of
 // crashing on a vanished dependency tree. They are also skipped when reading
-// source back (get_app) so the agent never sees node_modules.
+// source back (get_app) so the bot never sees node_modules.
 var customAppPreservedSrcDirs = map[string]bool{
 	"node_modules": true,
 	"dist":         true,
 	".vite":        true,
 }
 
-// CustomApp is the durable manifest for an agent-generated internal tool. The
+// CustomApp is the durable manifest for a bot-generated internal tool. The
 // built HTML bundle lives next to it on disk (Entry) so listings stay cheap.
 type CustomApp struct {
 	ID          string `json:"id"`
@@ -101,6 +106,13 @@ type CustomApp struct {
 	CreatedAt   string `json:"createdAt"`
 	UpdatedAt   string `json:"updatedAt"`
 	ContentHash string `json:"contentHash"`
+	// Advisory is a deterministic, non-blocking heads-up about the LAST publish
+	// (scaffold placeholder shipped, bundle too small, corrupt/partial publish).
+	// Empty when the publish looked healthy. Stamped by advisePublishOddities so
+	// the finish card can downgrade a green "ready" to an honest "built, but this
+	// looks off" — the advisory previously only reached a channel the build UI
+	// never read (2026-08-17 build-pipeline audit).
+	Advisory string `json:"advisory,omitempty"`
 }
 
 // CustomAppWriteRequest is the create/update payload. An empty ID creates a new
@@ -199,6 +211,14 @@ func (s *customAppStore) appDir(id string) string {
 	return filepath.Join(s.root, id)
 }
 
+// SrcDir is the app project's source root ("<appDir>/src") — the directory a
+// build works in. Exposed so the workspace brief can name the exact path and
+// the builder stops burning turns rediscovering it (2026-08-17 quality audit:
+// one build spent 25 ToolSearch + 67 Bash calls, much of it locating files).
+func (s *customAppStore) SrcDir(id string) string {
+	return filepath.Join(s.appDir(id), "src")
+}
+
 // List returns all apps, most-recently-updated first.
 func (s *customAppStore) List() ([]CustomApp, error) {
 	s.mu.Lock()
@@ -275,7 +295,7 @@ func (s *customAppStore) readManifestLocked(id string) (CustomApp, error) {
 // owns the bundle: it overwrites the protected host-contract files with their
 // canonical embedded bytes, writes the source, builds it server-side
 // (`bun install` + `bun run build`), and stores the BROKER-built
-// dist/index.html — the agent-submitted html is ignored, so a generated app can
+// dist/index.html — the bot-submitted html is ignored, so a generated app can
 // never ship a tampered bridge or an unverified bundle. A build failure does NOT
 // publish; it returns a caller error carrying the build output tail.
 //
@@ -414,7 +434,7 @@ func (s *customAppStore) resolveSaveManifestLocked(req CustomAppWriteRequest, na
 // resolvePublishHTML produces the bytes to store as the app's html. When req
 // carries source Files it is the HOST-built bundle: protected host-contract files
 // are overwritten with canonical embedded bytes, the source is persisted, and
-// `bun install` + `bun run build` produces dist/index.html — the agent's req.HTML
+// `bun install` + `bun run build` produces dist/index.html — the bot's req.HTML
 // is discarded. Without Files it returns req.HTML unchanged (html-only fallback).
 //
 // It is called WITHOUT the store mutex (so the build never starves reads) but
@@ -431,7 +451,7 @@ func (s *customAppStore) resolvePublishHTML(dir string, req CustomAppWriteReques
 	// that (a) re-runs work on tab focus or polls tighter than the floor, or
 	// (b) abandons the fixed Mantine kit. AI_RULES advises these; this ENFORCES
 	// them so a token-burner or off-stack app can never reach the sealed bundle.
-	// The agent reads the file:line list and republishes.
+	// The bot reads the file:line list and republishes.
 	violations := checkAppSourceEfficiency(req.Files)
 	violations = append(violations, checkAppStackConformance(req.Files)...)
 	violations = append(violations, checkAppThemeDepth(req.Files)...)
@@ -439,7 +459,7 @@ func (s *customAppStore) resolvePublishHTML(dir string, req CustomAppWriteReques
 	if len(violations) > 0 {
 		return "", appEfficiencyGuardError(violations)
 	}
-	// The host owns the contract: discard the agent's protected files and replace
+	// The host owns the contract: discard the bot's protected files and replace
 	// them with the canonical embedded versions before anything is persisted or
 	// built.
 	files, err := overwriteProtectedFiles(req.Files)
@@ -494,6 +514,35 @@ const scaffoldPlaceholderHTML = `<!doctype html><html lang="en"><head><meta char
 // retried create) so it never churns the manifest or bumps anything.
 //
 // Unknown id → caller error (404 upstream). Never touches Version/Status/bytes.
+// SetAdvisory stamps (or clears, with "") the post-publish advisory on the
+// manifest. Idempotent: a no-op when unchanged so a healthy republish does not
+// rewrite the manifest just to write the same empty string.
+func (s *customAppStore) SetAdvisory(id, advisory string) error {
+	if err := validateCustomAppID(id); err != nil {
+		return err
+	}
+	advisory = strings.TrimSpace(advisory)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	app, err := s.readManifestLocked(id)
+	if err != nil {
+		return newCustomAppCallerError("app: %s not found", id)
+	}
+	if app.Advisory == advisory {
+		return nil
+	}
+	app.Advisory = advisory
+	manifestBytes, err := json.MarshalIndent(app, "", "  ")
+	if err != nil {
+		return fmt.Errorf("app: marshal manifest: %w", err)
+	}
+	manifestBytes = append(manifestBytes, '\n')
+	if err := writeFileAtomic(filepath.Join(s.appDir(id), customAppManifestFile), manifestBytes, 0o600); err != nil {
+		return fmt.Errorf("app: write manifest: %w", err)
+	}
+	return nil
+}
+
 func (s *customAppStore) SetEditChannel(id, channel string) error {
 	if err := validateCustomAppID(id); err != nil {
 		return err
@@ -512,6 +561,35 @@ func (s *customAppStore) SetEditChannel(id, channel string) error {
 		return nil
 	}
 	app.EditChannel = channel
+	manifestBytes, err := json.MarshalIndent(app, "", "  ")
+	if err != nil {
+		return fmt.Errorf("app: marshal manifest: %w", err)
+	}
+	manifestBytes = append(manifestBytes, '\n')
+	if err := writeFileAtomic(filepath.Join(s.appDir(id), customAppManifestFile), manifestBytes, 0o600); err != nil {
+		return fmt.Errorf("app: write manifest: %w", err)
+	}
+	return nil
+}
+
+// MarkBuildFailed flips a still-building app to "failed" — the broker calls
+// it when the build task terminally blocks, so the operator sees an honest
+// failed state instead of "Building" forever (2026-08-16 first-run audit).
+// A ready app is left untouched: a blocked REFINE does not un-ready an app.
+func (s *customAppStore) MarkBuildFailed(id string) error {
+	if err := validateCustomAppID(id); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	app, err := s.readManifestLocked(id)
+	if err != nil {
+		return newCustomAppCallerError("app: %s not found", id)
+	}
+	if app.Status != customAppStatusBuilding {
+		return nil
+	}
+	app.Status = customAppStatusFailed
 	manifestBytes, err := json.MarshalIndent(app, "", "  ")
 	if err != nil {
 		return fmt.Errorf("app: marshal manifest: %w", err)
@@ -578,7 +656,7 @@ func (s *customAppStore) Rename(id, name, actor string, now time.Time) (CustomAp
 // Builder writes a single line of code. The live preview can then boot a real
 // dev server on this source in seconds — turning the old multi-minute
 // "Building…" dead air into an instant, running scaffold the human watches the
-// agent shape. The agent publishes the finished build with register_app(app_id)
+// bot shape. The bot publishes the finished build with register_app(app_id)
 // using this same id, which flips the draft to a ready, listed app.
 //
 // Scaffold is idempotent: if the id already exists (draft or published) it
@@ -773,7 +851,7 @@ func clearSourceExceptArtifacts(srcRoot string) error {
 // They change the SERVER-SIDE build environment, not the app: .npmrc/.bunfig.toml
 // redirect the registry the host's `bun install` resolves from (a supply-chain
 // vector), and .env* files are read by Vite and inlined into the bundle as
-// import.meta.env.VITE_*. The host owns the build config; the agent ships app
+// import.meta.env.VITE_*. The host owns the build config; the bot ships app
 // source only.
 var blockedAppSourceBasenames = map[string]bool{
 	".npmrc":           true,

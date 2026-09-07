@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The user-reported bug: *"Tagging any specialist agent apart from CEO is not
+The user-reported bug: *"Tagging any specialist bot apart from CEO is not
 working. No response comes back."* PR #218 and PR #223 merged fixes and 17+
 regression tests in `internal/team/mention_routing_bug_test.go` and
 `internal/team/mention_auto_promote_test.go`. Those tests all pass on
@@ -34,7 +34,6 @@ path is fine and the coworker's bug is state-specific — compare their
 - Pre-seeded `onboarded.json` + `config.json` — no wizard.
 - Fake `claude` and `codex` binaries on `PATH` — the turn is dispatched but
   exits immediately; we're testing routing, not LLM quality.
-- Nex disabled (`--no-nex`, `WUPHF_NO_NEX=1`).
 
 ## Usage
 
@@ -71,9 +70,9 @@ fixed *half* the round-trip:
 
 The broker's `/messages` POST handler enforces
 `canAccessChannelLocked(from, channel)`, which requires the sender slug to
-be in `ch.Members` for every non-CEO agent. `handleOfficeMembers` with
+be in `ch.Members` for every non-CEO bot. `handleOfficeMembers` with
 `action: create` appended the new member to `b.members` but **never added
-them to any channel's `Members` array** — so the agent was hireable,
+them to any channel's `Members` array** — so the bot was hireable,
 taggable, and dispatches correctly, but its reply was silently 403'd and
 the human saw nothing.
 
@@ -84,7 +83,7 @@ Two fix directions were considered:
    pack-launch seeding in `normalizeLoadedStateLocked`, and with how
    `/channel-members` already handles the reverse. **This is what this
    PR ships.**
-2. `canAccessChannelLocked` — treat the agent's own reply to a thread
+2. `canAccessChannelLocked` — treat the bot's own reply to a thread
    they were tagged in as allowed even if not in `ch.Members`. Parallel to
    PR #218's explicit-tag bypass on the read side. Not chosen: the bug is
    a missing side-effect on hire, not a missing permission carve-out.
@@ -97,7 +96,7 @@ HIRE_SLUG=qa-spec KEEP=1 ./scripts/debug-tagging/run.sh
 # Inspect general's roster:
 curl -s -H "Authorization: Bearer $(cat /tmp/wuphf-broker-token-7899)" \
   http://127.0.0.1:7899/channels | jq '.channels[] | select(.slug=="general") | .members'
-# -> [ceo, pm, fe, be, ai, designer, cmo, cro, qa-spec]   <-- qa-spec now present
+# -> [cos, pm, fe, be, ai, designer, cmo, cro, qa-spec]   <-- qa-spec now present
 ```
 
 The rig also asserts this membership invariant inline (see `IN_GENERAL`

@@ -1,16 +1,18 @@
 import { type RefObject, useEffect, useMemo, useRef } from "react";
 
 import { get, post } from "../../api/client";
+import { directChannelSlug } from "../../lib/channels";
+import { APP_BUILDER_SLUG } from "../../lib/constants";
 import { confirm } from "../ui/ConfirmDialog";
 import { showNotice } from "../ui/Toast";
 
 /**
- * CustomAppFrame renders an agent-generated internal tool inside a hardened
+ * CustomAppFrame renders a bot-generated internal tool inside a hardened
  * sandbox and brokers its data access.
  *
  * Security model (the iframe is the real boundary, not the write-time HTML
  * validator):
- *   - sandbox="allow-scripts" only — no allow-same-origin, so the app runs at an
+ *   - sandbox="allow-scripts allow-forms" — no allow-same-origin, so the app runs at an
  *     opaque origin with no access to cookies, localStorage, or the parent DOM;
  *     no allow-forms / allow-popups / allow-top-navigation / allow-downloads.
  *     Downloads do NOT need allow-downloads: an opaque-origin blob anchor-click
@@ -35,7 +37,7 @@ import { showNotice } from "../ui/Toast";
  *
  *   - "integration" → POST /apps/integrations/call {platform, action, params}.
  *     The HOST forwards; the BROKER decides read-vs-mutate via the same
- *     deterministic verb table the agent gate uses. A read returns the user's
+ *     deterministic verb table the bot gate uses. A read returns the user's
  *     own data into their own sandboxed app (ok). A MUTATING action is NEVER
  *     executed by this path — the broker raises the human ExternalActionApproval
  *     card and returns {status:"needs_approval", request_id}. The app cannot
@@ -66,7 +68,7 @@ const APP_CSP = [
 ].join("; ");
 
 // Read-only broker paths an app may request through the bridge. Prefix match on
-// the path (query string ignored). Deliberately small: live office data an
+// the path (query string ignored). Deliberately small: live team data an
 // internal tool would display. Mutations are NOT exposed in this version.
 const ALLOWED_GET_PREFIXES: readonly string[] = [
   // Bridge v2: the connected-integrations catalog (listIntegrations). NOTE the
@@ -510,7 +512,7 @@ async function serviceBrokerGet(
 // `/tasks` is channel-scoped and returns only the (usually empty) "general"
 // channel and excludes done tasks, but an app virtually always wants EVERY task
 // — including completed work, which is the point of a "what we did" digest — and
-// an agent often rewrites the bridge's getTasks() down to a bare `/tasks`,
+// a bot often rewrites the bridge's getTasks() down to a bare `/tasks`,
 // dropping the query. Upgrading here (host-side) makes apps see real data
 // regardless of how their bridge phrased the call. An explicit query (a specific
 // channel) is left as-is.
@@ -592,9 +594,19 @@ function serviceCreateTask(
       window.clearTimeout(release);
       createTaskPending = false;
       try {
+        // The App Builder's DM. This sent the literal "general", which stopped
+        // existing when the shared room was retired, so every task an app
+        // asked for died with 404 "channel not found".
+        //
+        // Channel only — NOT owner. An app must not be able to set the owner
+        // or any other privileged field (asserted in CustomAppFrame.test.ts),
+        // and it does not need to: the task just needs a conversation to live
+        // in, and the bot that builds and maintains apps is the honest home
+        // for work an app asked for. The broker cannot resolve one itself here
+        // because created_by is "human", who is not a roster member.
         const res = await post<{ task?: { id?: string } }>("/tasks", {
           action: "create",
-          channel: "general",
+          channel: directChannelSlug(APP_BUILDER_SLUG),
           title,
           details,
           created_by: "human",
@@ -1037,7 +1049,7 @@ function useAppBridge(
 ): void {
   useEffect(() => {
     // In DEV mode the frame is a real, known origin (the proxy), so pin replies
-    // to it — the office data must not reach a frame that navigated to a
+    // to it — the team data must not reach a frame that navigated to a
     // different origin. In SEALED mode the frame is an opaque origin ("null")
     // and "*" is the only option (and is safe: no allow-same-origin, no nested
     // browsing contexts).
@@ -1163,7 +1175,7 @@ export function CustomAppFrame({
         ref={iframeRef}
         className="custom-app-frame"
         title={title}
-        sandbox="allow-scripts allow-same-origin"
+        sandbox="allow-scripts allow-same-origin allow-forms"
         src={devUrl}
       />
     );
@@ -1174,7 +1186,11 @@ export function CustomAppFrame({
       ref={iframeRef}
       className="custom-app-frame"
       title={title}
-      sandbox="allow-scripts"
+      // allow-forms only re-enables the submit EVENT (without it Chrome never
+      // dispatches submit in a sandboxed frame, so React onSubmit handlers
+      // silently never run — native <form> apps dead-end with zero feedback).
+      // Actual form navigation stays blocked by form-action 'none' in APP_CSP.
+      sandbox="allow-scripts allow-forms"
       srcDoc={srcDoc}
     />
   );

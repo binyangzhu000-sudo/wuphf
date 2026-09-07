@@ -1,7 +1,7 @@
 package team
 
 // office_eval_jobs_human_boundary.go — the Wave E "human-boundary" eval job
-// (docs/specs/ten-out-of-ten.md). Two contracts at the human↔agent boundary:
+// (docs/specs/ten-out-of-ten.md). Two contracts at the human↔bot boundary:
 //
 //	(a) E5 define-time interview enforcement: a Definition that lands with
 //	    placeholder markers ("[CONTACT NAME]", "NEEDS CONFIRMATION", "TBD")
@@ -9,7 +9,7 @@ package team
 //	    task deterministically — v3's CEO wrote around the holes without
 //	    asking (v3 [17:33:18]: "NO interview so far ... it wrote angles
 //	    around the gaps instead").
-//	(b) Human messages reach agents IN FULL: the 800-char poll clip and the
+//	(b) Human messages reach bots IN FULL: the 800-char poll clip and the
 //	    2000-char packet thread clip no longer apply to human-authored
 //	    content (v3 [18:05–18:10]: "half the message read, half dropped").
 //
@@ -27,14 +27,14 @@ func evalJobHumanBoundary(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	// --- (a) E5: placeholder define raises the batched interview ---
 	created, err := fx.broker.MutateTask(TaskPostRequest{
 		Action: "create", Channel: "general", Title: "Send the Q4 renewal outreach",
-		Details: "Renewal outreach emails for the Q4 book.", Owner: "eng", CreatedBy: "ceo",
+		Details: "Renewal outreach emails for the Q4 book.", Owner: "eng", CreatedBy: "cos",
 	})
 	if err != nil {
 		return err
 	}
 	taskID := created.Task.ID
 	if _, err := fx.broker.MutateTask(TaskPostRequest{
-		Action: "define", ID: taskID, Channel: "general", CreatedBy: "ceo",
+		Action: "define", ID: taskID, Channel: "general", CreatedBy: "cos",
 		Definition: &TaskDefinition{
 			Goal: "Email [CONTACT NAME] at Acme about the Q4 renewal",
 			Deliverables: []TaskDeliverable{
@@ -66,7 +66,7 @@ func evalJobHumanBoundary(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	// Idempotence: re-defining with the holes still open must not stack a
 	// second interview (the dedupe key + active-interview check both guard).
 	if _, err := fx.broker.MutateTask(TaskPostRequest{
-		Action: "define", ID: taskID, Channel: "general", CreatedBy: "ceo",
+		Action: "define", ID: taskID, Channel: "general", CreatedBy: "cos",
 		Definition: &TaskDefinition{Goal: "Email [CONTACT NAME] at Acme about the Q4 renewal"},
 	}); err != nil {
 		return err
@@ -79,13 +79,13 @@ func evalJobHumanBoundary(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	// front — the batched interview is where access gets granted.
 	accessTask, err := fx.broker.MutateTask(TaskPostRequest{
 		Action: "create", Channel: "general", Title: "Pull the billing export",
-		Details: "Monthly billing export for finance.", Owner: "eng", CreatedBy: "ceo",
+		Details: "Monthly billing export for finance.", Owner: "eng", CreatedBy: "cos",
 	})
 	if err != nil {
 		return err
 	}
 	if _, err := fx.broker.MutateTask(TaskPostRequest{
-		Action: "define", ID: accessTask.Task.ID, Channel: "general", CreatedBy: "ceo",
+		Action: "define", ID: accessTask.Task.ID, Channel: "general", CreatedBy: "cos",
 		Definition: &TaskDefinition{
 			Goal:         "Export the month's billing data to the wiki",
 			AccessNeeded: []string{"billing dashboard account"},
@@ -102,13 +102,13 @@ func evalJobHumanBoundary(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	// nag the human — the gate fires on genuine gaps only.
 	cleanTask, err := fx.broker.MutateTask(TaskPostRequest{
 		Action: "create", Channel: "general", Title: "Refresh the pricing page copy",
-		Details: "Update the pricing page with the new tiers.", Owner: "eng", CreatedBy: "ceo",
+		Details: "Update the pricing page with the new tiers.", Owner: "eng", CreatedBy: "cos",
 	})
 	if err != nil {
 		return err
 	}
 	if _, err := fx.broker.MutateTask(TaskPostRequest{
-		Action: "define", ID: cleanTask.Task.ID, Channel: "general", CreatedBy: "ceo",
+		Action: "define", ID: cleanTask.Task.ID, Channel: "general", CreatedBy: "cos",
 		Definition: &TaskDefinition{
 			Goal:            "Publish the updated pricing page copy with the three new tiers",
 			Deliverables:    []TaskDeliverable{{Name: "pricing copy", Format: "markdown in the wiki"}},
@@ -120,10 +120,10 @@ func evalJobHumanBoundary(fx *officeEvalFixture, r *OfficeEvalReport) error {
 	n, _ = countGapInterviews(cleanTask.Task.ID)
 	r.add(job, "complete definition raises no interview", n == 0, fmt.Sprintf("interviews=%d", n), "")
 
-	// --- (b) human content reaches the agent in full ---
+	// --- (b) human content reaches the bot in full ---
 	// A human redline message far past both the old 800-char poll clip and
 	// the 2000-char packet thread clip; the tail marker must survive into
-	// the agent's work packet verbatim.
+	// the bot's work packet verbatim.
 	tail := "FINAL-REDLINE-OMEGA: sender name is Maya, send window closes Friday."
 	long := strings.Repeat("Redline detail about contacts, dates, and per-account corrections. ", 40) + tail // ~2.7k chars
 	if len(long) <= 2000 {

@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import type { AgentRequest, InterviewOption } from "../../api/client";
+import type { BotRequest, InterviewOption } from "../../api/client";
 import { formatRelativeTime } from "../../lib/format";
 import {
   requestOptionNeedsText,
@@ -8,13 +8,13 @@ import {
 } from "../../lib/requestOptions";
 
 interface RequestItemProps {
-  request: AgentRequest;
+  request: BotRequest;
   isPending: boolean;
   onAnswer?: (choiceId: string, customText?: string) => void;
 }
 
 /**
- * Renders one agent request row inside the unified Inbox detail pane.
+ * Renders one bot request row inside the unified Inbox detail pane.
  * Originally lived in apps/RequestsApp.tsx; Phase 2b retired that
  * surface so the renderer moved here next to DecisionInbox.
  */
@@ -48,7 +48,7 @@ export function RequestItem({
         {request.blocking ? (
           <span className="badge badge-yellow">BLOCKING</span>
         ) : null}
-              </div>
+      </div>
 
       {request.title && request.title !== "Request" && (
         <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
@@ -98,7 +98,7 @@ export function RequestItem({
 }
 
 interface RequestActionsProps {
-  request: AgentRequest;
+  request: BotRequest;
   options: InterviewOption[];
   onAnswer?: (choiceId: string, customText?: string) => void;
 }

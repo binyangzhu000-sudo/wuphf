@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nex-crm/wuphf/internal/agent"
+	"github.com/nex-crm/wuphf/internal/bot"
 )
 
 // This file reproduces three bug scenarios reported by the user:
 //
-//  1. Tagging any other agent but CEO: CEO receives/routes instead of the
+//  1. Tagging any other bot but CEO: CEO receives/routes instead of the
 //     specialist responding directly.
 //  2. CEO tagging a specialist: specialist does not respond.
 //  3. DMs to specialists: do not work.
@@ -31,10 +31,10 @@ func collaborativeTestLauncher(t *testing.T) *Launcher {
 	t.Helper()
 	return &Launcher{
 		// focusMode intentionally left false: collaborative is the default.
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "fe", Name: "Frontend Engineer"},
 				{Slug: "be", Name: "Backend Engineer"},
 				{Slug: "cmo", Name: "CMO"},
@@ -52,14 +52,14 @@ func containsSlugSet(targets []notificationTarget, want string) bool {
 	return false
 }
 
-// Scenario 1 (target layer): human tags @fe in #general. Specialist must be
+// Scenario 1 (target layer): human tags @fe in a shared team room. Specialist must be
 // among the immediate targets.
 func TestBug_HumanTagsSpecialist_CollaborativeMode_SpecialistIsImmediate(t *testing.T) {
 	l := collaborativeTestLauncher(t)
 
 	immediate, _ := l.notificationTargetsForMessage(channelMessage{
 		From:    "you",
-		Channel: "general",
+		Channel: "team",
 		Content: "@fe fix the button",
 		Tagged:  []string{"fe"},
 	})
@@ -75,8 +75,8 @@ func TestBug_CEOTagsSpecialist_CollaborativeMode_SpecialistIsImmediate(t *testin
 	l := collaborativeTestLauncher(t)
 
 	immediate, _ := l.notificationTargetsForMessage(channelMessage{
-		From:    "ceo",
-		Channel: "general",
+		From:    "cos",
+		Channel: "team",
 		Content: "@fe please take this",
 		Tagged:  []string{"fe"},
 	})
@@ -104,7 +104,7 @@ func TestBug_HumanDMsSpecialist_CollaborativeMode_SpecialistIsImmediate(t *testi
 		t.Fatalf("bug: DM to @fe did not notify specialist; got %+v", immediate)
 	}
 	// DMs must not leak to CEO.
-	if containsSlugSet(immediate, "ceo") {
+	if containsSlugSet(immediate, "cos") {
 		t.Fatalf("bug: DM to @fe leaked to CEO; got %+v", immediate)
 	}
 }
@@ -115,14 +115,14 @@ func TestBug_HumanDMsSpecialist_CollaborativeMode_SpecialistIsImmediate(t *testi
 
 // fullDispatchLauncher wires a broker, headless state, and notify debouncer so
 // deliverMessageNotification exercises the real dispatch path. Using the codex
-// provider routes all non-lead agents through the headless path (no tmux pane
+// provider routes all non-lead bots through the headless path (no tmux pane
 // required), which lets us deterministically observe what got enqueued.
 func fullDispatchLauncher(t *testing.T) (*Launcher, chan string, func()) {
 	t.Helper()
 	b := newTestBroker(t)
 	b.mu.Lock()
 	b.members = []officeMember{
-		{Slug: "ceo", Name: "CEO"},
+		{Slug: "cos", Name: "CEO"},
 		{Slug: "fe", Name: "Frontend Engineer"},
 		{Slug: "be", Name: "Backend Engineer"},
 	}
@@ -130,12 +130,12 @@ func fullDispatchLauncher(t *testing.T) (*Launcher, chan string, func()) {
 
 	l := newHeadlessLauncherForTest(t)
 	l.broker = b
-	l.provider = "codex" // forces headless dispatch for every agent
+	l.provider = "codex" // forces headless dispatch for every bot
 	l.notifyLastDelivered = make(map[notifyDedupKey]time.Time)
-	l.pack = &agent.PackDefinition{
-		LeadSlug: "ceo",
-		Agents: []agent.AgentConfig{
-			{Slug: "ceo", Name: "CEO"},
+	l.pack = &bot.PackDefinition{
+		LeadSlug: "cos",
+		Bots: []bot.BotConfig{
+			{Slug: "cos", Name: "CEO"},
 			{Slug: "fe", Name: "Frontend Engineer"},
 			{Slug: "be", Name: "Backend Engineer"},
 		},
@@ -180,14 +180,14 @@ func TestBug_HumanTagsSpecialist_Dispatch_SpecialistReceivesTurn(t *testing.T) {
 	msg := channelMessage{
 		ID:      "msg-1",
 		From:    "you",
-		Channel: "general",
+		Channel: "team",
 		Content: "@fe fix the button",
 		Tagged:  []string{"fe"},
 	}
 
 	immediate, _ := l.notificationTargetsForMessage(msg)
 	t.Logf("notification targets: %+v", immediate)
-	t.Logf("agentNotificationTargets: %+v", l.targeter().NotificationTargets())
+	t.Logf("botNotificationTargets: %+v", l.targeter().NotificationTargets())
 	t.Logf("activeSessionMembers: %+v", l.activeSessionMembers())
 	t.Logf("officeLeadSlug: %q", l.targeter().LeadSlug())
 
@@ -206,8 +206,8 @@ func TestBug_CEOTagsSpecialist_Dispatch_SpecialistReceivesTurn(t *testing.T) {
 
 	l.deliverMessageNotification(channelMessage{
 		ID:      "msg-2",
-		From:    "ceo",
-		Channel: "general",
+		From:    "cos",
+		Channel: "team",
 		Content: "@fe please take this",
 		Tagged:  []string{"fe"},
 	})
@@ -235,8 +235,8 @@ func TestBug_HumanDMsSpecialist_Dispatch_SpecialistReceivesTurn(t *testing.T) {
 	if !hasSlug(slugs, "fe") {
 		t.Fatalf("bug reproduced: DM to fe did not dispatch a turn to fe; got turns to %v", slugs)
 	}
-	if hasSlug(slugs, "ceo") {
-		t.Fatalf("bug reproduced: DM to fe leaked a turn to ceo; got turns to %v", slugs)
+	if hasSlug(slugs, "cos") {
+		t.Fatalf("bug reproduced: DM to fe leaked a turn to cos; got turns to %v", slugs)
 	}
 }
 
@@ -269,10 +269,10 @@ func TestBug_FocusMode_HumanTagsWizardHiredPM_SpecialistIsImmediate(t *testing.T
 	l.provider = "codex"
 	l.focusMode = true
 	l.notifyLastDelivered = make(map[notifyDedupKey]time.Time)
-	l.pack = &agent.PackDefinition{
-		LeadSlug: "ceo",
-		Agents: []agent.AgentConfig{
-			{Slug: "ceo", Name: "CEO"},
+	l.pack = &bot.PackDefinition{
+		LeadSlug: "cos",
+		Bots: []bot.BotConfig{
+			{Slug: "cos", Name: "CEO"},
 			{Slug: "planner", Name: "Planner"},
 			{Slug: "executor", Name: "Executor"},
 			{Slug: "reviewer", Name: "Reviewer"},
@@ -282,7 +282,7 @@ func TestBug_FocusMode_HumanTagsWizardHiredPM_SpecialistIsImmediate(t *testing.T
 	immediate, _ := l.notificationTargetsForMessage(channelMessage{
 		ID:      "focus-1",
 		From:    "you",
-		Channel: "general",
+		Channel: "team",
 		Content: "@pm please scope this",
 		Tagged:  []string{"pm"},
 	})
@@ -290,7 +290,7 @@ func TestBug_FocusMode_HumanTagsWizardHiredPM_SpecialistIsImmediate(t *testing.T
 	if !containsSlugSet(immediate, "pm") {
 		t.Fatalf("focus mode: human @pm did not reach wizard-hired specialist; got %+v", immediate)
 	}
-	if containsSlugSet(immediate, "ceo") {
+	if containsSlugSet(immediate, "cos") {
 		t.Fatalf("focus mode: CEO should not also wake when specialist is explicitly tagged; got %+v", immediate)
 	}
 }
@@ -309,18 +309,18 @@ func TestBug_FocusMode_CEOTagsWizardHiredPM_SpecialistIsImmediate(t *testing.T) 
 	l.provider = "codex"
 	l.focusMode = true
 	l.notifyLastDelivered = make(map[notifyDedupKey]time.Time)
-	l.pack = &agent.PackDefinition{
-		LeadSlug: "ceo",
-		Agents: []agent.AgentConfig{
-			{Slug: "ceo", Name: "CEO"},
+	l.pack = &bot.PackDefinition{
+		LeadSlug: "cos",
+		Bots: []bot.BotConfig{
+			{Slug: "cos", Name: "CEO"},
 			{Slug: "planner", Name: "Planner"},
 		},
 	}
 
 	immediate, _ := l.notificationTargetsForMessage(channelMessage{
 		ID:      "focus-2",
-		From:    "ceo",
-		Channel: "general",
+		From:    "cos",
+		Channel: "team",
 		Content: "@pm take this",
 		Tagged:  []string{"pm"},
 	})
@@ -333,7 +333,7 @@ func TestBug_FocusMode_CEOTagsWizardHiredPM_SpecialistIsImmediate(t *testing.T) 
 // -----------------------------------------------------------------------------
 // ch.Disabled must still be respected. An explicit @-tag bypasses the
 // "not yet a channel member" case (the bug this PR fixes) but MUST NOT bypass
-// a deliberate mute. Muting is the user's explicit intent to silence an agent.
+// a deliberate mute. Muting is the user's explicit intent to silence a bot.
 // -----------------------------------------------------------------------------
 
 func TestBug_DisabledMember_ExplicitTagDoesNotBypassMute(t *testing.T) {
@@ -342,7 +342,7 @@ func TestBug_DisabledMember_ExplicitTagDoesNotBypassMute(t *testing.T) {
 	b.members = append(b.members, officeMember{Slug: "pm", Name: "Product Manager"})
 	// Put pm in the channel then explicitly disable them.
 	for i := range b.channels {
-		if b.channels[i].Slug == "general" {
+		if b.channels[i].Slug == "team" {
 			b.channels[i].Members = append(b.channels[i].Members, "pm")
 			b.channels[i].Disabled = append(b.channels[i].Disabled, "pm")
 			break
@@ -354,16 +354,16 @@ func TestBug_DisabledMember_ExplicitTagDoesNotBypassMute(t *testing.T) {
 	l.broker = b
 	l.provider = "codex"
 	l.notifyLastDelivered = make(map[notifyDedupKey]time.Time)
-	l.pack = &agent.PackDefinition{
-		LeadSlug: "ceo",
-		Agents:   []agent.AgentConfig{{Slug: "ceo", Name: "CEO"}, {Slug: "pm", Name: "PM"}},
+	l.pack = &bot.PackDefinition{
+		LeadSlug: "cos",
+		Bots:     []bot.BotConfig{{Slug: "cos", Name: "CEO"}, {Slug: "pm", Name: "PM"}},
 	}
 
 	// Collaborative mode @-tag: disabled specialist must NOT wake.
 	immediate, _ := l.notificationTargetsForMessage(channelMessage{
 		ID:      "mute-1",
 		From:    "you",
-		Channel: "general",
+		Channel: "team",
 		Content: "@pm please take this",
 		Tagged:  []string{"pm"},
 	})
@@ -374,8 +374,8 @@ func TestBug_DisabledMember_ExplicitTagDoesNotBypassMute(t *testing.T) {
 	// CEO tagging disabled specialist: same — mute still wins.
 	immediate2, _ := l.notificationTargetsForMessage(channelMessage{
 		ID:      "mute-2",
-		From:    "ceo",
-		Channel: "general",
+		From:    "cos",
+		Channel: "team",
 		Content: "@pm please take this",
 		Tagged:  []string{"pm"},
 	})
@@ -391,7 +391,7 @@ func TestBug_DisabledMember_ExplicitTagDoesNotBypassMute(t *testing.T) {
 	immediate3, _ := l.notificationTargetsForMessage(channelMessage{
 		ID:      "mute-3",
 		From:    "you",
-		Channel: "general",
+		Channel: "team",
 		Content: "@pm please take this",
 		Tagged:  []string{"pm"},
 	})
@@ -406,8 +406,8 @@ func TestBug_DisabledMember_ExplicitTagDoesNotBypassMute(t *testing.T) {
 
 // TestBug_DMToWizardHiredPM_Dispatch reproduces symptom 3 exactly as the user
 // described: hire a PM via the web wizard, open the DM with PM, send a
-// message. Today pm is added to b.members but NOT to l.pack.Agents, so
-// activeSessionMembers (which is pack-gated) excludes pm, agentNotificationTargets
+// message. Today pm is added to b.members but NOT to l.pack.Bots, so
+// activeSessionMembers (which is pack-gated) excludes pm, botNotificationTargets
 // never registers pm, and DM dispatch silently returns zero targets.
 func TestBug_DMToWizardHiredPM_Dispatch(t *testing.T) {
 	b := newTestBroker(t)
@@ -422,10 +422,10 @@ func TestBug_DMToWizardHiredPM_Dispatch(t *testing.T) {
 	l.provider = "codex"
 	l.notifyLastDelivered = make(map[notifyDedupKey]time.Time)
 	// Pack was set at launch — does NOT include pm.
-	l.pack = &agent.PackDefinition{
-		LeadSlug: "ceo",
-		Agents: []agent.AgentConfig{
-			{Slug: "ceo", Name: "CEO"},
+	l.pack = &bot.PackDefinition{
+		LeadSlug: "cos",
+		Bots: []bot.BotConfig{
+			{Slug: "cos", Name: "CEO"},
 			{Slug: "planner", Name: "Planner"},
 			{Slug: "executor", Name: "Executor"},
 			{Slug: "reviewer", Name: "Reviewer"},
@@ -445,7 +445,7 @@ func TestBug_DMToWizardHiredPM_Dispatch(t *testing.T) {
 	if !containsSlugSet(immediate, "pm") {
 		t.Fatalf(
 			"bug reproduced: DM to wizard-hired pm produced no target for pm. "+
-				"targetMap=%+v immediate=%+v. Wizard-hired agents must be reachable via DM.",
+				"targetMap=%+v immediate=%+v. Wizard-hired bots must be reachable via DM.",
 			targetMap, immediate,
 		)
 	}
@@ -465,10 +465,10 @@ func TestBug_TagWizardHiredPM_InGeneral_Dispatch(t *testing.T) {
 	l.broker = b
 	l.provider = "codex"
 	l.notifyLastDelivered = make(map[notifyDedupKey]time.Time)
-	l.pack = &agent.PackDefinition{
-		LeadSlug: "ceo",
-		Agents: []agent.AgentConfig{
-			{Slug: "ceo", Name: "CEO"},
+	l.pack = &bot.PackDefinition{
+		LeadSlug: "cos",
+		Bots: []bot.BotConfig{
+			{Slug: "cos", Name: "CEO"},
 			{Slug: "planner", Name: "Planner"},
 			{Slug: "executor", Name: "Executor"},
 			{Slug: "reviewer", Name: "Reviewer"},
@@ -478,15 +478,15 @@ func TestBug_TagWizardHiredPM_InGeneral_Dispatch(t *testing.T) {
 	immediate, _ := l.notificationTargetsForMessage(channelMessage{
 		ID:      "tag-msg-1",
 		From:    "you",
-		Channel: "general",
+		Channel: "team",
 		Content: "@pm please scope this epic",
 		Tagged:  []string{"pm"},
 	})
 
 	if !containsSlugSet(immediate, "pm") {
 		t.Fatalf(
-			"bug reproduced: @pm in #general did not reach pm. targetMap=%+v immediate=%+v. "+
-				"Wizard-hired agents must be reachable via explicit @-tag.",
+			"bug reproduced: @pm in #team did not reach pm. targetMap=%+v immediate=%+v. "+
+				"Wizard-hired bots must be reachable via explicit @-tag.",
 			l.targeter().NotificationTargets(), immediate,
 		)
 	}
@@ -497,7 +497,7 @@ func TestBug_TagWizardHiredPM_InGeneral_Dispatch(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 // This test mirrors the real-world state: the default #general channel is
-// seeded with a fixed roster (ceo/planner/executor/reviewer). When the user
+// seeded with a fixed roster (cos/planner/executor/reviewer). When the user
 // adds a new specialist via the wizard (e.g. "fe") and then @-tags that
 // specialist in #general, the specialist is NOT in ch.Members yet — so the
 // allowTarget / isEnabled check silently drops the explicit mention and only
@@ -505,7 +505,7 @@ func TestBug_TagWizardHiredPM_InGeneral_Dispatch(t *testing.T) {
 func TestBug_RootCause_ChannelMembershipFilterDropsExplicitMention(t *testing.T) {
 	b := newTestBroker(t)
 	// Add a specialist AFTER the broker has seeded default channels (this is
-	// what happens when a user hires a new agent via the wizard).
+	// what happens when a user hires a new bot via the wizard).
 	b.mu.Lock()
 	b.members = append(b.members, officeMember{Slug: "fe", Name: "Frontend Engineer"})
 	// Note: #general's ch.Members was NOT updated to include "fe".
@@ -515,10 +515,10 @@ func TestBug_RootCause_ChannelMembershipFilterDropsExplicitMention(t *testing.T)
 	l.broker = b
 	l.provider = "codex"
 	l.notifyLastDelivered = make(map[notifyDedupKey]time.Time)
-	l.pack = &agent.PackDefinition{
-		LeadSlug: "ceo",
-		Agents: []agent.AgentConfig{
-			{Slug: "ceo", Name: "CEO"},
+	l.pack = &bot.PackDefinition{
+		LeadSlug: "cos",
+		Bots: []bot.BotConfig{
+			{Slug: "cos", Name: "CEO"},
 			{Slug: "fe", Name: "Frontend Engineer"},
 		},
 	}
@@ -526,7 +526,7 @@ func TestBug_RootCause_ChannelMembershipFilterDropsExplicitMention(t *testing.T)
 	// Sanity: fe IS in the target map (pane/headless resolution is correct).
 	targetMap := l.targeter().NotificationTargets()
 	if _, ok := targetMap["fe"]; !ok {
-		t.Fatalf("pre-condition failed: fe should be in agentNotificationTargets: %+v", targetMap)
+		t.Fatalf("pre-condition failed: fe should be in botNotificationTargets: %+v", targetMap)
 	}
 
 	// Now the actual bug: human @-tags fe in #general. fe should be in the
@@ -534,7 +534,7 @@ func TestBug_RootCause_ChannelMembershipFilterDropsExplicitMention(t *testing.T)
 	immediate, _ := l.notificationTargetsForMessage(channelMessage{
 		ID:      "msg-rc",
 		From:    "you",
-		Channel: "general",
+		Channel: "team",
 		Content: "@fe fix the button",
 		Tagged:  []string{"fe"},
 	})
@@ -543,7 +543,7 @@ func TestBug_RootCause_ChannelMembershipFilterDropsExplicitMention(t *testing.T)
 		t.Fatalf(
 			"ROOT CAUSE: explicit @fe was silently dropped by enabledMembers filter (general members = %v); "+
 				"immediate targets = %+v. Explicit tags must bypass the channel-membership filter.",
-			b.EnabledMembers("general"), immediate,
+			b.EnabledMembers("team"), immediate,
 		)
 	}
 }

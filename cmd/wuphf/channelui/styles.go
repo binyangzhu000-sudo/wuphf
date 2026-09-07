@@ -29,10 +29,10 @@ const (
 	SlackInputFocus  = "#1264A3"
 )
 
-// AgentColorMap maps agent slugs to their brand colors.
-var AgentColorMap = map[string]string{
+// BotColorMap maps bot slugs to their brand colors.
+var BotColorMap = map[string]string{
 	"all":      "#FFFFFF",
-	"ceo":      "#EAB308",
+	"cos":      "#EAB308",
 	"pm":       "#22C55E",
 	"fe":       "#3B82F6",
 	"be":       "#8B5CF6",
@@ -126,8 +126,8 @@ func MutedTextStyle() lipgloss.Style {
 		Foreground(lipgloss.Color(SlackMuted))
 }
 
-func AgentNameStyle(slug string) lipgloss.Style {
-	color := AgentColor(slug)
+func BotNameStyle(slug string) lipgloss.Style {
+	color := BotColor(slug)
 	if color == "" {
 		color = SlackMuted
 	}
@@ -136,17 +136,17 @@ func AgentNameStyle(slug string) lipgloss.Style {
 		Bold(true)
 }
 
-// AgentColor returns the display color for a slug. Canonical office
-// roster slugs hit AgentColorMap; everything else falls through to
+// BotColor returns the display color for a slug. Canonical office
+// roster slugs hit BotColorMap; everything else falls through to
 // the procedural accent generator in internal/avatar so dynamic
-// agents (operation-created, custom roles) get a stable color.
+// bots (operation-created, custom roles) get a stable color.
 // Empty slug returns "".
-func AgentColor(slug string) string {
+func BotColor(slug string) string {
 	slug = strings.TrimSpace(slug)
 	if slug == "" {
 		return ""
 	}
-	if color := AgentColorMap[slug]; color != "" {
+	if color := BotColorMap[slug]; color != "" {
 		return color
 	}
 	return avatar.ProceduralOfficeAccentForSlug(slug)
@@ -175,9 +175,9 @@ func ThreadIndicatorStyle() lipgloss.Style {
 		Underline(true)
 }
 
-func AgentAvatar(slug string) string {
+func BotAvatar(slug string) string {
 	switch slug {
-	case "ceo":
+	case "cos":
 		return "◆"
 	case "pm":
 		return "▣"
@@ -204,7 +204,7 @@ func AgentAvatar(slug string) string {
 
 func MascotAccent(slug string) string {
 	switch slug {
-	case "ceo":
+	case "cos":
 		return "⌐"
 	case "pm":
 		return "□"
@@ -231,7 +231,7 @@ func MascotAccent(slug string) string {
 
 func MascotEyes(slug string) (string, string) {
 	switch slug {
-	case "ceo":
+	case "cos":
 		return "■", "■"
 	case "ai", "nex":
 		return "◉", "◉"
@@ -288,7 +288,7 @@ func MascotTop(activity string, frame int) string {
 
 func MascotProp(slug string) string {
 	switch slug {
-	case "ceo":
+	case "cos":
 		return "$"
 	case "pm":
 		return "]"
@@ -324,9 +324,9 @@ func MascotLines(slug, activity string, frame int) [3]string {
 	}
 }
 
-// AgentCharacter returns a compact mascot-like face for inline use.
-// WUPHF uses one coherent visual grammar: a role accent + a rounded face.
-func AgentCharacter(slug, activity string, frame int) string {
+// BotCharacter returns a compact mascot-like face for inline use.
+// gawkbot uses one coherent visual grammar: a role accent + a rounded face.
+func BotCharacter(slug, activity string, frame int) string {
 	leftEye, rightEye := MascotEyes(slug)
 	return MascotAccent(slug) + "(" + leftEye + MascotMouth(activity, frame) + rightEye + ")"
 }

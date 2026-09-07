@@ -13,8 +13,8 @@
  *     only re-seeded when it differs, so normal typing never self-resets.
  *
  * Surfaces mounted here: the bubble menu (text selection), the slash menu
- * (`/`), the `@`-mention picker, the WUPHF insert dialogs (citation / fact /
- * decision / related / wiki-link / agent-mention pickers), and the link /
+ * (`/`), the `@`-mention picker, the gawkbot insert dialogs (citation / fact /
+ * decision / related / wiki-link / bot-mention pickers), and the link /
  * image popovers.
  */
 
@@ -188,7 +188,7 @@ export default function TiptapWikiEditor({
   // handler doesn't fight the dialog's own inputs.
   const slash = useSlashMenu(inserts.dialog === null ? editor : null);
 
-  // Wiki-link / agent-mention / task-ref slash actions open the mention
+  // Wiki-link / bot-mention / task-ref slash actions open the mention
   // picker; stash which bucket to surface so it defaults correctly.
   const [pickerCategory, setPickerCategory] = useState<MentionCategory | null>(
     null,
@@ -416,7 +416,7 @@ export default function TiptapWikiEditor({
   );
 }
 
-/** Route a WUPHF slash action to its dialog or the mention picker. */
+/** Route a gawkbot slash action to its dialog or the mention picker. */
 function dispatchSlashAction(
   action: SlashAction,
   handlers: {
@@ -440,7 +440,7 @@ function dispatchSlashAction(
     case "wiki-link":
       handlers.openMentionPicker("pages");
       break;
-    case "agent-mention":
+    case "bot-mention":
       handlers.openMentionPicker("agents");
       break;
     case "task-ref":

@@ -1,9 +1,9 @@
 /**
- * SlideIntro — tour slide 1, "This is your office."
+ * SlideIntro — tour slide 1, "This is your team."
  *
- * Sets the metaphor: WUPHF is an office, and a team of agents lives in it.
+ * Sets the metaphor: gawkbot is an office, and a team of bots lives in it.
  * The visual is the `TourMockupSidebar` materializing piece by piece — the
- * workspace label, then the channels, then the agents staggering in — so the
+ * workspace label, then the channels, then the bots staggering in — so the
  * very first thing the founder sees is their (mock) office assembling itself.
  *
  * Copy is pulled from `OFFICE_TOUR_COPY.intro` (the single source of truth);
@@ -33,7 +33,7 @@ export function SlideIntro({ active }: OfficeTourSlideProps) {
         {COPY.lead ? (
           <p className="office-tour-slide-lead">
             <span className="office-tour-slide-lead-avatar" aria-hidden="true">
-              <PixelAvatar slug="ceo" size={24} />
+              <PixelAvatar slug="cos" size={24} />
             </span>
             <span className="office-tour-slide-lead-text">{COPY.lead}</span>
           </p>

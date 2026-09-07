@@ -14,14 +14,16 @@
 //   POST /sessions                  new manual session; POST /sessions/<id>/message append
 //   GET  /artifacts?agent=          the agent's saved run artifacts
 
+import { timingSafeEqual } from "node:crypto";
 import { streamWorkflow } from "./buildAgent.js";
-import { buildCapabilities, capabilityConfigFromEnv } from "./capabilities.js";
+import { buildCapabilities, capabilityConfigFromEnv, fetchAppSchema } from "./capabilities.js";
 import { runWorkflow } from "./executor.js";
 import { providersPayload } from "./providers.js";
 import { runRoutine } from "./routineRunner.js";
 import { PiSessions } from "./sessions.js";
 import { AgentStore, defaultDataDir, sanitizeAgentId } from "./store.js";
 import { runTool } from "./toolRuntime.js";
+import { resolveToolAuthoring, runtimeAICapabilityConfig } from "./serviceAuthor.js";
 import { buildTool } from "./tools.js";
 import { type BuildRequest, type RunRequest, SCHEMA_VERSION, type ToolBuildRequest, type ToolCallRequest, type WorkflowSpec } from "./wire.js";
 
@@ -30,12 +32,42 @@ type BuildStream = (message: string, opts: { toolId?: string; signal?: AbortSign
 
 export interface ServerOptions {
 	port?: number;
+	// Interface to bind. Defaults to loopback (WUPHF_AGENT_HOST) — this service
+	// runs code and must never be reachable off-box without an explicit opt-in.
+	hostname?: string;
+	// Shared secret required as `Authorization: Bearer <token>` on every route
+	// except /health. Defaults to WUPHF_AGENT_TOKEN. When empty the service is
+	// unauthenticated and MUST stay loopback-bound (enforced in createServer).
+	authToken?: string;
 	// Override the build engine in tests so they never hit a live model.
 	buildStream?: BuildStream;
 	// Override the per-agent store (tests point it at a tmp dir).
 	store?: AgentStore;
 	// Override the pi-backed session layer (tests point it at a tmp dir).
 	sessions?: PiSessions;
+	// Override authoring resolution in tests (deterministic fake model author).
+	authoring?: typeof resolveToolAuthoring;
+}
+
+/** True when `host` only ever resolves to the local machine. */
+function isLoopbackHost(host: string): boolean {
+	const h = host.trim().toLowerCase();
+	return h === "" || h === "127.0.0.1" || h === "::1" || h === "localhost";
+}
+
+/** Constant-time bearer-token check. Returns true only when a non-empty token
+ * is configured AND the request presents exactly that token. */
+function authorized(req: Request, token: string): boolean {
+	if (token === "") return false;
+	const header = req.headers.get("authorization") ?? "";
+	const prefix = "Bearer ";
+	if (!header.startsWith(prefix)) return false;
+	const presented = Buffer.from(header.slice(prefix.length));
+	const expected = Buffer.from(token);
+	// timingSafeEqual throws on length mismatch — guard first so length itself
+	// is not a fast-path oracle, then compare the bytes in constant time.
+	if (presented.length !== expected.length) return false;
+	return timingSafeEqual(presented, expected);
 }
 
 function json(data: unknown, status = 200): Response {
@@ -96,14 +128,34 @@ export function createServer(opts: ServerOptions = {}) {
 	// Scheduling lives in the BROKER's scheduler registry (cron, revisions, run
 	// history) — it calls POST /routines/run on each fire. No interval here.
 	const sessions = opts.sessions ?? new PiSessions(defaultDataDir());
+	const resolveAuthoring = opts.authoring ?? resolveToolAuthoring;
+	const hostname = (opts.hostname ?? process.env.WUPHF_AGENT_HOST ?? "127.0.0.1").trim();
+	const authToken = (opts.authToken ?? process.env.WUPHF_AGENT_TOKEN ?? "").trim();
+
+	// Fail closed: exposing a code-running service off-loopback without a token is
+	// unauthenticated remote code execution. Refuse to boot that configuration
+	// rather than silently listening on 0.0.0.0 with no auth.
+	if (!isLoopbackHost(hostname) && authToken === "") {
+		throw new Error("refusing to bind non-loopback host without WUPHF_AGENT_TOKEN (would be unauthenticated RCE)");
+	}
+	if (authToken === "") {
+		console.warn("[wuphf-agent] WUPHF_AGENT_TOKEN is unset — service is UNAUTHENTICATED and bound to loopback only.");
+	}
 
 	return Bun.serve({
 		port: opts.port ?? Number(process.env.PORT ?? 8820),
+		hostname,
 		async fetch(req) {
 			const url = new URL(req.url);
 			const { pathname } = url;
 
+			// Liveness stays open. When a token is configured every other route
+			// requires it; when it is not, the service runs unauthenticated but is
+			// loopback-only (a non-loopback bind without a token is refused at
+			// startup), so an open dev instance is never reachable off-box.
 			if (req.method === "GET" && pathname === "/health") return json({ status: "ok", version: "0.0.1" });
+			if (authToken !== "" && !authorized(req, authToken)) return json({ error: "unauthorized" }, 401);
+
 			if (req.method === "GET" && pathname === "/providers") return json(providersPayload());
 
 			if (req.method === "POST" && pathname === "/build/stream") {
@@ -152,15 +204,34 @@ export function createServer(opts: ServerOptions = {}) {
 					return json({ error: "invalid tool build request: message (string) required" }, 400);
 				}
 				if (schemaMismatch(body.schema_version)) return json({ error: "schema_version mismatch" }, 400);
-				// Model authoring is opt-in (TOOL_AUTHOR_MODEL=1): with no model configured
-				// the endpoint must answer deterministically FAST, not eat a model timeout.
+				// Authoring resolves per-host (serviceAuthor.ts): subscription CLI,
+				// API key, or Ollama when available; TOOL_AUTHOR_MODEL=0 forces the
+				// deterministic stub (tests), =1 keeps the Ollama-harness override.
+				// With nothing available the endpoint still answers FAST via the stub.
 				const app = typeof body.app === "string" ? body.app.trim() : "";
 				if (app && !validAgentId(app)) return json({ error: "invalid tool build request: unusable app id" }, 400);
-				const outcome = await buildTool(body.message, { tryModel: process.env.TOOL_AUTHOR_MODEL === "1", signal: req.signal });
+				const authoring = resolveAuthoring();
+				// Steer the authored tool onto the app's REAL tables: fetch its
+				// schema so data.* calls use the names the app already wrote.
+				const buildSchema = app ? await fetchAppSchema({ ...capabilityConfigFromEnv(), appId: app }) : "";
+				const outcome = await buildTool(body.message, { ...(authoring ?? {}), tryModel: authoring != null, signal: req.signal, appSchema: buildSchema });
+				console.log(`tools/build authored_by=${outcome.authored_by} via=${authoring?.via ?? "none"} app=${app || "-"}`);
 				// `app` set -> PERSIST the authored tool under that agent (re-authoring a
 				// same-named tool bumps version); the response tool carries `version`.
-				if (app && outcome.tool) return json({ ...outcome, tool: store.upsertTool(app, outcome.tool) });
-				return json(outcome);
+				// Stub-authored tools are NEVER persisted: a canned template landing in
+				// the operator's Tools list as if it were their workflow was the worst
+				// finding of the 2026-08-15 QA pass. The stub still rides the response
+				// (labeled) so harness callers keep a deterministic shape.
+				// `via` tells the caller WHY a stub came back: "none" means nothing
+				// is configured (connect-a-model copy is right); anything else means
+				// the model was tried and failed (retry copy is right). Conflating
+				// the two told operators to "connect Claude Code" on machines where
+				// it was already connected (2026-08-17 eval8 finding).
+				const via = authoring?.via ?? "none";
+				if (app && outcome.tool && outcome.authored_by === "model") {
+					return json({ ...outcome, via, tool: store.upsertTool(app, outcome.tool) });
+				}
+				return json({ ...outcome, via });
 			}
 
 			if (req.method === "GET" && pathname === "/tools") {
@@ -170,30 +241,35 @@ export function createServer(opts: ServerOptions = {}) {
 			}
 
 			if (req.method === "POST" && pathname === "/tools/call") {
-				// The app's chat CALLS a saved tool. Execution is sandboxed
-				// (toolRuntime.ts); a gated capability halts with needs_approval
-				// unless the request carries approved=true (CQ1, default deny).
+				// The app's chat CALLS a saved tool. The tool CODE is resolved from the
+				// per-agent store by (agent, name) and is NEVER taken from the request
+				// body — a caller supplies inputs/args, not code, so the endpoint can
+				// only run tools the agent authored and persisted. Execution is still
+				// sandboxed (toolRuntime.ts); a gated capability halts with
+				// needs_approval unless the request carries approved=true (CQ1).
 				let body: ToolCallRequest;
 				try {
 					body = (await req.json()) as ToolCallRequest;
 				} catch {
 					return json({ error: "invalid JSON body" }, 400);
 				}
-				const tool = body && typeof body === "object" ? body.tool : undefined;
-				if (!tool || typeof tool !== "object" || typeof tool.name !== "string" || typeof tool.code !== "string") {
-					return json({ error: "invalid tool call request: tool { name, code } required" }, 400);
-				}
-				// inputs is caller-supplied JSON: absent -> []; present but not an array
-				// of { name: string } entries -> a plain 400, not a 500 inside runTool.
-				const rawInputs = (tool as { inputs?: unknown }).inputs;
-				const inputsValid =
-					rawInputs === undefined ||
-					(Array.isArray(rawInputs) &&
-						rawInputs.every((i) => i !== null && typeof i === "object" && typeof (i as { name?: unknown }).name === "string"));
-				if (!inputsValid) {
-					return json({ error: "invalid tool call request: inputs must be an array of { name } entries" }, 400);
+				if (!body || typeof body !== "object") {
+					return json({ error: "invalid tool call request" }, 400);
 				}
 				if (schemaMismatch(body.schema_version)) return json({ error: "schema_version mismatch" }, 400);
+				const agent = typeof body.agent === "string" ? body.agent.trim() : "";
+				if (!agent || !validAgentId(agent)) {
+					return json({ error: "invalid tool call request: agent (string) required" }, 400);
+				}
+				const name = typeof body.name === "string" ? body.name.trim() : "";
+				if (!name) {
+					return json({ error: "invalid tool call request: name (string) required" }, 400);
+				}
+				const tool = store.getTool(agent, name);
+				if (!tool) {
+					return json({ error: `no such tool: ${name}` }, 404);
+				}
+				const rawInputs = tool.inputs;
 				// Capabilities compose per host env: real broker/model seams when
 				// configured (WUPHF_BROKER_URL/TOKEN, TOOL_RUNTIME_MODEL=1), simulated
 				// otherwise. TOOL_CALL_TIMEOUT_MS raises the hard-kill deadline for
@@ -203,9 +279,10 @@ export function createServer(opts: ServerOptions = {}) {
 				const rawTimeoutMs = Number(process.env.TOOL_CALL_TIMEOUT_MS);
 				const timeoutMs = Number.isFinite(rawTimeoutMs) && rawTimeoutMs > 0 ? rawTimeoutMs : undefined;
 				return json(
-					await runTool({ ...tool, inputs: rawInputs === undefined ? [] : tool.inputs }, body.args ?? {}, {
+					await runTool({ ...tool, inputs: rawInputs === undefined ? [] : rawInputs }, body.args ?? {}, {
 						approved: body.approved === true,
-						capabilities: buildCapabilities(capabilityConfigFromEnv()),
+						// Pass the app id so data.* binds to THIS app's real store.
+						capabilities: buildCapabilities({ ...capabilityConfigFromEnv(), ...runtimeAICapabilityConfig(), appId: agent }),
 						timeoutMs,
 					}),
 				);
@@ -245,10 +322,20 @@ export function createServer(opts: ServerOptions = {}) {
 				// runRoutine executes with approved: false (SEND-GATE, default deny):
 				// a gated routine records needs_approval into its transcript — it
 				// never auto-sends. Run status history lands in the broker's ring.
+				// Routines author through the same per-host resolution as /tools/build,
+				// so a machine with a real model authors real tools on routine fires too.
+				const routineAuthoring = resolveAuthoring();
+				// A routine that authors a tool on the fly must also target the app's
+				// real tables — fetch the schema once and pass it to the author.
+				const routineSchema = await fetchAppSchema({ ...capabilityConfigFromEnv(), appId: agent });
 				const result = await runRoutine(
 					agent,
 					{ slug: body.slug.trim(), name: body.name.trim(), prompt: body.prompt },
-					{ store, sessions },
+					{
+						store,
+						sessions,
+						author: (p) => buildTool(p, { ...(routineAuthoring ?? {}), tryModel: routineAuthoring != null, appSchema: routineSchema }),
+					},
 				);
 				return json({ status: result.status, digest: result.outcome, session_id: result.session.id });
 			}

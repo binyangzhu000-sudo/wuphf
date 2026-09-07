@@ -42,15 +42,15 @@ func TestMailboxInboxIncludesHumanAndDirectTags(t *testing.T) {
 
 	human := channelui.BrokerMessage{ID: "m1", From: "human", Content: "ping"}
 	if !channelui.MailboxMessageBelongsToViewerInbox(human, "fe", idx) {
-		t.Fatalf("messages from human should land in any agent's inbox")
+		t.Fatalf("messages from human should land in any bot's inbox")
 	}
 
-	directTag := channelui.BrokerMessage{ID: "m2", From: "ceo", Content: "do this", Tagged: []string{"fe"}}
+	directTag := channelui.BrokerMessage{ID: "m2", From: "cos", Content: "do this", Tagged: []string{"fe"}}
 	if !channelui.MailboxMessageBelongsToViewerInbox(directTag, "fe", idx) {
 		t.Fatalf("messages tagging the viewer should land in their inbox")
 	}
 
-	allTag := channelui.BrokerMessage{ID: "m3", From: "ceo", Content: "team-wide", Tagged: []string{"all"}}
+	allTag := channelui.BrokerMessage{ID: "m3", From: "cos", Content: "team-wide", Tagged: []string{"all"}}
 	if !channelui.MailboxMessageBelongsToViewerInbox(allTag, "fe", idx) {
 		t.Fatalf("messages tagged @all should land in every viewer's inbox")
 	}
@@ -96,7 +96,7 @@ func TestFilterMessagesForViewerScopeUnknownScopeReturnsCopy(t *testing.T) {
 	}
 }
 
-func TestFilterMessagesForViewerScopeAgentMode(t *testing.T) {
+func TestFilterMessagesForViewerScopeBotMode(t *testing.T) {
 	msgs := []channelui.BrokerMessage{
 		{ID: "a", From: "fe", Content: "viewer wrote"},                   // outbox
 		{ID: "b", From: "human", Content: "human ping"},                  // inbox (human)
@@ -109,10 +109,10 @@ func TestFilterMessagesForViewerScopeAgentMode(t *testing.T) {
 		ids[m.ID] = true
 	}
 	if !ids["a"] || !ids["b"] || !ids["c"] {
-		t.Fatalf("agent scope should include outbox+inbox, got %v", ids)
+		t.Fatalf("bot scope should include outbox+inbox, got %v", ids)
 	}
 	if ids["d"] {
-		t.Fatalf("agent scope should exclude unrelated message, got %v", ids)
+		t.Fatalf("bot scope should exclude unrelated message, got %v", ids)
 	}
 }
 
@@ -131,14 +131,14 @@ func TestBuildInboxLinesShowsRequestsAndMessages(t *testing.T) {
 	requests := []channelui.Interview{{
 		ID:        "req-1",
 		Kind:      "decision",
-		From:      "ceo",
+		From:      "cos",
 		Question:  "Approve the launch?",
 		Context:   "Need green light",
 		CreatedAt: "2026-04-29T10:00:00Z",
 	}}
 	messages := []channelui.BrokerMessage{{
 		ID:        "m1",
-		From:      "ceo",
+		From:      "cos",
 		Content:   "FYI here is the plan",
 		Timestamp: "2026-04-29T10:00:00Z",
 	}}

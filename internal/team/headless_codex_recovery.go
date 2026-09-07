@@ -4,7 +4,7 @@ package team
 // headless dispatch (PLAN.md §C18): durability checks (did the turn
 // actually persist its work?), the retry-prompt builders (timeout vs
 // failure shapes), the recovery dispatchers that re-enqueue with
-// updated attempt counts, and the agent-posting heuristics used to
+// updated attempt counts, and the bot-posting heuristics used to
 // decide whether a "final message" should be auto-posted on silent
 // turns. Split out of headless_codex.go so the entry-point file
 // stays focused on dispatch + types.
@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nex-crm/wuphf/internal/agent"
+	"github.com/nex-crm/wuphf/internal/bot"
 )
 
 func taskHasDurableCompletionState(task *teamTask) bool {
@@ -39,7 +39,7 @@ func (l *Launcher) headlessTurnCompletedDurably(slug string, active *headlessCod
 		return true, ""
 	}
 	task := l.timedOutTaskForTurn(slug, active.Turn)
-	requiresDurableGuard := codingAgentSlugs[slug]
+	requiresDurableGuard := codingBotSlugs[slug]
 	requiresExternalExecution := taskRequiresRealExternalExecution(task)
 	if task != nil && strings.EqualFold(strings.TrimSpace(task.ExecutionMode), "local_worktree") {
 		requiresDurableGuard = true
@@ -78,7 +78,16 @@ func (l *Launcher) headlessTurnCompletedDurably(slug string, active *headlessCod
 	if task != nil && taskHasDurableCompletionState(task) {
 		return true, ""
 	}
-	if l.agentPostedSubstantiveMessageSince(slug, active.StartedAt) {
+	// The App Builder's durable evidence IS the app registry: a manifest
+	// created or republished during this turn proves the work landed, no
+	// office task-state write required. Without this, every successful build
+	// was judged by office-bot evidence (task writes, channel posts) the
+	// App Builder never produces, got "blocked", and burned a retry turn —
+	// observed on every build in the 2026-08-15 QA pass.
+	if isAppBuilderSlug(slug) && l.appRegistryTouchedSince(active.StartedAt, task) {
+		return true, ""
+	}
+	if l.botPostedSubstantiveMessageSince(slug, active.StartedAt) {
 		return true, ""
 	}
 	if workspaceDir := strings.TrimSpace(active.WorkspaceDir); workspaceDir != "" {
@@ -106,7 +115,19 @@ func (l *Launcher) taskHasExternalWorkflowEvidenceSince(task *teamTask, startedA
 	if l == nil || l.broker == nil || task == nil {
 		return false, false
 	}
-	channel := normalizeChannelSlug(task.Channel)
+	// bucketChannelKey, not normalizeChannelSlug: a task with no channel must
+	// match actions with no channel, NOT every action everywhere.
+	//
+	// The pairing below is `channel != "" && <mismatch> -> skip`. That guard is
+	// dead while normalizeChannelSlug launders "" into "general", so the filter
+	// always applies. The moment "" survives, the guard goes live and switches
+	// the channel filter OFF for a homeless task — widening the evidence scan
+	// to that owner's work in every channel, which can report executed=true
+	// from unrelated activity and suppress a recovery that should have fired.
+	// A filter that silently widens is worse than one that is wrong, so both
+	// sides use the same empty-preserving key and the comparison is
+	// unconditional.
+	channel := bucketChannelKey(task.Channel)
 	owner := strings.TrimSpace(task.Owner)
 	for _, action := range l.broker.Actions() {
 		kind := strings.ToLower(strings.TrimSpace(action.Kind))
@@ -119,7 +140,7 @@ func (l *Launcher) taskHasExternalWorkflowEvidenceSince(task *teamTask, startedA
 		default:
 			continue
 		}
-		if channel != "" && normalizeChannelSlug(action.Channel) != channel {
+		if bucketChannelKey(action.Channel) != channel {
 			continue
 		}
 		if owner != "" {
@@ -143,19 +164,19 @@ func (l *Launcher) taskHasExternalWorkflowEvidenceSince(task *teamTask, startedA
 	return executed, attempted
 }
 
-// isSubstantiveAgentProgressMessage rejects messages that don't count
-// as durable evidence the agent made progress. STATUS pings and
+// isSubstantiveBotProgressMessage rejects messages that don't count
+// as durable evidence the bot made progress. STATUS pings and
 // agent_issue helpdesk pings are explicitly out — they're noise the
-// human asks the agent to clarify, not turn output.
-func isSubstantiveAgentProgressMessage(msg channelMessage) bool {
-	if strings.TrimSpace(msg.Kind) == agentIssueMessageKind {
+// human asks the bot to clarify, not turn output.
+func isSubstantiveBotProgressMessage(msg channelMessage) bool {
+	if strings.TrimSpace(msg.Kind) == botIssueMessageKind {
 		return false
 	}
 	content := strings.TrimSpace(msg.Content)
 	return content != "" && !strings.HasPrefix(content, "[STATUS]")
 }
 
-func (l *Launcher) agentPostedSubstantiveMessageSince(slug string, startedAt time.Time) bool {
+func (l *Launcher) botPostedSubstantiveMessageSince(slug string, startedAt time.Time) bool {
 	if l == nil || l.broker == nil {
 		return false
 	}
@@ -163,7 +184,7 @@ func (l *Launcher) agentPostedSubstantiveMessageSince(slug string, startedAt tim
 		if msg.From != slug {
 			continue
 		}
-		if !isSubstantiveAgentProgressMessage(msg) {
+		if !isSubstantiveBotProgressMessage(msg) {
 			continue
 		}
 		// parseBrokerTimestamp (broker.go) accepts RFC3339 + RFC3339Nano
@@ -180,14 +201,14 @@ func (l *Launcher) agentPostedSubstantiveMessageSince(slug string, startedAt tim
 	return false
 }
 
-func (l *Launcher) agentPostedSubstantiveMessageToChannelSince(slug string, targetChannel string, startedAt time.Time) bool {
+func (l *Launcher) botPostedSubstantiveMessageToChannelSince(slug string, targetChannel string, startedAt time.Time) bool {
 	if l == nil || l.broker == nil {
 		return false
 	}
 	targetChannel = normalizeChannelSlug(targetChannel)
 	if IsDMSlug(targetChannel) {
-		if targetAgent := DMTargetAgent(targetChannel); targetAgent != "" {
-			targetChannel = DMSlugFor(targetAgent)
+		if targetBot := DMTargetBot(targetChannel); targetBot != "" {
+			targetChannel = DMSlugFor(targetBot)
 		}
 	}
 	for _, msg := range l.broker.AllMessages() {
@@ -197,7 +218,7 @@ func (l *Launcher) agentPostedSubstantiveMessageToChannelSince(slug string, targ
 		if targetChannel != "" && normalizeChannelSlug(msg.Channel) != targetChannel {
 			continue
 		}
-		if !isSubstantiveAgentProgressMessage(msg) {
+		if !isSubstantiveBotProgressMessage(msg) {
 			continue
 		}
 		when := parseBrokerTimestamp(msg.Timestamp)
@@ -224,11 +245,11 @@ func (l *Launcher) postHeadlessFinalMessageIfSilent(slug string, targetChannel s
 		targetChannel = "general"
 	}
 	if IsDMSlug(targetChannel) {
-		if targetAgent := DMTargetAgent(targetChannel); targetAgent != "" {
-			targetChannel = DMSlugFor(targetAgent)
+		if targetBot := DMTargetBot(targetChannel); targetBot != "" {
+			targetChannel = DMSlugFor(targetBot)
 		}
 	}
-	if l.agentPostedSubstantiveMessageToChannelSince(slug, targetChannel, startedAt) {
+	if l.botPostedSubstantiveMessageToChannelSince(slug, targetChannel, startedAt) {
 		return channelMessage{}, false, nil
 	}
 	msg, err := l.broker.PostMessage(slug, targetChannel, text, nil, headlessReplyToID(notification))
@@ -264,7 +285,7 @@ func (l *Launcher) timedOutTaskForTurn(slug string, turn headlessCodexTurn) *tea
 			}
 		}
 	}
-	return l.agentActiveTask(slug)
+	return l.botActiveTask(slug)
 }
 
 func (l *Launcher) shouldRetryTimedOutHeadlessTurn(task *teamTask, turn headlessCodexTurn) bool {
@@ -281,6 +302,11 @@ func headlessTimedOutRetryPrompt(slug string, prompt string, timeout time.Durati
 	note := fmt.Sprintf("Previous attempt by @%s timed out after %s without a durable task handoff. Retry #%d.", strings.TrimSpace(slug), timeout, attempt)
 	if external {
 		note += " This is a live external-action task. Do the smallest useful live external step now. If Slack target discovery is already known, use it. If the first live Slack target fails, retry once against the resolved writable target; if that still fails, pivot immediately to the smallest useful live Notion or Drive action and report the exact blocker. Do not write repo docs or planning artifacts as substitutes."
+	} else if isAppBuilderSlug(slug) {
+		// A timed-out build usually left real progress on disk (scaffold
+		// copied, src files written). Restarting from scratch doubles the
+		// wasted work — RESUME from it.
+		note += " The previous attempt likely left partial work in the app directory. Inspect what is already there and RESUME from it — do not recopy the scaffold or rewrite finished files. Finish the remaining work and register/republish the app before you stop."
 	} else {
 		note += " For this retry, move immediately from claim/status into targeted file reads and edits, then leave the task in review/done/blocked before you stop. If you cannot ship the whole slice, ship the smallest runnable sub-slice and mark that state explicitly."
 	}
@@ -327,7 +353,7 @@ func shouldRetryHeadlessTurn(task *teamTask, turn headlessCodexTurn, transientFa
 	if transientFailure {
 		// Office-mode tasks historically never retried, which turned every
 		// provider connection blip into a blocked task. A transient failure
-		// is not the agent's fault — allow ONE recovery retry before blocking.
+		// is not the bot's fault — allow ONE recovery retry before blocking.
 		return turn.Attempts < headlessCodexOfficeTransientRetryLimit
 	}
 	return false
@@ -349,7 +375,15 @@ func (l *Launcher) recoverTimedOutHeadlessTurn(slug string, turn headlessCodexTu
 	// Timeouts are never classified as transient stream failures — the
 	// provider was reachable, the turn just ran long — so the transient
 	// office retry does not apply here.
-	if shouldRetryHeadlessTurn(task, turn, false) {
+	//
+	// App Builder builds are the exception: a timed-out build blocked into
+	// the self-heal lane cost the operator a 41-minute silent "Building"
+	// on the 2026-08-16 fresh-workspace QA pass. A prompt requeue (with the
+	// timed-out retry prompt telling the bot to resume, not restart) is
+	// strictly better than the slow escalation for a first-build task.
+	retryable := shouldRetryHeadlessTurn(task, turn, false) ||
+		(isAppBuilderSlug(slug) && turn.Attempts < headlessCodexLocalWorktreeRetryLimit)
+	if retryable {
 		retryTurn := turn
 		retryTurn.Attempts++
 		retryTurn.EnqueuedAt = time.Now()
@@ -362,18 +396,66 @@ func (l *Launcher) recoverTimedOutHeadlessTurn(slug string, turn headlessCodexTu
 		l.enqueueHeadlessCodexTurnRecord(slug, retryTurn)
 		return
 	}
-	reason := fmt.Sprintf("Automatic timeout recovery: @%s timed out after %s before posting a substantive update. Requeue, retry, or reassign from here.", slug, timeout)
+	reason := fmt.Sprintf("@%s ran out of time (about %d minutes) without finishing. Restart it from here, or hand it to another bot.", slug, int(timeout.Round(time.Minute).Minutes()))
 	if _, changed, err := l.broker.BlockTask(task.ID, slug, reason, ""); err != nil {
 		appendHeadlessCodexLog(slug, fmt.Sprintf("timeout-recovery-error: could not block %s: %v", task.ID, err))
 		return
 	} else if changed {
 		appendHeadlessCodexLog(slug, fmt.Sprintf("timeout-recovery: blocked %s after empty timeout", task.ID))
-		_, _, _ = l.requestSelfHealing(slug, task.ID, agent.EscalationStuck, reason)
+		if isAppBuilderSlug(slug) {
+			l.markAppBuildFailedForTask(task)
+		}
+		_, _, _ = l.requestSelfHealing(slug, task.ID, bot.EscalationStuck, reason)
+	}
+}
+
+// markAppBuildFailedForTask flips the app behind a blocked BUILD task to
+// "failed" so the operator-facing surfaces stop saying "Building". The app
+// is found by its edit channel (task-<ID>); refines of ready apps no-op
+// inside MarkBuildFailed.
+func (l *Launcher) markAppBuildFailedForTask(task *teamTask) {
+	if l == nil || l.broker == nil || task == nil {
+		return
+	}
+	channel := strings.TrimSpace(task.Channel)
+	if channel == "" {
+		return
+	}
+	apps, err := l.broker.appStore().List()
+	if err != nil {
+		return
+	}
+	for i := range apps {
+		if strings.EqualFold(apps[i].EditChannel, channel) {
+			if err := l.broker.appStore().MarkBuildFailed(apps[i].ID); err == nil {
+				appendHeadlessCodexLog(appBuilderSlug, "recovery: marked "+apps[i].ID+" failed after terminal block")
+			}
+			return
+		}
+	}
+}
+
+// classifyFailureForOperator maps a raw turn-failure detail onto a plain
+// phrase for operator-facing copy. The raw text goes to the headless log.
+func classifyFailureForOperator(detail string) string {
+	switch {
+	case isTransientProviderErrorText(detail):
+		return "the AI provider connection dropped"
+	case strings.Contains(detail, "signal: killed"):
+		return "the run was stopped"
+	case strings.Contains(strings.ToLower(detail), "at capacity") ||
+		strings.Contains(strings.ToLower(detail), "overloaded") ||
+		strings.Contains(strings.ToLower(detail), "rate limit"):
+		return "the AI provider was overloaded"
+	case isDurabilityFailure(detail):
+		return "it finished without saving its work"
+	default:
+		return "something went wrong while it worked"
 	}
 }
 
 // isDurabilityFailure reports whether detail came from headlessTurnCompletedDurably
-// ("completed without durable task state"). These failures mean the agent ran but did
+// ("completed without durable task state"). These failures mean the bot ran but did
 // nothing observable — retrying produces the same result, so we block instead.
 func isDurabilityFailure(detail string) bool {
 	return strings.Contains(strings.TrimSpace(detail), "completed without durable task state")
@@ -395,7 +477,13 @@ func (l *Launcher) recoverFailedHeadlessTurn(slug string, turn headlessCodexTurn
 	// Only the detail string survives to this layer, so classify transience
 	// from it — same marker set the queue's fast path uses on the error.
 	transient := isTransientProviderErrorText(detail)
-	if shouldRetryHeadlessTurn(task, turn, transient) && !isDurabilityFailure(detail) {
+	// Builds get the same resume carve-out as the timeout path: a first
+	// build that dies on a NON-transient error (tool crash, bad exit)
+	// otherwise had zero retries and blocked straight into self-heal.
+	buildRetry := isAppBuilderSlug(slug) &&
+		turn.Attempts < headlessCodexLocalWorktreeRetryLimit &&
+		!isDurabilityFailure(detail)
+	if (shouldRetryHeadlessTurn(task, turn, transient) || buildRetry) && !isDurabilityFailure(detail) {
 		retryTurn := turn
 		retryTurn.Attempts++
 		retryTurn.EnqueuedAt = time.Now()
@@ -414,13 +502,19 @@ func (l *Launcher) recoverFailedHeadlessTurn(slug string, turn headlessCodexTurn
 	if trimmed == "" {
 		trimmed = "unknown headless codex failure"
 	}
-	reason := fmt.Sprintf("Automatic error recovery: @%s failed before a durable task handoff. Last error: %s. Requeue, retry, or reassign from here.", slug, truncate(trimmed, 220))
+	// The reason reaches the operator (task details + incident body): plain
+	// language, classified cause, no raw stderr — that goes to the log.
+	appendHeadlessCodexLog(slug, "error-recovery: raw failure detail: "+truncate(trimmed, 400))
+	reason := fmt.Sprintf("@%s hit an error and stopped after retrying (%s). Restart it from here, or hand it to another bot.", slug, classifyFailureForOperator(trimmed))
 	if _, changed, err := l.broker.BlockTask(task.ID, slug, reason, ""); err != nil {
 		appendHeadlessCodexLog(slug, fmt.Sprintf("error-recovery-error: could not block %s: %v", task.ID, err))
 		return
 	} else if changed {
 		appendHeadlessCodexLog(slug, fmt.Sprintf("error-recovery: blocked %s after failed turn", task.ID))
-		_, _, _ = l.requestSelfHealing(slug, task.ID, agent.EscalationMaxRetries, reason)
+		if isAppBuilderSlug(slug) {
+			l.markAppBuildFailedForTask(task)
+		}
+		_, _, _ = l.requestSelfHealing(slug, task.ID, bot.EscalationMaxRetries, reason)
 	}
 }
 
@@ -443,5 +537,41 @@ func (l *Launcher) timedOutTurnAlreadyRecovered(task *teamTask, slug string, sta
 			status == "canceled" || status == "cancelled" ||
 			review == "ready_for_review" || review == "approved"
 	}
-	return l.agentPostedSubstantiveMessageSince(slug, startedAt)
+	return l.botPostedSubstantiveMessageSince(slug, startedAt)
+}
+
+// appRegistryTouchedSince reports whether any custom app's manifest was
+// created or updated at/after t — the App Builder's durable-completion
+// evidence. Manifest stamps are RFC3339; unparseable stamps are skipped.
+func (l *Launcher) appRegistryTouchedSince(t time.Time, task *teamTask) bool {
+	if l == nil || l.broker == nil || t.IsZero() {
+		return false
+	}
+	apps, err := l.broker.appStore().List()
+	if err != nil {
+		return false
+	}
+	// When the turn's task is known, only ITS app counts as evidence — a
+	// concurrent build touching some other manifest must not vouch for this
+	// turn (2026-08-16 first-run audit). With no task (defensive), any
+	// registry write still counts, preserving the pre-audit behavior.
+	taskChannel := ""
+	if task != nil {
+		taskChannel = strings.TrimSpace(task.Channel)
+	}
+	for _, app := range apps {
+		if taskChannel != "" && !strings.EqualFold(strings.TrimSpace(app.EditChannel), taskChannel) {
+			continue
+		}
+		for _, stamp := range []string{app.UpdatedAt, app.CreatedAt} {
+			ts, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(stamp))
+			if err != nil {
+				continue
+			}
+			if !ts.Before(t) {
+				return true
+			}
+		}
+	}
+	return false
 }

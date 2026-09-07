@@ -246,7 +246,7 @@ func (b *Broker) createTelegramChannel(slug, title string, chatID int64, chType 
 		return nil, fmt.Errorf("load company manifest: %w", err)
 	}
 	// Mirror the TUI exactly: lead first, then every other manifest member.
-	// "ceo" is prepended by createChannelLocked itself, so we don't add it here.
+	// "cos" is prepended by createChannelLocked itself, so we don't add it here.
 	members := []string{manifest.Lead}
 	for _, m := range manifest.Members {
 		if m.Slug != "" && m.Slug != manifest.Lead {
@@ -258,10 +258,14 @@ func (b *Broker) createTelegramChannel(slug, title string, chatID int64, chType 
 	defer b.mu.Unlock()
 
 	// The manifest is desired state; the broker's in-memory member set is
-	// current state. Manifest slugs that haven't been adopted yet (e.g.
-	// "planner", "executor", "reviewer") would cause createChannelLocked to
-	// return "unknown members". Skip them with a log entry so the Telegram
-	// connect succeeds — they join the channel when they are adopted.
+	// current state. A manifest slug that has not been adopted yet would cause
+	// createChannelLocked to return "unknown members". Skip those with a log
+	// entry so the Telegram connect succeeds — they join when they are adopted.
+	//
+	// This filter used to name "planner", "executor" and "reviewer" as its
+	// examples. They are gone: the founder retired the default specialists, so
+	// naming them here would send the next reader looking for bots the
+	// product no longer defines. The check itself is generic and unchanged.
 	adopted := make([]string, 0, len(members))
 	for _, m := range members {
 		if b.findMemberLocked(m) != nil {

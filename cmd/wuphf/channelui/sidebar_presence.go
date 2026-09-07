@@ -43,10 +43,10 @@ const (
 	DotIdle     = "#ABABAD"
 )
 
-// SidebarAgentColors maps agent slugs to their sidebar/avatar colors.
-// Mirrors AgentColorMap (in styles.go) but for the sidebar palette.
-var SidebarAgentColors = map[string]string{
-	"ceo": "#EAB308", "pm": "#22C55E", "fe": "#3B82F6",
+// SidebarBotColors maps bot slugs to their sidebar/avatar colors.
+// Mirrors BotColorMap (in styles.go) but for the sidebar palette.
+var SidebarBotColors = map[string]string{
+	"cos": "#EAB308", "pm": "#22C55E", "fe": "#3B82F6",
 	"be": "#8B5CF6", "ai": "#14B8A6", "designer": "#EC4899",
 	"cmo": "#F97316", "cro": "#06B6D4", "you": "#38BDF8", "human": "#38BDF8",
 }
@@ -115,7 +115,7 @@ func ClassifyActivity(m Member) MemberActivity {
 	return MemberActivity{Label: "lurking", Color: DotIdle, Dot: "●"}
 }
 
-// DefaultSidebarRoster returns the canonical eight-agent office
+// DefaultSidebarRoster returns the canonical eight-bot office
 // roster used as a fallback when no broker-side roster is available.
 // Slugs come from the canonical roster (see canonical_roster.go);
 // Name/Role are resolved via the shared DisplayName / RoleLabel
@@ -152,11 +152,11 @@ func RenderOfficeCharacter(m Member, act MemberActivity, now time.Time) OfficeCh
 // rebuild a 20-key map literal on every sidebar tick. Read-only;
 // callers must not mutate the slices.
 var asidePhrases = map[string][]string{
-	"ceo:talking": {
+	"cos:talking": {
 		"Delegating.",
 		"Have a plan.",
 	},
-	"ceo:plotting": {
+	"cos:plotting": {
 		"Smells strategic.",
 		"Possible reorg.",
 	},

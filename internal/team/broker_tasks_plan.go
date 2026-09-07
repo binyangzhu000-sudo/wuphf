@@ -28,14 +28,30 @@ func (b *Broker) handleTaskPlan(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "created_by and tasks required", http.StatusBadRequest)
 		return
 	}
-	channel := normalizeChannelSlug(body.Channel)
-	if channel == "" {
-		channel = "general"
+	// Raw emptiness first: normalizeChannelSlug("") is "general", so a missing
+	// channel used to be silently laundered into the shared room. Resolve a real
+	// home instead — while #general is enabled this still answers "general", so
+	// today is unchanged; once it is off this is the bot's DM, or a refusal.
+	//
+	// homeChannelFor is the correct variant HERE specifically: b.mu is
+	// NOT held at this point. The other variant would
+	// read the roster unsynchronised.
+	channel := ""
+	if raw := strings.TrimSpace(body.Channel); raw != "" {
+		channel = normalizeChannelSlug(raw)
 	}
+	// An absent channel is legal here and must NOT be resolved at this level.
+	// This is a PLAN: it carries many tasks with different assignees, and
+	// preferredTaskChannelLocked below already routes each one to its own
+	// owner's DM. Resolving a single home from createdBy was both too coarse
+	// (every task in the plan would share one room) and simply broken — the web
+	// plans as created_by="human", "human" is not a roster member, so it could
+	// never resolve and the whole plan was refused with "channel is required".
+	// body.Channel stays what it is: a per-plan DEFAULT, not a requirement.
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.findChannelLocked(channel) == nil {
+	if channel != "" && b.findChannelLocked(channel) == nil {
 		http.Error(w, "channel not found", http.StatusNotFound)
 		return
 	}
@@ -51,20 +67,26 @@ func (b *Broker) handleTaskPlan(w http.ResponseWriter, r *http.Request) {
 
 	for _, item := range body.Tasks {
 		taskChannel := b.preferredTaskChannelLocked(channel, createdBy, item.Assignee, item.Title, item.Details)
-		if b.findChannelLocked(taskChannel) == nil {
-			rollbackPlan()
-			http.Error(w, "channel not found", http.StatusNotFound)
-			return
-		}
-		// Authorize on the resolved task channel, not body.Channel — the
-		// body channel is just a default and the planner may route the
-		// task to a different channel where the assignee actually lives.
-		// Without this gate any authenticated caller could plant tasks in
-		// channels they aren't a member of by spoofing the body channel.
-		if !b.canAccessChannelLocked(createdBy, taskChannel) {
-			rollbackPlan()
-			http.Error(w, "channel access denied", http.StatusForbidden)
-			return
+		// An empty home is legal (see preferredTaskChannelLocked): the task
+		// has no conversation yet. Skip both checks rather than running them
+		// on "" — findChannelLocked would normalise it back to "general", and
+		// there is nothing to authorize against when there is no channel.
+		if taskChannel != "" {
+			if b.findChannelLocked(taskChannel) == nil {
+				rollbackPlan()
+				http.Error(w, "channel not found", http.StatusNotFound)
+				return
+			}
+			// Authorize on the resolved task channel, not body.Channel — the
+			// body channel is just a default and the planner may route the
+			// task to a different channel where the assignee actually lives.
+			// Without this gate any authenticated caller could plant tasks in
+			// channels they aren't a member of by spoofing the body channel.
+			if !b.canAccessChannelLocked(createdBy, taskChannel) {
+				rollbackPlan()
+				http.Error(w, "channel access denied", http.StatusForbidden)
+				return
+			}
 		}
 
 		// Validate the per-task LLM runtime override at the boundary (covers
@@ -220,7 +242,7 @@ func (b *Broker) handleTaskPlan(w http.ResponseWriter, r *http.Request) {
 		// the owner's turn context to the task's own thread (notification_context.go)
 		// instead of raw channel scrollback — the boundary that stops one task's
 		// history bleeding into another. HTTP-created tasks never set ThreadID
-		// otherwise; agent/MCP-created tasks carry it from the call. Auto-owner
+		// otherwise; bot/MCP-created tasks carry it from the call. Auto-owner
 		// (ownerless) tasks are skipped: they have no owner to dispatch yet and
 		// must go through CEO triage first — a system-authored card here would
 		// also race the triage wake message (broker_tasks_auto.go). Their thread
@@ -309,7 +331,7 @@ func (b *Broker) refreshPlannedTaskBlockStateLocked(task *teamTask) {
 		return
 	}
 	task.blocked = false
-	// An "auto" owner is a triage sentinel, not a real agent — it must not
+	// An "auto" owner is a triage sentinel, not a real bot — it must not
 	// promote the task to in_progress (there is no @auto to dispatch). The CEO
 	// resolves it to a real specialist first (see requestAutoAssignmentLocked).
 	if strings.TrimSpace(task.Owner) != "" && !isAutoOwner(task.Owner) {
@@ -323,11 +345,15 @@ func (b *Broker) EnsurePlannedTask(input plannedTaskInput) (teamTask, bool, erro
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	channel := b.preferredTaskChannelLocked(input.Channel, input.CreatedBy, input.Owner, input.Title, input.Details)
-	if b.findChannelLocked(channel) == nil {
-		return teamTask{}, false, fmt.Errorf("channel not found")
-	}
-	if !b.canAccessChannelLocked(input.CreatedBy, channel) {
-		return teamTask{}, false, fmt.Errorf("channel access denied")
+	// "" means the task has no conversation home yet, which is legal. Running
+	// these checks on "" would normalise it back to "general".
+	if channel != "" {
+		if b.findChannelLocked(channel) == nil {
+			return teamTask{}, false, fmt.Errorf("channel not found")
+		}
+		if !b.canAccessChannelLocked(input.CreatedBy, channel) {
+			return teamTask{}, false, fmt.Errorf("channel access denied")
+		}
 	}
 	// Validate the per-task LLM runtime override at the boundary (covers both
 	// the reuse-merge and fresh-create branches below).

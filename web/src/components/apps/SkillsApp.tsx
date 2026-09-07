@@ -746,10 +746,14 @@ function isTerminalTaskStatus(s: string | undefined): boolean {
 function SkillActions({
   status,
   skillName,
+  isSystem = false,
   onSuggestChanges,
 }: {
   status: SkillStatus;
   skillName: string;
+  /** System skills hide Archive and whole-skill Disable — the broker
+   * refuses both; per-bot toggles live on each bot's Skills tab. */
+  isSystem?: boolean;
   onSuggestChanges?: () => void;
 }) {
   const [invokePhase, setInvokePhase] = useState<InvokePhase>("idle");
@@ -1019,15 +1023,17 @@ function SkillActions({
         >
           Enable
         </button>
-        <button
-          type="button"
-          className="btn-text btn-text--danger"
-          disabled={actionPending}
-          onClick={handleArchive}
-          aria-label={`Archive ${skillName}`}
-        >
-          Archive
-        </button>
+        {isSystem ? null : (
+          <button
+            type="button"
+            className="btn-text btn-text--danger"
+            disabled={actionPending}
+            onClick={handleArchive}
+            aria-label={`Archive ${skillName}`}
+          >
+            Archive
+          </button>
+        )}
       </div>
     );
   }
@@ -1072,22 +1078,29 @@ function SkillActions({
       <button
         type="button"
         className="btn-text"
-        disabled={actionPending || invokePhase !== "idle"}
+        disabled={actionPending || invokePhase !== "idle" || isSystem}
         onClick={handleDisable}
         aria-label={`Disable ${skillName}`}
+        title={
+          isSystem
+            ? "System skill — disable it per bot from that bot's Skills tab"
+            : undefined
+        }
       >
         Disable
       </button>
 
-      <button
-        type="button"
-        className="btn-text btn-text--danger"
-        disabled={actionPending || invokePhase !== "idle"}
-        onClick={handleArchive}
-        aria-label={`Archive ${skillName}`}
-      >
-        Archive
-      </button>
+      {isSystem ? null : (
+        <button
+          type="button"
+          className="btn-text btn-text--danger"
+          disabled={actionPending || invokePhase !== "idle"}
+          onClick={handleArchive}
+          aria-label={`Archive ${skillName}`}
+        >
+          Archive
+        </button>
+      )}
 
       {activeTaskId ? (
         <SkillRunChip
@@ -1143,7 +1156,7 @@ function SkillRunChip({
         padding: "2px 8px",
         fontSize: 12,
         background: "var(--bg-warm, var(--neutral-100))",
-        border: "1px solid var(--border-subtle, var(--neutral-200))",
+        border: "1px solid var(--border-dark)",
         borderRadius: 999,
         color: "var(--text-secondary)",
       }}
@@ -1368,9 +1381,18 @@ function SkillCard({
           >
             View SKILL.md →
           </button>
+          {skill.system ? (
+            <span
+              className="badge badge-neutral"
+              title="Always available. Enabled for every bot by default; disable it per bot from that bot's Skills tab."
+            >
+              system
+            </span>
+          ) : null}
           <SkillActions
             status={status}
             skillName={skill.name}
+            isSystem={Boolean(skill.system)}
             onSuggestChanges={
               isProposed ? () => setSuggestOpen((v) => !v) : undefined
             }

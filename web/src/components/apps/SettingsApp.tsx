@@ -28,8 +28,8 @@ import {
 } from "../ui/ShredWarning";
 import { showNotice } from "../ui/Toast";
 import { WipeModal } from "../ui/WipeModal";
-import { NexConnectPanel } from "./NexConnectPanel";
 import { ImageGenSection } from "./SettingsApp.imageGen";
+import { BoxAccountSection } from "./settings/BoxAccountSection";
 import { Field, KeyField, SaveButton } from "./settings/components";
 import { SECTION_GROUPS } from "./settings/constants";
 import { PrivacySection } from "./settings/PrivacySection";
@@ -57,11 +57,9 @@ function useShredAction() {
         return false;
       }
       queryClient.clear();
-      void router.navigate({
-        to: "/channels/$channelSlug",
-        params: { channelSlug: "general" },
-        replace: true,
-      });
+      // Home, not the retired #general: post-shred there is no shared room to
+      // land in, and onboarding takes over from the home route anyway.
+      void router.navigate({ to: "/", replace: true });
       resetForOnboarding();
       showNotice("Workspace shredded. Onboarding reopened.", "success");
       return true;
@@ -73,9 +71,9 @@ function useShredAction() {
 }
 
 // TeamLeadPicker reads the office roster so the human picks from real
-// agents rather than typing a slug. The saved value persists as a slug on
+// bots rather than typing a slug. The saved value persists as a slug on
 // the wire (cfg.team_lead_slug) — the picker round-trips through the slug
-// even when the agent's display name later changes, so renaming an agent
+// even when the bot's display name later changes, so renaming a bot
 // doesn't break the Team Lead binding. Falls back to a free-text input
 // while the roster is still loading or empty, so the field is never a
 // dead end on a brand-new install.
@@ -91,7 +89,7 @@ function TeamLeadPicker({
     return (
       <input
         style={styles.input}
-        placeholder="e.g. ceo"
+        placeholder="e.g. cos"
         value={value}
         onChange={(e) => onChange(e.target.value)}
       />
@@ -104,7 +102,7 @@ function TeamLeadPicker({
       value={value}
       onChange={(e) => onChange(e.target.value)}
     >
-      <option value="">— pick an agent —</option>
+      <option value="">— pick a bot —</option>
       {members.map((m) => (
         <option key={m.slug} value={m.slug}>
           {m.name ? `${m.name} (@${m.slug})` : `@${m.slug}`}
@@ -143,7 +141,6 @@ function GeneralSection({ cfg, save }: SectionProps) {
   );
   const [blueprint, setBlueprint] = useState(cfg.blueprint ?? "");
   const [email, setEmail] = useState(cfg.email ?? "");
-  const [devUrl, setDevUrl] = useState(cfg.dev_url ?? "");
   const [connectedProviders, setConnectedProviders] = useState<
     LLMRuntimeKind[] | null
   >(null);
@@ -160,7 +157,6 @@ function GeneralSection({ cfg, save }: SectionProps) {
       default_format: format,
       blueprint,
       email,
-      dev_url: devUrl,
       team_lead_slug: teamLead,
     };
     if (maxConcurrent)
@@ -182,11 +178,11 @@ function GeneralSection({ cfg, save }: SectionProps) {
         onSelectedProvidersChange={setProviders}
         onConnectedProvidersChange={updateConnectedProviders}
       />
-      <div style={{ ...styles.groupTitle, marginTop: 24 }}>Agents</div>
-      <Field label="Team Lead" hint="Agent that leads operations">
+      <div style={{ ...styles.groupTitle, marginTop: 24 }}>Bots</div>
+      <Field label="Team Lead" hint="Bot that leads operations">
         <TeamLeadPicker value={teamLead} onChange={setTeamLead} />
       </Field>
-      <Field label="Max Concurrent" hint="Parallel agent limit">
+      <Field label="Max Concurrent" hint="Parallel bot limit">
         <input
           style={styles.input}
           type="number"
@@ -237,14 +233,6 @@ function GeneralSection({ cfg, save }: SectionProps) {
           onChange={(e) => setEmail(e.target.value)}
         />
       </Field>
-      <Field label="Dev URL" hint="API base URL override">
-        <input
-          style={styles.input}
-          placeholder="https://app.nex.ai"
-          value={devUrl}
-          onChange={(e) => setDevUrl(e.target.value)}
-        />
-      </Field>
 
       <div style={{ marginTop: 24 }}>
         <SaveButton label="Save general settings" onSave={onSave} />
@@ -269,10 +257,10 @@ interface LocalProviderMeta {
 }
 
 // LOCAL_PROVIDERS lists directly-dispatched local LLM runtimes only. The
-// Hermes Agent and OpenClaw Gateway entries that used to live here were
+// Hermes Bot and OpenClaw Gateway entries that used to live here were
 // gateway-controlled — they belong in the Integrations app, not the
-// runtime picker, because their job is to import existing agents into the
-// team rather than to back a WUPHF-created agent's turns.
+// runtime picker, because their job is to import existing bots into the
+// team rather than to back a WUPHF-created bot's turns.
 const LOCAL_PROVIDERS: LocalProviderMeta[] = [
   {
     kind: "mlx-lm",
@@ -429,8 +417,8 @@ function LocalProviderCard({
                 marginLeft: 10,
                 fontSize: 11,
                 padding: "1px 6px",
-                background: "var(--accent-100, #eef)",
-                color: "var(--accent-500, #44a)",
+                background: "var(--accent-bg)",
+                color: "var(--accent)",
                 borderRadius: 3,
               }}
             >
@@ -601,7 +589,7 @@ function LocalLLMsSection({ cfg, save }: SectionProps) {
     <div>
       <h2 style={styles.sectionTitle}>Local LLMs</h2>
       <p style={styles.sectionDesc}>
-        Run wuphf agents through a model on your own machine — no cloud key
+        Run gawkbot agents through a model on your own machine — no cloud key
         required. Status indicators detect what's installed and what's
         responding; install commands are copy-paste only (we never run shell
         commands for you).
@@ -643,7 +631,7 @@ function LocalLLMsSection({ cfg, save }: SectionProps) {
         <div className="app-panel-loading">Detecting installed runtimes…</div>
       ) : null}
       {error ? (
-        <div style={{ color: "var(--danger-500, #c33)", fontSize: 13 }}>
+        <div style={{ color: "var(--red)", fontSize: 13 }}>
           Failed to load status:{" "}
           {error instanceof Error ? error.message : String(error)}
         </div>
@@ -748,13 +736,6 @@ interface KeyDef {
 
 const KEY_DEFS: KeyDef[] = [
   {
-    field: "api_key",
-    flag: "api_key_set",
-    label: "Nex API Key",
-    placeholder: "nex_...",
-    env: "WUPHF_API_KEY",
-  },
-  {
     field: "anthropic_api_key",
     flag: "anthropic_key_set",
     label: "Anthropic",
@@ -820,9 +801,11 @@ function KeysSection({ cfg, save }: SectionProps) {
       <h2 style={styles.sectionTitle}>API Keys</h2>
       <p style={styles.sectionDesc}>
         Authentication credentials for external services. Keys are stored in
-        your local config file and never transmitted to WUPHF servers. Enter a
+        your local config file and never transmitted to gawkbot servers. Enter a
         new value to update, or leave blank to keep the current key.
       </p>
+
+      <BoxAccountSection />
 
       {KEY_DEFS.map((def) => (
         <Field key={def.field} label={def.label} hint={`Env: ${def.env}`}>
@@ -856,7 +839,7 @@ function IntegrationsSection({ cfg, save }: SectionProps) {
   // Gateway-style integrations (OpenClaw, Hermes, Telegram) now live in the
   // dedicated Integrations app. We keep Action Provider + Workspace here
   // because they're install-wide config knobs, not gateways — they configure
-  // routing for an existing action surface rather than importing agents.
+  // routing for an existing action surface rather than importing bots.
   return (
     <div>
       <h2 style={styles.sectionTitle}>Integrations</h2>
@@ -898,7 +881,7 @@ function IntegrationsSection({ cfg, save }: SectionProps) {
           <input
             style={{ ...styles.input, opacity: 0.6, cursor: "default" }}
             readOnly={true}
-            placeholder="(set via Nex registration)"
+            placeholder="(not set)"
             value={cfg.workspace_id ?? ""}
           />
         </Field>
@@ -906,26 +889,10 @@ function IntegrationsSection({ cfg, save }: SectionProps) {
           <input
             style={{ ...styles.input, opacity: 0.6, cursor: "default" }}
             readOnly={true}
-            placeholder="(set via Nex registration)"
+            placeholder="(not set)"
             value={cfg.workspace_slug ?? ""}
           />
         </Field>
-      </div>
-
-      <div style={{ marginTop: 20 }}>
-        <div style={styles.groupTitle}>Nex</div>
-        <p
-          style={{
-            fontSize: 12,
-            color: "var(--text-secondary)",
-            margin: "4px 0 0",
-          }}
-        >
-          Nex is a context graph platform for AI agents. Register to enable
-          shared memory, entity briefs, and integrations. Once registered, paste
-          your API key in the API Keys section.
-        </p>
-        <NexConnectPanel />
       </div>
 
       <div style={{ marginTop: 20 }}>
@@ -1020,28 +987,24 @@ const CLI_FLAGS: [string, string][] = [
   ["--tui", "Launch tmux TUI instead of web UI"],
   ["--web-port <port>", "Web UI port (default: 7891)"],
   ["--broker-port <port>", "Local broker port (default: 7890)"],
-  ["--opus-ceo", "Upgrade CEO agent to Opus model"],
-  ["--collab", "Collaborative mode (all agents see all messages)"],
-  ["--1o1", "Direct 1:1 session with a single agent"],
-  ["--unsafe", "Bypass agent permission checks (dev only)"],
-  ["--no-nex", "Disable Nex for this session"],
+  ["--opus-ceo", "Upgrade Chief of Staff bot to Opus model"],
+  ["--collab", "Collaborative mode (all bots see all messages)"],
+  ["--1o1", "Direct 1:1 session with a single bot"],
+  ["--unsafe", "Bypass bot permission checks (dev only)"],
   ["--no-open", "Skip auto-opening browser on launch"],
   ["--from-scratch", "Start without saved blueprint"],
   ["--threads-collapsed", "Start with threads collapsed"],
   ["--cmd <command>", "Run a slash command non-interactively"],
   ["--format <fmt>", "Output format (text, json)"],
-  ["--api-key <key>", "Nex API key override"],
   ["--version", "Print version and exit"],
   ["--help-all", "Show all flags including internal ones"],
 ];
 
 const ENV_VARS: [string, string][] = [
   ["WUPHF_LLM_PROVIDER", "LLM provider override"],
-  ["WUPHF_API_KEY", "Nex API key"],
   ["WUPHF_BROKER_PORT", "Broker port"],
   ["WUPHF_CONFIG_PATH", "Config file path override"],
   ["WUPHF_RUNTIME_HOME", "Runtime state directory"],
-  ["WUPHF_NO_NEX", "Disable Nex (1/true/yes)"],
   ["WUPHF_START_FROM_SCRATCH", "Start without blueprint (1)"],
   ["WUPHF_ONE_ON_ONE", "Enable 1:1 mode (1)"],
   ["WUPHF_HEADLESS_PROVIDER", "Headless provider override"],
@@ -1056,7 +1019,7 @@ function FlagsSection() {
     <div>
       <h2 style={styles.sectionTitle}>CLI Flags</h2>
       <p style={styles.sectionDesc}>
-        All flags available when launching wuphf from the terminal. These are
+        All flags available when launching gawkbot from the terminal. These are
         runtime-only and not persisted in the config file.
       </p>
 

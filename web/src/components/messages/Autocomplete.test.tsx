@@ -61,10 +61,10 @@ describe("currentTrigger", () => {
 describe("applyAutocomplete", () => {
   it("replaces an @mention prefix with the full slug", () => {
     const result = applyAutocomplete("hi @ce", 6, {
-      insert: "@ceo",
-      label: "@ceo",
+      insert: "@cos",
+      label: "@cos",
     });
-    expect(result.text).toBe("hi @ceo ");
+    expect(result.text).toBe("hi @cos ");
     expect(result.caret).toBe(8);
   });
 
@@ -80,22 +80,22 @@ describe("applyAutocomplete", () => {
 
 describe("mentionAutocompleteItems", () => {
   const members = [
-    { slug: "ceo", name: "CEO" },
+    { slug: "cos", name: "CEO" },
     { slug: "pm", name: "Product" },
     { slug: "human", name: "Human" },
   ];
 
-  it("offers @all before individual agents", () => {
+  it("offers @all before individual bots", () => {
     expect(mentionAutocompleteItems("", members).slice(0, 3)).toEqual([
-      { insert: "@all", label: "@all", desc: "Notify every agent", icon: "📣" },
-      { insert: "@ceo", label: "@ceo", desc: "CEO", icon: "🤖" },
+      { insert: "@all", label: "@all", desc: "Notify every bot", icon: "📣" },
+      { insert: "@cos", label: "@cos", desc: "CEO", icon: "🤖" },
       { insert: "@pm", label: "@pm", desc: "Product", icon: "🤖" },
     ]);
   });
 
   it("matches @all by prefix query", () => {
     expect(mentionAutocompleteItems("al", members)).toEqual([
-      { insert: "@all", label: "@all", desc: "Notify every agent", icon: "📣" },
+      { insert: "@all", label: "@all", desc: "Notify every bot", icon: "📣" },
     ]);
   });
 });

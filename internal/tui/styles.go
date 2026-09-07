@@ -4,9 +4,9 @@ import "github.com/charmbracelet/lipgloss"
 
 // Brand colors
 const (
-	NexBlue   = "#2980fb"
-	NexPurple = "#cf72d9"
-	NexGreen  = "#97a022"
+	BrandBlue   = "#2980fb"
+	BrandPurple = "#cf72d9"
+	BrandGreen  = "#97a022"
 )
 
 // Status colors
@@ -27,14 +27,14 @@ const (
 var (
 	TitleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color(NexPurple)).
+			Foreground(lipgloss.Color(BrandPurple)).
 			Padding(0, 1)
 
 	UserStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#60A5FA")).
 			Bold(true)
 
-	AgentStyle = lipgloss.NewStyle().
+	BotStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#34D399")).
 			Bold(true)
 
@@ -49,7 +49,7 @@ var (
 
 	InputBorderStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color(NexPurple)).
+				BorderForeground(lipgloss.Color(BrandPurple)).
 				Padding(0, 1)
 
 	ErrorStyle = lipgloss.NewStyle().

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { LLMRuntimeKind } from "../../api/client";
 import { get, post } from "../../api/client";
@@ -56,6 +56,7 @@ interface RuntimeCardState {
 interface RuntimeCardProps {
   state: RuntimeCardState;
   prereqsLoaded: boolean;
+  prereqsFailed: boolean;
   isSubmitting: boolean;
   anySubmitting: boolean;
   expanded: boolean;
@@ -68,21 +69,24 @@ interface RuntimeCardProps {
 
 function cardStatusLabel({
   prereqsLoaded,
+  prereqsFailed,
   available,
   version,
   signedIn,
 }: {
   prereqsLoaded: boolean;
+  prereqsFailed: boolean;
   available: boolean;
   version: string | undefined;
   signedIn: boolean | undefined;
 }): string {
   if (!prereqsLoaded) return "Checking…";
+  if (prereqsFailed) return "Could not check — verify below";
   if (!available) return "Not installed";
   // Issue #932: when the runtime supports a session probe and we got a
   // definite "not signed in", surface that as the primary status. The user
   // would otherwise complete onboarding believing they were connected,
-  // then hit "Not logged in" on the agent loop's first call.
+  // then hit "Not logged in" on the bot loop's first call.
   if (signedIn === false) {
     return version ? `Not signed in · ${version}` : "Not signed in";
   }
@@ -95,6 +99,7 @@ function cardStatusLabel({
 function RuntimeCard({
   state,
   prereqsLoaded,
+  prereqsFailed,
   isSubmitting,
   anySubmitting,
   expanded,
@@ -106,9 +111,10 @@ function RuntimeCard({
 }: RuntimeCardProps) {
   const { spec, detected, available, signedIn, signInCommand } = state;
   const statusLabel = isSubmitting
-    ? "Starting your office…"
+    ? "Starting your team…"
     : cardStatusLabel({
         prereqsLoaded,
+        prereqsFailed,
         available,
         version: detected?.version,
         signedIn,
@@ -157,7 +163,7 @@ function RuntimeCard({
           // Auth gate: when the runtime probed and reported NOT signed in,
           // never fall through to onPick — even if sign_in_command is
           // missing/empty. Falling through would advance onboarding to an
-          // un-authed runtime, which the agent loop's first LLM call would
+          // un-authed runtime, which the bot loop's first LLM call would
           // immediately reject. Copy the command when we have it; otherwise
           // just no-op (the inline "not signed in" hint stays visible).
           if (isUnauthed) {
@@ -210,11 +216,6 @@ const DISPATCHABLE_RUNTIMES = RUNTIMES.filter((r) => r.provider !== null);
 // Empty initial state for the API-key map.
 const EMPTY_API_KEYS: Record<string, string> = {};
 
-/** Returns true when the OAI-compatible endpoint URL+key pair is usable. */
-function oaiCompatFilled(url: string): boolean {
-  return url.trim().length > 0 && isValidUrl(url);
-}
-
 /** Returns true when at least one API key has been pasted. */
 function anyApiKeyFilled(keys: Record<string, string>): boolean {
   return API_KEY_FIELDS.some((f) => (keys[f.key] ?? "").trim().length > 0);
@@ -234,15 +235,9 @@ function isCliProvider(provider: RuntimeSpec["provider"] | string): boolean {
 function hasConfigContent(
   isCliRuntime: boolean,
   localProviders: readonly LLMRuntimeKind[],
-  oaiUrl: string,
   apiKeys: Record<string, string>,
 ): boolean {
-  return (
-    isCliRuntime ||
-    localProviders.length > 0 ||
-    oaiCompatFilled(oaiUrl) ||
-    anyApiKeyFilled(apiKeys)
-  );
+  return isCliRuntime || localProviders.length > 0 || anyApiKeyFilled(apiKeys);
 }
 
 type ConfigPayload = {
@@ -263,14 +258,6 @@ type ConfigPayload = {
 function buildConfigPayload(
   selectedProviders: LLMRuntimeKind[],
   localProviders: LLMRuntimeKind[],
-  oaiUrl: string,
-  // _oaiKey is intentionally unused on the current write path: the OAI-
-  // compatible endpoint section writes only to provider_endpoints, never
-  // to openclaw_* (gateway config) or to an Anthropic/OpenAI key row.
-  // Kept in the signature so the call site can stay 1:1 with form
-  // state — renaming the parameter to _oaiKey marks the intent for
-  // TypeScript-aware linters without forcing a 4-argument call shape.
-  _oaiKey: string,
   apiKeys: Record<string, string>,
 ): ConfigPayload {
   const payload: ConfigPayload = { memory_backend: "markdown" };
@@ -285,17 +272,6 @@ function buildConfigPayload(
   if (providerPriority.length > 0) {
     payload.llm_provider = providerPriority[0];
     payload.llm_provider_priority = providerPriority;
-  } else if (oaiCompatFilled(oaiUrl)) {
-    // Custom OAI-compatible endpoint goes into provider_endpoints. We do
-    // NOT write to openclaw_* here — that conflated OpenClaw (a gateway
-    // for importing existing agents) with generic OpenAI-compatible HTTP
-    // runtimes. OpenClaw is configured through the Integrations app, not
-    // through this onboarding step. The _oaiKey parameter is intentionally
-    // unused on this path; users wanting to pair an API key with the
-    // endpoint should paste it in the OpenAI API key row above.
-    payload.provider_endpoints = {
-      "openai-compatible": { base_url: sanitizeConfigString(oaiUrl) },
-    };
   }
 
   for (const f of API_KEY_FIELDS) {
@@ -316,6 +292,12 @@ function buildConfigPayload(
 function VerifyClipFigure() {
   return (
     <figure className="pre-pick-clip-figure">
+      {/* The clip is realistic enough that first-run users try to click its
+          Verify button (observed in QA). Chip it as an example so the eye
+          reads it as an illustration, not a second, live panel. */}
+      <span className="pre-pick-clip-chip" aria-hidden="true">
+        Example
+      </span>
       <picture>
         <source
           srcSet="/media/onboarding/provider-verify-still.png"
@@ -326,14 +308,14 @@ function VerifyClipFigure() {
           src="/media/onboarding/provider-verify.gif"
           width={808}
           height={600}
-          alt="A runtime being verified: Claude Code is checked for an installed binary, an active sign-in, and a reachable model, then resolves to Connected."
+          alt="A runtime being verified: Claude Code is checked for an install and an active sign-in, then resolves to Ready."
           loading="lazy"
           decoding="async"
         />
       </picture>
       <figcaption className="pre-pick-clip-caption">
-        "Set up &amp; verify" checks the binary, your sign-in, and that the
-        model is reachable before you continue.
+        "Set up &amp; verify" checks the install and your sign-in before you
+        continue.
       </figcaption>
     </figure>
   );
@@ -457,55 +439,14 @@ function LocalModelSection({
       sectionTestId="pre-pick-local-section"
       idBase="pre-pick-local"
       title="Local model"
-      toggleHint="Optional — run inference on this machine"
+      toggleHint="Optional — run a model on this computer"
       open={open}
       onToggle={onToggle}
     >
       <p className="pre-pick-section-hint">
-        Run inference on this machine. No cloud key required.
+        Run a model on this computer. No cloud account needed.
       </p>
       <LocalProviderPicker selected={selected} onToggle={onToggleProvider} />
-    </CollapsibleConfigSection>
-  );
-}
-
-interface CustomEndpointSectionProps {
-  open: boolean;
-  onToggle: () => void;
-  oaiUrl: string;
-  oaiKey: string;
-  onChangeUrl: (value: string) => void;
-  onChangeKey: (value: string) => void;
-}
-
-function CustomEndpointSection({
-  open,
-  onToggle,
-  oaiUrl,
-  oaiKey,
-  onChangeUrl,
-  onChangeKey,
-}: CustomEndpointSectionProps) {
-  return (
-    <CollapsibleConfigSection
-      sectionTestId="pre-pick-oai-section"
-      idBase="pre-pick-oai"
-      title="Custom endpoint"
-      toggleHint="Optional — OpenAI-compatible server"
-      open={open}
-      onToggle={onToggle}
-    >
-      <p className="pre-pick-section-hint">
-        Any server that speaks the OpenAI REST protocol (LiteLLM, vLLM,
-        llama.cpp server, etc.). For OpenClaw or Hermes, use the Integrations
-        app after onboarding.
-      </p>
-      <OpenAICompatibleInput
-        endpointUrl={oaiUrl}
-        apiKey={oaiKey}
-        onChangeUrl={onChangeUrl}
-        onChangeKey={onChangeKey}
-      />
     </CollapsibleConfigSection>
   );
 }
@@ -513,6 +454,7 @@ function CustomEndpointSection({
 export function PrePickScreen({ onComplete }: PrePickScreenProps) {
   const [prereqs, setPrereqs] = useState<PrereqResult[]>([]);
   const [prereqsLoaded, setPrereqsLoaded] = useState(false);
+  const [prereqsFailed, setPrereqsFailed] = useState(false);
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string>("");
   const [selectedProviders, setSelectedProviders] = useState<LLMRuntimeKind[]>(
@@ -528,13 +470,10 @@ export function PrePickScreen({ onComplete }: PrePickScreenProps) {
   // (hidden) when closed so in-progress field state survives a collapse.
   const [apiKeysOpen, setApiKeysOpen] = useState(false);
   const [localOpen, setLocalOpen] = useState(false);
-  const [oaiOpen, setOaiOpen] = useState(false);
 
   const [localProviders, setLocalProviders] = useState<LLMRuntimeKind[]>([]);
 
   // OpenAI-compatible custom endpoint
-  const [oaiUrl, setOaiUrl] = useState<string>("");
-  const [oaiKey, setOaiKey] = useState<string>("");
 
   // Guided-setup + verify state (spec section B). At most one runtime's guide
   // is expanded at a time. `verifiedReady` records the runtimes a live verify
@@ -553,8 +492,11 @@ export function PrePickScreen({ onComplete }: PrePickScreenProps) {
         setPrereqs(prereqsFromPayload(data));
       })
       .catch(() => {
-        // Prereqs unreachable -- render runtime cards in "Not installed" state
-        // so the user can proceed via another path (API key / local / skip).
+        // Probe unreachable is UNKNOWN, not "Not installed" — a failed check
+        // must not present as a detected fact (2026-08-16 audit). Cards show
+        // an honest could-not-check state; other paths (API key / local /
+        // skip) stay available.
+        if (!cancelled) setPrereqsFailed(true);
       })
       .finally(() => {
         if (!cancelled) setPrereqsLoaded(true);
@@ -593,8 +535,7 @@ export function PrePickScreen({ onComplete }: PrePickScreenProps) {
   const canContinueFromForm =
     selectedProviders.length > 0 ||
     anyApiKeyFilled(apiKeys) ||
-    localProviders.length > 0 ||
-    oaiCompatFilled(oaiUrl);
+    localProviders.length > 0;
 
   function handleApiKeyChange(key: string, value: string): void {
     setApiKeys((prev) => ({ ...prev, [key]: value }));
@@ -623,6 +564,23 @@ export function PrePickScreen({ onComplete }: PrePickScreenProps) {
 
   // True once any runtime has verified ready — drives the primary CTA copy.
   const anyRuntimeReady = Object.values(verifiedReady).some(Boolean);
+  // The runtime that verified ready (first wins): Next commits THIS one,
+  // not whichever guide happens to be expanded — collapsing the guide used
+  // to make the advance button vanish (2026-08-16 audit).
+  const readyRuntime = runtimes.find((r) => verifiedReady[r.spec.binary]);
+
+  // Sensible default: exactly one runtime is already signed in — open its
+  // guide (autoVerify turns it into live checkmarks) so the first screen
+  // leads with the working path instead of three equal cards.
+  const autoExpandedRef = useRef(false);
+  useEffect(() => {
+    if (!prereqsLoaded || autoExpandedRef.current || expandedGuide) return;
+    const signedIn = runtimes.filter((r) => r.signedIn === true);
+    if (signedIn.length === 1) {
+      autoExpandedRef.current = true;
+      setExpandedGuide(signedIn[0].spec.binary);
+    }
+  }, [prereqsLoaded, expandedGuide, runtimes]);
 
   // Issue #979 guard: best-effort probe of /onboarding/state at click time.
   // If the broker reports phase=complete, the SPA is in a session-loss
@@ -669,20 +627,18 @@ export function PrePickScreen({ onComplete }: PrePickScreenProps) {
       const configPayload = buildConfigPayload(
         selected,
         localProviders,
-        oaiUrl,
-        oaiKey,
         apiKeys,
       );
       if (
         !isSkipChoice &&
         (selected.length > 0 ||
-          hasConfigContent(isCli, localProviders, oaiUrl, apiKeys))
+          hasConfigContent(isCli, localProviders, apiKeys))
       ) {
         await post("/config", configPayload);
       }
       // Hand off to the visual onboarding wizard. We deliberately do NOT POST
       // /onboarding/transition {phase:"greet"} here: that starts the legacy
-      // CEO-chat phase machine (and a greet agent turn), which the wizard
+      // CEO-chat phase machine (and a greet bot turn), which the wizard
       // replaces. The wizard collects answers across its steps and seeds the
       // office in one shot via POST /onboarding/complete at finish, so no
       // phase-machine transition is needed (or wanted — the greet turn could
@@ -690,7 +646,7 @@ export function PrePickScreen({ onComplete }: PrePickScreenProps) {
       onComplete();
     } catch (err: unknown) {
       const msg =
-        err instanceof Error ? err.message : "Failed to start the office";
+        err instanceof Error ? err.message : "Failed to start the team";
       setSubmitError(msg);
       setSubmitting(null);
     }
@@ -757,13 +713,11 @@ export function PrePickScreen({ onComplete }: PrePickScreenProps) {
         <div className="pre-pick-split">
           <div className="pre-pick-left">
             <div className="pre-pick-hero">
-              <div className="pre-pick-eyebrow">WUPHF</div>
+              <div className="pre-pick-eyebrow">gawkbot</div>
               <h1 className="pre-pick-headline">Pick a default runtime.</h1>
               <p className="pre-pick-subhead">
-                New agents inherit this runtime when they're created — you can
-                change it later in Settings, one agent at a time. Gateway
-                imports (OpenClaw, Hermes) are managed from the Integrations
-                app.
+                New agents run on this engine. You can change it any time in
+                Settings.
               </p>
             </div>
 
@@ -775,6 +729,7 @@ export function PrePickScreen({ onComplete }: PrePickScreenProps) {
                     key={state.spec.label}
                     state={state}
                     prereqsLoaded={prereqsLoaded}
+                    prereqsFailed={prereqsFailed}
                     isSubmitting={submitting === state.spec.label}
                     anySubmitting={anySubmitting}
                     expanded={expandedGuide === state.spec.binary}
@@ -799,11 +754,12 @@ export function PrePickScreen({ onComplete }: PrePickScreenProps) {
                   runtime={expandedRuntime.spec.binary}
                   label={expandedRuntime.spec.label}
                   onVerified={handleVerified}
+                  autoVerify={expandedRuntime.signedIn === true}
                 />
               ) : null}
 
               {/* ── Advance when a runtime has verified ready ───────────── */}
-              {anyRuntimeReady && expandedRuntime ? (
+              {readyRuntime ? (
                 <div className="pre-pick-secondary-row">
                   <button
                     type="button"
@@ -812,14 +768,14 @@ export function PrePickScreen({ onComplete }: PrePickScreenProps) {
                     disabled={anySubmitting}
                     onClick={() =>
                       void commitChoice(
-                        expandedRuntime.spec.provider,
-                        expandedRuntime.spec.label,
+                        readyRuntime.spec.provider,
+                        readyRuntime.spec.label,
                       )
                     }
                   >
-                    {submitting === expandedRuntime.spec.label
-                      ? "Opening your office…"
-                      : "Next  →"}
+                    {submitting === readyRuntime.spec.label
+                      ? "Opening your workspace…"
+                      : `Next with ${readyRuntime.spec.label}  →`}
                   </button>
                 </div>
               ) : null}
@@ -839,14 +795,6 @@ export function PrePickScreen({ onComplete }: PrePickScreenProps) {
                 selected={localProviders}
                 onToggleProvider={toggleLocalProvider}
               />
-              <CustomEndpointSection
-                open={oaiOpen}
-                onToggle={() => setOaiOpen((open) => !open)}
-                oaiUrl={oaiUrl}
-                oaiKey={oaiKey}
-                onChangeUrl={setOaiUrl}
-                onChangeKey={setOaiKey}
-              />
             </div>
 
             {/* ── Submit from form sections ──────────────────────────────── */}
@@ -854,13 +802,13 @@ export function PrePickScreen({ onComplete }: PrePickScreenProps) {
               <div className="pre-pick-secondary-row">
                 <button
                   type="button"
-                  className="btn btn-primary pre-pick-form-submit"
+                  className={`btn ${readyRuntime ? "" : "btn-primary "}pre-pick-form-submit`}
                   data-testid="pre-pick-form-submit"
                   disabled={anySubmitting}
                   onClick={() => void commitChoice("form", "form")}
                 >
                   {submitting === "form"
-                    ? "Opening your office…"
+                    ? "Opening your workspace…"
                     : "Continue  →"}
                 </button>
                 {selectedProviderLabels.length > 0 ? (
@@ -881,14 +829,13 @@ export function PrePickScreen({ onComplete }: PrePickScreenProps) {
                 onClick={() => void commitChoice(null, "skip")}
               >
                 {submitting === "skip"
-                  ? "Opening your office…"
+                  ? "Opening your workspace…"
                   : "I will add one later  →"}
               </button>
             </div>
 
             <p className="pre-pick-helper">
-              You can change this any time in{" "}
-              <strong>Settings &rarr; Runtimes</strong>.
+              You can change this any time in <strong>Settings</strong>.
             </p>
 
             {submitError ? (

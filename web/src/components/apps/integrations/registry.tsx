@@ -1,9 +1,5 @@
 import { HermesDetail, hermesStatus } from "./HermesCard";
-import {
-  HermesLogo,
-  OpenClawLogo,
-  TelegramLogo,
-} from "./IntegrationLogos";
+import { HermesLogo, OpenClawLogo, TelegramLogo } from "./IntegrationLogos";
 import { OpenClawDetail, openClawStatus } from "./OpenClawCard";
 import { TelegramDetail, telegramStatus } from "./TelegramCard";
 import type { IntegrationContext, IntegrationDescriptor } from "./types";
@@ -17,13 +13,13 @@ import type { IntegrationContext, IntegrationDescriptor } from "./types";
 // most common / well-trodden integration first; rare or experimentally-
 // supported ones after.
 export const INTEGRATIONS: readonly IntegrationDescriptor[] = [
-  // ── External Agents ──────────────────────────────────────────────
+  // ── External Bots ──────────────────────────────────────────────
   {
     id: "openclaw",
     category: "external-agents",
     title: "OpenClaw",
     summary:
-      "Bridge OpenClaw-controlled agent sessions into the office over a WebSocket gateway.",
+      "Bridge OpenClaw-controlled bot sessions onto the team over a WebSocket gateway.",
     logo: OpenClawLogo,
     isAvailable: ({ cfg }: IntegrationContext) => {
       const kinds = cfg.gateway_kinds ?? ["openclaw"];
@@ -37,7 +33,7 @@ export const INTEGRATIONS: readonly IntegrationDescriptor[] = [
     category: "external-agents",
     title: "Hermes",
     summary:
-      "Route imported Hermes agents through a local Hermes gateway's OpenAI-compatible server.",
+      "Route imported Hermes bots through a local Hermes gateway's OpenAI-compatible server.",
     logo: HermesLogo,
     isAvailable: ({ cfg }: IntegrationContext) => {
       const kinds = cfg.gateway_kinds ?? ["hermes-agent"];
@@ -53,7 +49,7 @@ export const INTEGRATIONS: readonly IntegrationDescriptor[] = [
     category: "channels",
     title: "Telegram",
     summary:
-      "Bring a Telegram chat into the office as a channel; replies route through a bot you control.",
+      "Bring a Telegram chat onto the team as a channel; replies route through a bot you control.",
     logo: TelegramLogo,
     // Telegram is always available — the modal handles the
     // server-not-reachable case at submit time, and there's no compile

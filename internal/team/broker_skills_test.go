@@ -13,8 +13,22 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nex-crm/wuphf/internal/agent"
+	"github.com/nex-crm/wuphf/internal/bot"
 )
+
+// userSkills drops the skills the office seeds for every bot (app-building,
+// wiki-maintenance). Tests here are about skills a HUMAN or a bot created, and
+// asserting on raw counts made every one of them break the moment a system
+// skill was added.
+func userSkills(skills []teamSkill) []teamSkill {
+	out := make([]teamSkill, 0, len(skills))
+	for _, sk := range skills {
+		if !sk.System {
+			out = append(out, sk)
+		}
+	}
+	return out
+}
 
 // TestHandlePostSkill_RejectsDuplicateName pins the 409 path. Two skill
 // records sharing a name break findSkillByNameLocked's "first non-archived
@@ -29,8 +43,8 @@ func TestHandlePostSkill_RejectsDuplicateName(t *testing.T) {
 			"title":"Dup",
 			"description":"Dup skill body.",
 			"content":"do the thing",
-			"created_by":"ceo",
-			"channel":"general"
+			"created_by":"cos",
+			"channel":"team"
 		}`, name))
 		req := httptest.NewRequest(http.MethodPost, "/skills", body)
 		rec := httptest.NewRecorder()
@@ -53,7 +67,7 @@ func TestHandlePostSkill_RejectsDuplicateName(t *testing.T) {
 // regression here would multiply seeded skills across restarts.
 func TestSeedDefaultSkills_IsIdempotent(t *testing.T) {
 	b := newTestBroker(t)
-	specs := []agent.PackSkillSpec{
+	specs := []bot.PackSkillSpec{
 		{Name: "deploy", Title: "Deploy", Description: "Deploy app", Content: "1. push tag"},
 		{Name: "rollback", Title: "Rollback", Description: "Roll back app", Content: "1. revert"},
 	}
@@ -63,11 +77,12 @@ func TestSeedDefaultSkills_IsIdempotent(t *testing.T) {
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if len(b.skills) != 2 {
-		t.Fatalf("expected 2 seeded skills after idempotent reseed, got %d: %+v", len(b.skills), b.skills)
+	seeded := userSkills(b.skills)
+	if len(seeded) != 2 {
+		t.Fatalf("expected 2 seeded skills after idempotent reseed, got %d: %+v", len(seeded), seeded)
 	}
 	names := map[string]int{}
-	for _, sk := range b.skills {
+	for _, sk := range seeded {
 		names[sk.Name]++
 	}
 	if names["deploy"] != 1 || names["rollback"] != 1 {
@@ -105,13 +120,13 @@ func TestInvokeSkillTracksInvokerChannelAndExecutionMetadata(t *testing.T) {
 		Name:      "youtube-factory-bootstrap",
 		Title:     "Bootstrap Automated YouTube Factory",
 		Status:    "active",
-		Channel:   "general",
-		CreatedBy: "ceo",
+		Channel:   "team",
+		CreatedBy: "cos",
 	})
 	b.channels = append(b.channels, teamChannel{
 		Slug:    "youtube-factory",
 		Name:    "YouTube Factory",
-		Members: []string{"ceo", "ops"},
+		Members: []string{"cos", "ops"},
 	})
 	b.mu.Unlock()
 
@@ -126,13 +141,17 @@ func TestInvokeSkillTracksInvokerChannelAndExecutionMetadata(t *testing.T) {
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.skills[0].UsageCount != 1 {
-		t.Fatalf("expected usage count 1, got %d", b.skills[0].UsageCount)
+	invoked := userSkills(b.skills)
+	if len(invoked) == 0 {
+		t.Fatalf("no user skill present: %+v", b.skills)
 	}
-	if b.skills[0].LastExecutionStatus != "invoked" {
-		t.Fatalf("expected last execution status invoked, got %q", b.skills[0].LastExecutionStatus)
+	if invoked[0].UsageCount != 1 {
+		t.Fatalf("expected usage count 1, got %d", invoked[0].UsageCount)
 	}
-	if b.skills[0].LastExecutionAt == "" {
+	if invoked[0].LastExecutionStatus != "invoked" {
+		t.Fatalf("expected last execution status invoked, got %q", invoked[0].LastExecutionStatus)
+	}
+	if invoked[0].LastExecutionAt == "" {
 		t.Fatal("expected last execution timestamp to be set")
 	}
 	last := b.messages[len(b.messages)-1]
@@ -150,18 +169,18 @@ func TestInvokeSkillTracksInvokerChannelAndExecutionMetadata(t *testing.T) {
 func TestInvokeSkillCreatesSkillRunTask(t *testing.T) {
 	b := newTestBroker(t)
 	b.mu.Lock()
-	b.members = []officeMember{{Slug: "ceo", Name: "CEO", Role: "lead"}}
+	b.members = []officeMember{{Slug: "cos", Name: "CEO", Role: "lead"}}
 	b.skills = append(b.skills, teamSkill{
 		ID:      "skill-deploy",
 		Name:    "deploy",
 		Title:   "Deploy to Production",
 		Status:  "active",
-		Channel: "general",
+		Channel: "team",
 		Content: "Step 1: Run tests. Step 2: Push tag.",
 	})
 	b.mu.Unlock()
 
-	body := bytes.NewBufferString(`{"invoked_by":"eng","channel":"general"}`)
+	body := bytes.NewBufferString(`{"invoked_by":"eng","channel":"team"}`)
 	req := httptest.NewRequest(http.MethodPost, "/skills/deploy/invoke", body)
 	rec := httptest.NewRecorder()
 
@@ -199,8 +218,8 @@ func TestInvokeSkillCreatesSkillRunTask(t *testing.T) {
 	if found.PipelineID != "skill_invocation" {
 		t.Errorf("expected PipelineID=skill_invocation, got %q", found.PipelineID)
 	}
-	if found.Owner != "ceo" {
-		t.Errorf("expected owner=ceo (office lead), got %q", found.Owner)
+	if found.Owner != "cos" {
+		t.Errorf("expected owner=cos (office lead), got %q", found.Owner)
 	}
 	if !strings.Contains(found.Title, "Deploy to Production") {
 		t.Errorf("expected task title to contain skill title, got %q", found.Title)
@@ -213,20 +232,20 @@ func TestInvokeSkillCreatesSkillRunTask(t *testing.T) {
 	}
 }
 
-// Test 10: buildPrompt for the lead includes SKILL & AGENT AWARENESS section.
+// Test 10: buildPrompt for the lead includes SKILL & BOT AWARENESS section.
 func TestBuildPromptLeadIncludesSkillAwareness(t *testing.T) {
 	l := &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "fe", Name: "Frontend Engineer"},
 			},
 		},
 	}
-	prompt := l.buildPrompt("ceo")
-	if !strings.Contains(prompt, "SKILL & AGENT AWARENESS") {
-		t.Fatalf("expected SKILL & AGENT AWARENESS block in lead prompt")
+	prompt := l.buildPrompt("cos")
+	if !strings.Contains(prompt, "SKILL & BOT AWARENESS") {
+		t.Fatalf("expected SKILL & BOT AWARENESS block in lead prompt")
 	}
 	if strings.Contains(prompt, "team_skill_create") {
 		t.Fatalf("lead prompt must not mention team_skill_create — the tool was removed (skills come only from playbook compilation)")
@@ -240,10 +259,10 @@ func TestBuildPromptLeadIncludesSkillAwareness(t *testing.T) {
 func TestSkillCreatePersistenceRoundTrip(t *testing.T) {
 	b := newTestBroker(t)
 	b.mu.Lock()
-	b.members = []officeMember{{Slug: "ceo", Name: "CEO", Role: "lead"}}
+	b.members = []officeMember{{Slug: "cos", Name: "CEO", Role: "lead"}}
 	for i := range b.channels {
-		if b.channels[i].Slug == "general" {
-			b.channels[i].Members = append(b.channels[i].Members, "ceo")
+		if b.channels[i].Slug == "team" {
+			b.channels[i].Members = append(b.channels[i].Members, "cos")
 		}
 	}
 	b.mu.Unlock()
@@ -252,8 +271,8 @@ func TestSkillCreatePersistenceRoundTrip(t *testing.T) {
 		"title":"Persist Skill",
 		"description":"Persisted skill",
 		"content":"1. Do the thing",
-		"created_by":"ceo",
-		"channel":"general"
+		"created_by":"cos",
+		"channel":"team"
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/skills", body)
 	rec := httptest.NewRecorder()
@@ -264,7 +283,7 @@ func TestSkillCreatePersistenceRoundTrip(t *testing.T) {
 
 	reloaded := reloadedBroker(t, b)
 	reloaded.mu.Lock()
-	skills := append([]teamSkill(nil), reloaded.skills...)
+	skills := userSkills(reloaded.skills)
 	requests := append([]humanInterview(nil), reloaded.requests...)
 	reloaded.mu.Unlock()
 
@@ -333,8 +352,8 @@ func TestHandlePostSkill_WritesWikiFile(t *testing.T) {
 		"title":"Flake Quarantine",
 		"description":"Move repeatedly-flaking E2E tests to a quarantine lane.",
 		"content":"# Flake Quarantine\n\nQuarantine flakes that fail >3 times in 24h.",
-		"created_by":"ceo",
-		"channel":"general",
+		"created_by":"cos",
+		"channel":"team",
 		"tags":["qa","ci"]
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/skills", body)
@@ -372,8 +391,8 @@ func TestHandlePostSkill_RejectsProposeAction(t *testing.T) {
 		"title":"Stale Proposal",
 		"description":"Sent by a stale caller.",
 		"content":"1. Do the thing",
-		"created_by":"ceo",
-		"channel":"general"
+		"created_by":"cos",
+		"channel":"team"
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/skills", body)
 	rec := httptest.NewRecorder()
@@ -383,8 +402,8 @@ func TestHandlePostSkill_RejectsProposeAction(t *testing.T) {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if len(b.skills) != 0 {
-		t.Fatalf("expected no skill created, got %+v", b.skills)
+	if created := userSkills(b.skills); len(created) != 0 {
+		t.Fatalf("expected no skill created, got %+v", created)
 	}
 }
 
@@ -398,7 +417,7 @@ func TestHandlePostSkill_RequiresDescription(t *testing.T) {
 		"name":"no-desc-skill",
 		"title":"No Description",
 		"content":"step 1.",
-		"created_by":"ceo"
+		"created_by":"cos"
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/skills", body)
 	rec := httptest.NewRecorder()
@@ -424,8 +443,8 @@ func TestBackfillSkillFilesFromState_WritesMissingFiles(t *testing.T) {
 		Title:       "Flake Quarantine",
 		Description: "Move flakes to a quarantine lane.",
 		Content:     "# Flake Quarantine\n\nQuarantine flakes.",
-		CreatedBy:   "ceo",
-		Channel:     "general",
+		CreatedBy:   "cos",
+		Channel:     "team",
 		Status:      "active",
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -437,8 +456,8 @@ func TestBackfillSkillFilesFromState_WritesMissingFiles(t *testing.T) {
 		Title:       "Archived",
 		Description: "Already retired.",
 		Content:     "old body",
-		CreatedBy:   "ceo",
-		Channel:     "general",
+		CreatedBy:   "cos",
+		Channel:     "team",
 		Status:      "archived",
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -478,8 +497,8 @@ func TestBackfillSkillFilesFromState_PreservesExistingFile(t *testing.T) {
 		"title":"Already On Disk",
 		"description":"Skill that already has SKILL.md.",
 		"content":"# Already On Disk\n\nbody.",
-		"created_by":"ceo",
-		"channel":"general"
+		"created_by":"cos",
+		"channel":"team"
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/skills", body)
 	rec := httptest.NewRecorder()

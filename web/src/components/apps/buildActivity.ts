@@ -100,14 +100,13 @@ export function humanizeToolEvent(
     case "read":
       return { verb: "Reading", target: lastSegment(path) };
     case "bash":
-      return { verb: "Running", target: truncate(str("command"), 56) };
+      // Never quote the raw shell command at the operator — classify it.
+      return { verb: bashVerb(str("command")), target: "" };
     case "glob":
-      return {
-        verb: "Finding",
-        target: truncate(str("pattern") || str("glob"), 48),
-      };
     case "grep":
-      return { verb: "Searching", target: truncate(str("pattern"), 48) };
+      // Raw regex/glob patterns are developer material; the operator just
+      // needs to know the bot is looking around.
+      return { verb: "Searching", target: "the project" };
     case "todowrite":
       return { verb: "Planning", target: "" };
     case "webfetch":
@@ -120,17 +119,48 @@ export function humanizeToolEvent(
       return { verb: "Checking", target: "existing apps" };
     case "propose_app":
       return { verb: "Proposing", target: str("name") || "an app" };
-    default: {
-      // Title-case the raw tool name; surface the first useful string arg.
-      const verb = name
-        ? name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
-        : "Tool";
-      const firstStr = Object.values(args).find(
-        (v) => typeof v === "string" && v.length > 0,
-      );
-      return { verb, target: truncate(asString(firstStr), 48) };
-    }
+    default:
+      // Unknown internal tools stay generic — raw names and args are
+      // developer material, not operator narration.
+      return { verb: "Working", target: "" };
   }
+}
+
+/** Classify a shell command into an operator-facing verb (no raw command). */
+function bashVerb(command: string): string {
+  const c = command.trim().toLowerCase();
+  if (
+    /(^|\s|&&\s*)(bun|npm|pnpm|yarn|pip|go get|cargo|brew)\s+(install|add|i\b)/.test(
+      c,
+    )
+  ) {
+    return "Installing dependencies";
+  }
+  if (/tsc|typecheck|lint|biome|vet|prettier/.test(c))
+    return "Checking the code";
+  if (/(^|\s)(test|vitest|jest|pytest|go test)\b/.test(c))
+    return "Running tests";
+  if (/(^|\s)(build|vite build|make)\b/.test(c)) return "Building";
+  return "Running a setup step";
+}
+
+/** Heuristic error sniff on a tool_result payload: explicit error envelopes
+ * and the classic crash prefixes. Conservative on purpose — a false checkmark
+ * hides failures, a false ✗ cries wolf. */
+function looksLikeToolError(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  try {
+    const parsed: unknown = JSON.parse(t);
+    if (parsed && typeof parsed === "object") {
+      const o = parsed as { is_error?: unknown; error?: unknown };
+      if (o.is_error === true) return true;
+      if (typeof o.error === "string" && o.error.trim()) return true;
+    }
+  } catch {
+    // plain text — fall through
+  }
+  return /^(error|fatal|panic):/i.test(t);
 }
 
 /** Condense a tool_result payload into a short one-line note. */
@@ -173,7 +203,7 @@ export function reduceBuildActivity(
 
   // Most native tools (Read/Write/Bash) emit a tool_result that references its
   // call by id, not name, so the runner can't tag it and drops the event — rows
-  // would otherwise spin until the turn ends. The agent works one tool at a
+  // would otherwise spin until the turn ends. The bot works one tool at a
   // time, so the arrival of the NEXT tool_use means the prior tool finished:
   // resolve still-running rows in the turn to "done". The open queue is left
   // intact, so a named tool_result (when one arrives) still attaches its note.
@@ -218,9 +248,12 @@ export function reduceBuildActivity(
       case "tool_result": {
         const q = open.get(key);
         const note = summarizeResult(ev.text);
+        // An error payload must not render as a checkmark (2026-08-16
+        // audit: the feed could literally never show a failure).
+        const failed = looksLikeToolError(ev.text);
         if (q && q.length > 0) {
           const idx = q.shift() as number;
-          items[idx].status = "done";
+          items[idx].status = failed ? "error" : "done";
           if (note) items[idx].note = note;
         } else {
           const { verb, target } = humanizeToolEvent(ev.toolName, "");
@@ -228,7 +261,7 @@ export function reduceBuildActivity(
             id: `${ev.turnId}:${ev.toolName}:${seq++}`,
             verb,
             target,
-            status: "done",
+            status: failed ? "error" : "done",
             note: note || undefined,
             turn: ev.turnId,
           });

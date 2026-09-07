@@ -1,28 +1,28 @@
 /**
- * Office-voice idle copy dictionary for the agent rail event pill.
+ * Office-voice idle copy dictionary for the bot rail event pill.
  *
  * Eng decision A4: lookup order is slug overrides -> role table -> generalist
- * fallback. Copy rotates ~every 12s based on idleMs so the same agent does not
+ * fallback. Copy rotates ~every 12s based on idleMs so the same bot does not
  * stare at the same line forever during a long idle.
  */
 
 const ROTATION_INTERVAL_MS = 12_000;
 
 /**
- * Hardcoded copy for canonical built-in agents. Slug match wins over role.
- * Keep these in The Office voice — these are the agents users meet first.
+ * Hardcoded copy for canonical built-in bots. Slug match wins over role.
+ * These are the bots users meet first, so they set the voice for the rest.
  */
 const SLUG_OVERRIDES: Record<string, readonly string[]> = {
   tess: [
     "drafting a thought",
     "rereading the brief",
-    "watching the office",
-    "sipping coffee",
+    "tidying the brief",
+    "closing out a note",
     "thinking up a plan",
   ],
   ava: [
     "reviewing the diff",
-    "watching tests",
+    "running the tests",
     "skimming PRs",
     "checking CI",
     "reading the changelog",
@@ -30,7 +30,7 @@ const SLUG_OVERRIDES: Record<string, readonly string[]> = {
   sam: [
     "combing Linear",
     "drafting a doc",
-    "in standup mentally",
+    "writing the update nobody reads",
     "checking burn-down",
     "rereading the brief",
   ],
@@ -41,8 +41,33 @@ const SLUG_OVERRIDES: Record<string, readonly string[]> = {
  * "Engineer", " engineer ", and "Dev" all hit the same table.
  */
 const ROLE_TABLES: Record<string, readonly string[]> = {
+  // `lead` is the Chief of Staff, and it is now the ONLY built-in. The
+  // librarian, app-builder, planner, executor and reviewer tables were removed
+  // when the founder retired those bots as defaults: "that concept should
+  // now be gone with those bots as default. their defintions also shouldn't
+  // exist". The remaining entries below are ordinary ROLE copy, matched on
+  // whatever role a user gives a bot they created themselves, so they are
+  // not built-in definitions and they stay.
+  //
+  // A legacy workspace that still holds one of the retired bots falls
+  // through to GENERALIST_COPY, which is correct: generic copy for a bot
+  // the product no longer defines, rather than a dangling special case.
+  //
+  // Voice: flat, specific, mildly tedious. An idle bot is BETWEEN jobs,
+  // never spectating and never lazy -- founder's rule is that gawkbot is not
+  // a bystander in any messaging, because the bots do the menial work and
+  // the human is the one watching a dashboard. Idle copy is where that is
+  // easiest to get wrong: "watching the board" and "waiting to be asked" read
+  // as a bot doing nothing, which inverts the product story. Give it some
+  // small boring thing it is getting on with instead.
+  lead: [
+    "triaging what came in",
+    "reordering the queue",
+    "taking it off your plate",
+    "finding the next boring thing",
+  ],
   engineer: [
-    "watching tests",
+    "running the tests",
     "reviewing the diff",
     "skimming PRs",
     "checking CI",
@@ -52,7 +77,7 @@ const ROLE_TABLES: Record<string, readonly string[]> = {
     "doodling in Figma",
     "tweaking spacing",
     "picking colors",
-    "staring at type",
+    "nudging the kerning",
     "moving pixels",
   ],
   pm: [
@@ -63,7 +88,7 @@ const ROLE_TABLES: Record<string, readonly string[]> = {
     "rereading the brief",
   ],
   devops: [
-    "watching dashboards",
+    "rotating the logs",
     "tailing logs",
     "checking uptime",
     "reviewing alerts",
@@ -93,17 +118,22 @@ const ROLE_ALIASES: Record<string, string> = {
   platform: "devops",
   marketing: "marketing",
   growth: "marketing",
+  // The built-ins, keyed off what the roster actually stores.
+  lead: "lead",
+  "chief of staff": "lead",
+  "chief-of-staff": "lead",
+  cos: "lead",
 };
 
 /**
  * Generalist fallback when slug + role both miss. Never returns empty.
  */
 const GENERALIST_COPY: readonly string[] = [
-  "looking at memes",
-  "refilling coffee",
-  "checking Slack",
-  "watching the office",
-  "thinking about lunch",
+  "clearing something small",
+  "tidying up after the last job",
+  "filing the paperwork",
+  "between tasks",
+  "getting on with it",
 ];
 
 interface PickIdleCopyInput {
@@ -129,10 +159,10 @@ function rotateIndex(idleMs: number, length: number): number {
 }
 
 /**
- * Pick an Office-voice idle line for an agent. Pure: same input -> same output.
+ * Pick an Office-voice idle line for a bot. Pure: same input -> same output.
  *
  * Lookup order:
- *   1. SLUG_OVERRIDES[slug.toLowerCase()] — canonical agents win.
+ *   1. SLUG_OVERRIDES[slug.toLowerCase()] — canonical bots win.
  *   2. ROLE_TABLES via ROLE_ALIASES[normalizeRole(role)] — role match.
  *   3. GENERALIST_COPY — never crashes, never returns empty.
  */

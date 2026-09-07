@@ -42,7 +42,7 @@ const (
 
 // CEOOnboardingDMSlug is the reserved channel slug for the CEO onboarding DM.
 // The CEO transcript lives in b.messages under this channel — not in state.
-const CEOOnboardingDMSlug = "dm:ceo:onboarding"
+const CEOOnboardingDMSlug = "dm:cos:onboarding"
 
 // FormAnswers holds the staged deterministic form answers collected during
 // the onboarding conversation. Fields are committed incrementally via
@@ -57,7 +57,7 @@ type FormAnswers struct {
 	OwnerRole    string   `json:"owner_role,omitempty"`
 	OwnerEmail   string   `json:"owner_email,omitempty"`  // captured in onboarding; PII, stored locally
 	BlueprintID  string   `json:"blueprint_id,omitempty"` // empty = scratch path
-	PickedAgents []string `json:"picked_agents,omitempty"`
+	PickedBots   []string `json:"picked_agents,omitempty"`
 	ScanComplete bool     `json:"scan_complete,omitempty"`
 	TaskPrompt   string   `json:"task_prompt,omitempty"`
 }
@@ -110,7 +110,7 @@ type State struct {
 	Phase string `json:"phase,omitempty"`
 
 	// CEODMChannelID is the reserved channel slug for the CEO onboarding DM
-	// (dm:ceo:onboarding). The CEO transcript lives in b.messages — not here.
+	// (dm:cos:onboarding). The CEO transcript lives in b.messages — not here.
 	CEODMChannelID string `json:"ceo_dm_channel_id,omitempty"`
 
 	// PendingSuggestion is the last CEO suggestion card emitted that the user

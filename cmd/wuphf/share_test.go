@@ -485,6 +485,9 @@ func TestShareProxyStampsHumanActor(t *testing.T) {
 		}
 	}
 
+	// #general is no longer seeded by the product; this test exercises the
+	// share/API pipeline, not room policy, so the fixture supplies the room.
+	team.SeedLegacyRoomForTest(b)
 	postJSONWithCookies("/api/messages", `{"from":"you","channel":"general","content":"team member hello"}`)
 	postJSONWithCookies("/api/actions", `{"kind":"manual","actor":"you","summary":"team member did work"}`)
 
@@ -602,7 +605,7 @@ func TestWebShareControllerIssueInviteUsesAdapter(t *testing.T) {
 }
 
 // TestWebShareControllerIssueInviteFallsBackToHTTP confirms that when no
-// in-process broker handle is available (the standalone `wuphf share`
+// in-process broker handle is available (the standalone `gawkbot share`
 // subcommand path), issueInviteLocked uses the HTTP createShareInvite call.
 // We verify by pointing the controller at an httptest server that mimics the
 // broker's POST /humans/invites response shape.

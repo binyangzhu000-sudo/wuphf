@@ -7,15 +7,15 @@
  * that message: a clickable banner-style card with the task id, title,
  * owner, and lifecycle state. Click → navigates to /tasks/$taskId.
  *
- * Why a card and not a plain agent message: RULE ZERO means every piece
+ * Why a card and not a plain bot message: RULE ZERO means every piece
  * of work has a Task behind it. The card is the audit-trail anchor
- * humans (and other agents) latch onto when scrolling the channel later.
+ * humans (and other bots) latch onto when scrolling the channel later.
  *
  * Security: payload fields are plain text only. The broker-side
  * sanitizer is authoritative; this component is defense-in-depth.
  */
 
-import { router } from "../../../lib/router";
+import { useAppStore } from "../../../stores/app";
 
 export interface TaskCreatedPayload {
   task_id?: string;
@@ -55,13 +55,14 @@ export function TaskCreatedCard({ payload }: TaskCreatedCardProps) {
   const owner = payload.owner;
   const state = payload.lifecycle_state;
   const isDrafting = state === "drafting";
+  const openTaskModal = useAppStore((s) => s.openTaskModal);
 
+  // Opens the shared task modal in place. The card used to navigate to
+  // /tasks/$taskId, which drops the reader out of the conversation they were
+  // reading and into a second chat surface.
   function openTask() {
     if (!taskId) return;
-    void router.navigate({
-      to: "/tasks/$taskId",
-      params: { taskId },
-    });
+    openTaskModal(taskId);
   }
 
   // CTA + eyebrow shift when the Task is PARKED (drafting) — the one
@@ -71,7 +72,7 @@ export function TaskCreatedCard({ payload }: TaskCreatedCardProps) {
   const eyebrow = isDrafting ? "Task parked" : "Task created";
   const cta = isDrafting ? "Open to start →" : "Open →";
   const helpText = isDrafting
-    ? "Parked — open the task page to read, edit, or start it."
+    ? "Parked — open it to read, edit, or start it."
     : null;
 
   return (

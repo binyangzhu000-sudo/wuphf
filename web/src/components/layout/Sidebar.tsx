@@ -2,13 +2,15 @@ import { useEffect, useState } from "react";
 import { Settings as SettingsIcon, SidebarCollapse } from "iconoir-react";
 
 import { useResizablePane } from "../../hooks/useResizablePane";
+import { NAMED_CHANNELS_ENABLED } from "../../lib/constants";
 import { router } from "../../lib/router";
 import { useCurrentApp } from "../../routes/useCurrentRoute";
 import { useAppStore } from "../../stores/app";
 import { TeamMemberBadge } from "../join/TeamMemberBadge";
 import { SidebarPreviewOverlay } from "../onboarding/SidebarPreviewOverlay";
-import { AgentList } from "../sidebar/AgentList";
 import { AppList } from "../sidebar/AppList";
+import { BotList } from "../sidebar/BotList";
+import { ChannelList } from "../sidebar/ChannelList";
 import { SidebarSection } from "../sidebar/SidebarSection";
 import { UsagePanel } from "../sidebar/UsagePanel";
 import { CollapsedSidebar } from "./CollapsedSidebar";
@@ -41,8 +43,10 @@ function useMobileRail(): boolean {
 export function Sidebar() {
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const toggleSidebarCollapsed = useAppStore((s) => s.toggleSidebarCollapsed);
-  const sidebarAgentsOpen = useAppStore((s) => s.sidebarAgentsOpen);
-  const toggleSidebarAgents = useAppStore((s) => s.toggleSidebarAgents);
+  const sidebarBotsOpen = useAppStore((s) => s.sidebarBotsOpen);
+  const sidebarChannelsOpen = useAppStore((s) => s.sidebarChannelsOpen);
+  const toggleSidebarBots = useAppStore((s) => s.toggleSidebarBots);
+  const toggleSidebarChannels = useAppStore((s) => s.toggleSidebarChannels);
   const currentApp = useCurrentApp();
   const mobileRail = useMobileRail();
   const [mobileExpanded, setMobileExpanded] = useState(false);
@@ -92,9 +96,9 @@ export function Sidebar() {
               className="sidebar-logo"
               onClick={() => router.navigate({ to: "/" })}
               title="Home"
-              aria-label="WUPHF — go to home"
+              aria-label="gawkbot — go to home"
             >
-              WUPHF
+              gawkbot
             </button>
             <TeamMemberBadge />
             <div className="sidebar-header-actions">
@@ -125,33 +129,53 @@ export function Sidebar() {
           </div>
 
           <div className="sidebar-scroll">
-            {/* The agent roster rail — CEO + specialists with avatars, live
+            {/* The bot roster rail — Chief of Staff + specialists with avatars, live
                 activity pills, and the peek affordance. Clicking a row opens
-                that agent's subspace (/agents/$slug), so any agent is reachable
+                that bot's subspace (/bots/$slug), so any bot is reachable
                 at any time. Collapsible + persisted via the app store, exactly
                 as before the Slack-style sidebar unify (#919). */}
             <SidebarSection
-              label="Agents"
+              label="Bots"
               variant="team"
-              open={sidebarAgentsOpen}
-              onToggle={toggleSidebarAgents}
+              open={sidebarBotsOpen}
+              onToggle={toggleSidebarBots}
               data-testid="sidebar-section-agents"
             >
-              <AgentList />
+              <BotList />
             </SidebarSection>
+
+            {/* Channels are retired. Every conversation is a 1:1 DM with one
+                bot, and tagging another bot inside it sends yours to
+                consult them rather than pulling them into the room.
+
+                The SECTION is dropped, not just emptied: a "Channels" heading
+                over nothing but a "+ New Channel" button advertises a surface
+                the product no longer has, which is worse than removing it.
+                NAMED_CHANNELS_ENABLED is the single flip that brings it back
+                -- the list component and its wizard are untouched below. */}
+            {NAMED_CHANNELS_ENABLED ? (
+              <SidebarSection
+                label="Channels"
+                open={sidebarChannelsOpen}
+                onToggle={toggleSidebarChannels}
+                data-testid="sidebar-section-channels"
+              >
+                <ChannelList />
+              </SidebarSection>
+            ) : null}
 
             {/* The sidebar nav is three labeled groups — Work / Knowledge /
                 Config — rendered by AppList. Inbox lives in Work; there is no
                 separate flat task list, and "Tasks" in Work opens the task
-                surface. Channels are per task (reached via the task detail). */}
+                surface. */}
             <AppList />
 
-            {/* Phase 2 onboarding preview overlay — shows staged channels/agents
-                forming as the user answers CEO questions. Hidden once onboarded. */}
+            {/* Phase 2 onboarding preview overlay — shows staged channels/bots
+                forming as the user answers Chief of Staff questions. Hidden once onboarded. */}
             <SidebarPreviewOverlay />
           </div>
           {/* WorkspaceSummary intentionally not rendered here — the stats
-              it shows (agents active, tasks open, tokens) are redundant
+              it shows (bots active, tasks open, tokens) are redundant
               with the Tasks nav and the Usage footer. The component file is
               preserved so it can be re-used inside a future Usage popover
               or Settings surface. */}

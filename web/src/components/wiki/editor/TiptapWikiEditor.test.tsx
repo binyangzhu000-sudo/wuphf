@@ -24,7 +24,7 @@ const CATALOG: WikiCatalogEntry[] = [
   {
     path: "team/people/nazz",
     title: "Nazz",
-    author_slug: "ceo",
+    author_slug: "cos",
     last_edited_ts: "2026-04-20T10:00:00.000Z",
     group: "people",
   },
@@ -116,7 +116,7 @@ describe("<TiptapWikiEditor>", () => {
 
     const menu = await screen.findByTestId("wk-slash-menu");
     expect(menu).toBeInTheDocument();
-    // Basic blocks and WUPHF inserts both surface.
+    // Basic blocks and gawkbot inserts both surface.
     expect(screen.getByTestId("wk-slash-basic-h1")).toBeInTheDocument();
     expect(screen.getByTestId("wk-slash-action-citation")).toBeInTheDocument();
   });

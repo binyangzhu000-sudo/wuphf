@@ -1039,9 +1039,15 @@
   font-weight: 600;
   flex-shrink: 0;
 }
+/* The shortcut badge has to invert with its button. That .btn-primary is
+   deliberately an inverted chip (`background: var(--text)`), so it is DARK
+   in the light theme and LIGHT in the three dark ones. Hardcoded white ink
+   here therefore vanished completely on nex-dark, noir-gold and nex-shell
+   — white on a near-white pill, 1.15:1, the keyboard hint invisible in
+   three of four themes. Mirror the parent's own pair instead. */
 .interview-bar-actions .btn-primary .interview-bar-opt-num {
-  background: rgba(255, 255, 255, 0.18);
-  color: rgba(255, 255, 255, 0.9);
+  background: color-mix(in srgb, var(--bg-card) 18%, transparent);
+  color: var(--bg-card);
 }
 .interview-bar-opt-label {
   flex: 1;
@@ -1408,7 +1414,7 @@ html[data-theme] .interview-bar-actions .btn-primary:hover {
 }
 .stream-phase-manifest {
   color: var(--text-tertiary);
-  background: var(--bg-secondary, var(--bg));
+  background: var(--bg);
 }
 .stream-manifest-stats {
   display: flex;
@@ -1776,8 +1782,8 @@ html[data-theme] .interview-bar-actions .btn-primary:hover {
 .system-error-card {
   margin: 8px 0 8px 0;
   padding: 12px 14px;
-  background: color-mix(in srgb, var(--amber-600, #d97706) 8%, var(--bg-card));
-  border: 1px solid var(--amber-600, #d97706);
+  background: color-mix(in srgb, var(--yellow) 8%, var(--bg-card));
+  border: 1px solid var(--yellow);
   border-radius: var(--radius-md, 8px);
   display: flex;
   flex-direction: column;
@@ -1793,7 +1799,7 @@ html[data-theme] .interview-bar-actions .btn-primary:hover {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--amber-600, #d97706);
+  color: var(--yellow);
 }
 .system-error-card-title {
   margin: 0;
@@ -1811,7 +1817,7 @@ html[data-theme] .interview-bar-actions .btn-primary:hover {
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  background: var(--bg-app);
+  background: var(--bg-warm);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm, 6px);
   font-family: var(--font-mono);
@@ -1928,26 +1934,22 @@ html[data-theme] .interview-bar-actions .btn-primary:hover {
   color: var(--text-secondary);
 }
 .issue-created-card--awaiting-approval {
-  background: color-mix(in srgb, var(--amber-600, #d97706) 8%, var(--bg-card));
-  border-color: color-mix(
-    in srgb,
-    var(--amber-600, #d97706) 60%,
-    var(--border)
-  );
+  background: color-mix(in srgb, var(--yellow) 8%, var(--bg-card));
+  border-color: color-mix(in srgb, var(--yellow) 60%, var(--border));
 }
 .issue-created-card--awaiting-approval:hover:not([disabled]) {
-  background: color-mix(in srgb, var(--amber-600, #d97706) 14%, var(--bg-card));
-  border-color: var(--amber-600, #d97706);
+  background: color-mix(in srgb, var(--yellow) 14%, var(--bg-card));
+  border-color: var(--yellow);
 }
 .issue-created-card--awaiting-approval .issue-created-card-eyebrow {
-  color: var(--amber-600, #d97706);
+  color: var(--yellow);
 }
 .issue-created-card--awaiting-approval .issue-created-card-cta {
-  color: var(--amber-600, #d97706);
+  color: var(--yellow);
   font-weight: 600;
 }
 .issue-created-card--awaiting-approval:focus-visible {
-  outline-color: var(--amber-600, #d97706);
+  outline-color: var(--yellow);
 }
 
 /* ─── Issue comment card ──────────────────────────────────────────────
@@ -2116,12 +2118,12 @@ html[data-theme] .interview-bar-actions .btn-primary:hover {
 
 /* Accent variants — go/review/done/stop/warn/neutral map to product colors. */
 .issue-lifecycle-card--go {
-  background: color-mix(in srgb, var(--success, #16a34a) 8%, var(--bg-card));
-  border-color: color-mix(in srgb, var(--success, #16a34a) 50%, var(--border));
+  background: color-mix(in srgb, var(--green) 8%, var(--bg-card));
+  border-color: color-mix(in srgb, var(--green) 50%, var(--border));
 }
 .issue-lifecycle-card--go .issue-lifecycle-card-eyebrow,
 .issue-lifecycle-card--go .issue-lifecycle-card-cta {
-  color: var(--success, #16a34a);
+  color: var(--green);
 }
 .issue-lifecycle-card--review {
   background: color-mix(in srgb, var(--accent, #2563eb) 8%, var(--bg-card));
@@ -2132,12 +2134,12 @@ html[data-theme] .interview-bar-actions .btn-primary:hover {
   color: var(--accent, #2563eb);
 }
 .issue-lifecycle-card--done {
-  background: color-mix(in srgb, var(--success, #16a34a) 6%, var(--bg-card));
-  border-color: color-mix(in srgb, var(--success, #16a34a) 40%, var(--border));
+  background: color-mix(in srgb, var(--green) 6%, var(--bg-card));
+  border-color: color-mix(in srgb, var(--green) 40%, var(--border));
 }
 .issue-lifecycle-card--done .issue-lifecycle-card-eyebrow,
 .issue-lifecycle-card--done .issue-lifecycle-card-cta {
-  color: var(--success, #16a34a);
+  color: var(--green);
 }
 .issue-lifecycle-card--stop {
   background: color-mix(
@@ -2151,16 +2153,12 @@ html[data-theme] .interview-bar-actions .btn-primary:hover {
   color: var(--text-secondary);
 }
 .issue-lifecycle-card--warn {
-  background: color-mix(in srgb, var(--amber-600, #d97706) 8%, var(--bg-card));
-  border-color: color-mix(
-    in srgb,
-    var(--amber-600, #d97706) 50%,
-    var(--border)
-  );
+  background: color-mix(in srgb, var(--yellow) 8%, var(--bg-card));
+  border-color: color-mix(in srgb, var(--yellow) 50%, var(--border));
 }
 .issue-lifecycle-card--warn .issue-lifecycle-card-eyebrow,
 .issue-lifecycle-card--warn .issue-lifecycle-card-cta {
-  color: var(--amber-600, #d97706);
+  color: var(--yellow);
 }
 .issue-lifecycle-card--neutral {
   background: var(--bg-card);
@@ -2426,4 +2424,186 @@ html[data-theme] .interview-bar-actions .btn-primary:hover {
   .artifact-skeleton-ellipsis span {
     opacity: 0.6;
   }
+}
+
+/* Inline task reference in chat prose.
+   Previously this had NO rule at all: TaskRefLink rendered a bare <button>,
+   so a task id in a sentence looked like plain text and nobody could tell it
+   was clickable. It sits beside .mention above and is deliberately a
+   different hue -- a mention is a person, a task is a thing, and the reader
+   should not have to squint to tell them apart. */
+.msg-task-link {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  max-width: 100%;
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 0 6px;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 0.9em;
+  line-height: 1.4;
+  vertical-align: baseline;
+  cursor: pointer;
+  text-align: left;
+}
+.msg-task-link:hover:not(:disabled) {
+  border-color: var(--accent, #4d8bb8);
+}
+.msg-task-link:focus-visible {
+  outline: 2px solid var(--accent, #4d8bb8);
+  outline-offset: 1px;
+}
+.msg-task-link:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+/* The id is the handle a human quotes back, so it stays monospace and never
+   truncates. The title is the meaning and may be long, so it is the half that
+   gives way on a narrow bubble. */
+.msg-task-link-id {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.msg-task-link-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+
+/* Inline app reference in chat prose. Sibling of .msg-task-link above, and
+   deliberately a THIRD look: a mention is a person, a task is a thing to do,
+   an app is a thing that exists. Three kinds of pill in one sentence have to
+   be tellable apart at a glance without reading them. */
+.msg-app-link {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  max-width: 100%;
+  background: var(--bg-card);
+  color: var(--accent);
+  border: 1px solid var(--border);
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+  font-weight: 600;
+  line-height: 1.4;
+  vertical-align: baseline;
+  text-decoration: none;
+}
+.msg-app-link:hover {
+  border-color: var(--accent, #6b7fd7);
+  text-decoration: none;
+}
+.msg-app-link:focus-visible {
+  outline: 2px solid var(--accent, #6b7fd7);
+  outline-offset: 1px;
+}
+.msg-app-link-glyph {
+  opacity: 0.75;
+  font-size: 0.9em;
+}
+.msg-app-link-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Human request card ────────────────────────────────────────────────
+   A bot's blocking ask, rendered inline in the thread with its options as
+   real buttons (HumanRequestCard). Sits at the same altitude as the other
+   system cards above, but carries a warmer border while it is genuinely
+   blocking so it reads as "the office is waiting on you" rather than as
+   one more event in the log. All color comes from tokens so the card holds
+   up in Nex Light, Nex Dark, and Noir Gold. */
+.request-card {
+  margin: 8px 0;
+  padding: 12px 14px;
+  width: 100%;
+  background: color-mix(in srgb, var(--accent, #2563eb) 6%, var(--bg-card));
+  border: 1px solid
+    color-mix(in srgb, var(--accent, #2563eb) 40%, var(--border));
+  border-radius: var(--radius-md, 8px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+}
+.request-card--blocking {
+  background: color-mix(in srgb, var(--warning-400) 7%, var(--bg-card));
+  border-color: color-mix(in srgb, var(--warning-400) 45%, var(--border));
+}
+.request-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.request-card-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+.request-card-eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.request-card-asker {
+  color: var(--accent, #2563eb);
+}
+.request-card-badge {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm, 4px);
+  background: color-mix(in srgb, var(--warning-400) 18%, transparent);
+  color: var(--warning-400);
+}
+.request-card-title {
+  font-weight: 600;
+  color: var(--text);
+}
+.request-card-question {
+  color: var(--text);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.request-card-help {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.request-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.request-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.request-card-textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 4px);
+}
+.request-card-textarea:focus-visible {
+  outline: 2px solid var(--accent, #2563eb);
+  outline-offset: 1px;
 }

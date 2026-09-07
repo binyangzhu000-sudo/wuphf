@@ -74,8 +74,8 @@ func TestHandleWatchdogs_GETReturnsCurrentAlerts(t *testing.T) {
 	b := newTestBroker(t)
 	b.mu.Lock()
 	b.watchdogs = []watchdogAlert{
-		{ID: "alert-1", Kind: "stalled", Owner: "ceo", Summary: "CEO stalled", Channel: "general"},
-		{ID: "alert-2", Kind: "stalled", Owner: "pm", Summary: "PM stalled", Channel: "general"},
+		{ID: "alert-1", Kind: "stalled", Owner: "cos", Summary: "CEO stalled", Channel: "team"},
+		{ID: "alert-2", Kind: "stalled", Owner: "pm", Summary: "PM stalled", Channel: "team"},
 	}
 	b.mu.Unlock()
 
@@ -117,7 +117,7 @@ func TestHandleQueue_ReturnsDueJobsArray(t *testing.T) {
 		Label:      "Due now",
 		TargetType: "task",
 		TargetID:   "t-1",
-		Channel:    "general",
+		Channel:    "team",
 		DueAt:      time.Now().UTC().Add(-time.Minute).Format(time.RFC3339),
 		NextRun:    time.Now().UTC().Add(-time.Minute).Format(time.RFC3339),
 		Status:     "scheduled",
@@ -148,7 +148,7 @@ func TestBrokerSessionModePersistsAndSurvivesReset(t *testing.T) {
 	b.mu.Lock()
 	b.members = append(b.members, officeMember{Slug: "pm", Name: "Product Manager"})
 	for i := range b.channels {
-		if b.channels[i].Slug == "general" {
+		if b.channels[i].Slug == "team" {
 			b.channels[i].Members = append(b.channels[i].Members, "pm")
 			break
 		}
@@ -157,26 +157,26 @@ func TestBrokerSessionModePersistsAndSurvivesReset(t *testing.T) {
 	if err := b.SetSessionMode(SessionModeOneOnOne, "pm"); err != nil {
 		t.Fatalf("SetSessionMode failed: %v", err)
 	}
-	if _, err := b.PostMessage("pm", "general", "hello", nil, ""); err != nil {
+	if _, err := b.PostMessage("pm", "team", "hello", nil, ""); err != nil {
 		t.Fatalf("seed direct message: %v", err)
 	}
 
 	reloaded := reloadedBroker(t, b)
-	mode, agent := reloaded.SessionModeState()
+	mode, bot := reloaded.SessionModeState()
 	if mode != SessionModeOneOnOne {
 		t.Fatalf("expected persisted 1o1 mode, got %q", mode)
 	}
-	if agent != "pm" {
-		t.Fatalf("expected persisted 1o1 agent pm, got %q", agent)
+	if bot != "pm" {
+		t.Fatalf("expected persisted 1o1 bot pm, got %q", bot)
 	}
 
 	reloaded.Reset()
-	mode, agent = reloaded.SessionModeState()
+	mode, bot = reloaded.SessionModeState()
 	if mode != SessionModeOneOnOne {
 		t.Fatalf("expected reset to preserve 1o1 mode, got %q", mode)
 	}
-	if agent != "pm" {
-		t.Fatalf("expected reset to preserve 1o1 agent pm, got %q", agent)
+	if bot != "pm" {
+		t.Fatalf("expected reset to preserve 1o1 bot pm, got %q", bot)
 	}
 	if len(reloaded.Messages()) != 0 {
 		t.Fatalf("expected reset to clear direct messages, got %d", len(reloaded.Messages()))
@@ -186,7 +186,7 @@ func TestBrokerSessionModePersistsAndSurvivesReset(t *testing.T) {
 func TestBrokerActionsAndSchedulerEndpoints(t *testing.T) {
 	b := newTestBroker(t)
 	b.mu.Lock()
-	b.appendActionLocked("request_created", "office", "general", "ceo", "Asked for approval", "request-1")
+	b.appendActionLocked("request_created", "office", "team", "cos", "Asked for approval", "request-1")
 	b.mu.Unlock()
 	if err := b.SetSchedulerJob(schedulerJob{
 		Slug:            "nex-insights",
@@ -230,7 +230,7 @@ func TestBrokerPostsAndDedupesNexNotifications(t *testing.T) {
 		"event_id":     "feed-item-1",
 		"title":        "Context alert",
 		"content":      "Important: Acme mentioned budget pressure",
-		"tagged":       []string{"ceo"},
+		"tagged":       []string{"cos"},
 		"source":       "context_graph",
 		"source_label": "Nex",
 	}
@@ -265,12 +265,12 @@ func TestBrokerPostsAndDedupesNexNotifications(t *testing.T) {
 func TestQueueEndpointShowsDueJobs(t *testing.T) {
 	b := newTestBroker(t)
 	if err := b.SetSchedulerJob(schedulerJob{
-		Slug:       "request-follow-up:general:request-1",
+		Slug:       "request-follow-up:team:request-1",
 		Kind:       "request_follow_up",
 		Label:      "Follow up on approval",
 		TargetType: "request",
 		TargetID:   "request-1",
-		Channel:    "general",
+		Channel:    "team",
 		DueAt:      time.Now().UTC().Add(-2 * time.Minute).Format(time.RFC3339),
 		NextRun:    time.Now().UTC().Add(-2 * time.Minute).Format(time.RFC3339),
 		Status:     "scheduled",

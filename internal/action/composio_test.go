@@ -81,7 +81,7 @@ func TestComposioRESTActionHappyPath(t *testing.T) {
 
 	client := &ComposioREST{
 		APIKey:  "cmp_test",
-		UserID:  "ceo@example.com",
+		UserID:  "cos@example.com",
 		BaseURL: server.URL,
 		Client:  server.Client(),
 	}
@@ -114,7 +114,7 @@ func TestComposioRESTActionHappyPath(t *testing.T) {
 		Platform:      "gmail",
 		ActionID:      "GMAIL_SEND_EMAIL",
 		ConnectionKey: "ca_123",
-		Data:          map[string]any{"to": "ceo@example.com"},
+		Data:          map[string]any{"to": "cos@example.com"},
 		DryRun:        true,
 	})
 	if err != nil {
@@ -128,7 +128,7 @@ func TestComposioRESTActionHappyPath(t *testing.T) {
 		Platform:      "gmail",
 		ActionID:      "GMAIL_SEND_EMAIL",
 		ConnectionKey: "ca_123",
-		Data:          map[string]any{"to": "ceo@example.com"},
+		Data:          map[string]any{"to": "cos@example.com"},
 	})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -218,7 +218,7 @@ func TestComposioRESTIntegrationLifecycle(t *testing.T) {
 
 	client := &ComposioREST{
 		APIKey:  "cmp_test",
-		UserID:  "ceo@example.com",
+		UserID:  "cos@example.com",
 		BaseURL: server.URL,
 		Client:  server.Client(),
 	}
@@ -247,8 +247,8 @@ func TestComposioRESTIntegrationLifecycle(t *testing.T) {
 	if got := connectBody["auth_config_id"]; got != "auth_123" {
 		t.Fatalf("expected auth_config_id auth_123, got %#v", got)
 	}
-	if got := connectBody["user_id"]; got != "ceo@example.com" {
-		t.Fatalf("expected user_id ceo@example.com, got %#v", got)
+	if got := connectBody["user_id"]; got != "cos@example.com" {
+		t.Fatalf("expected user_id cos@example.com, got %#v", got)
 	}
 	if started.AuthURL == "" || started.ConnectID != "ca_123" || started.Status != "initiated" {
 		t.Fatalf("unexpected start result: %+v", started)
@@ -317,24 +317,8 @@ func TestComposioRESTWorkflowDigestHappyPath(t *testing.T) {
 			},
 		})
 	})
-	mux.HandleFunc("/api/developers/v1/context/ask", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"answer": "Executive Summary\n- Acme escalation needs immediate follow-up.\n\nWhy This Matters\n- It affects rollout trust.\n\nWhat To Do Next\n- Have PM coordinate a response today.\n\nEmail Highlights\n- support@acme.com | Customer escalation on Acme rollout\n\nRelevant Nex Insights\n- Recent insight confirms rollout risk.",
-		})
-	})
-	mux.HandleFunc("/api/developers/v1/insights", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"insights": []map[string]any{{
-				"id":      "ins-1",
-				"type":    "risk",
-				"content": "Acme rollout risk increased after support issues.",
-			}},
-		})
-	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
-
-	t.Setenv("WUPHF_DEV_URL", server.URL)
 
 	client := &ComposioREST{
 		APIKey:  "cmp_test",
@@ -349,8 +333,6 @@ func TestComposioRESTWorkflowDigestHappyPath(t *testing.T) {
 			"connection_key":  "ca_123",
 			"recipient_email": "najmuzzaman@nex.ai",
 			"subject":         "Daily Digest",
-			"window_hours":    24,
-			"insight_limit":   5,
 			"max_results":     10,
 		},
 		"steps": []map[string]any{
@@ -366,20 +348,14 @@ func TestComposioRESTWorkflowDigestHappyPath(t *testing.T) {
 				},
 			},
 			{
-				"id":             "recent_insights",
-				"type":           "nex_insights",
-				"lookback_hours": "{{ .inputs.window_hours }}",
-				"insight_limit":  "{{ .inputs.insight_limit }}",
-			},
-			{
 				"id":       "email_summary",
 				"type":     "template",
 				"template": "Email highlights:\n{{- range $m := .steps.fetch_emails.result.data.messages }}\n- {{ $m.sender }} | {{ $m.subject }} | {{ $m.preview.body }}\n{{- end }}",
 			},
 			{
-				"id":             "compose_digest",
-				"type":           "nex_ask",
-				"query_template": "Create a plain-text daily digest with sections Executive Summary, Why This Matters, What To Do Next, Email Highlights, and Relevant Nex Insights.\n\n{{ .steps.email_summary.result }}\n\nInsights:\n{{ .steps.recent_insights.result }}",
+				"id":       "compose_digest",
+				"type":     "template",
+				"template": "Executive Summary\n\nWhy This Matters\n\n{{ .steps.email_summary.result }}",
 			},
 			{
 				"id":             "send_email",
@@ -461,7 +437,7 @@ func TestComposioRESTWorkflowNormalizesProviderStepAliases(t *testing.T) {
 	}
 }
 
-func TestComposioRESTWorkflowNormalizesAgentShorthandSyntax(t *testing.T) {
+func TestComposioRESTWorkflowNormalizesBotShorthandSyntax(t *testing.T) {
 	client := &ComposioREST{}
 	definition, _ := json.Marshal(map[string]any{
 		"version": composioWorkflowVersion,
@@ -730,15 +706,9 @@ func TestWorkflowStepsExposeGenericResult(t *testing.T) {
 				"template": "{{ range .steps.fetch_emails.result.data.messages }}{{ .subject }}{{ end }}",
 			},
 			{
-				"id":             "recent_insights",
-				"type":           "nex_insights",
-				"lookback_hours": 24,
-				"insight_limit":  5,
-			},
-			{
-				"id":             "compose_digest",
-				"type":           "nex_ask",
-				"query_template": "{{ .steps.email_summary.result }} :: {{ toPrettyJSON .steps.recent_insights.result }}",
+				"id":       "compose_digest",
+				"type":     "template",
+				"template": "Digest body",
 			},
 		},
 	})
@@ -772,14 +742,6 @@ func TestWorkflowStepsExposeGenericResult(t *testing.T) {
 		t.Fatalf("expected template result alias, got %#v", summary["result"])
 	}
 
-	var recentInsights map[string]any
-	if err := json.Unmarshal(result.Steps["recent_insights"], &recentInsights); err != nil {
-		t.Fatalf("decode recent insights step: %v", err)
-	}
-	insightSummary, _ := recentInsights["result"].(string)
-	if !strings.Contains(insightSummary, "Something changed.") {
-		t.Fatalf("expected compact insight summary, got %#v", recentInsights["result"])
-	}
 }
 
 // TestComposioRESTResponseCapErrorsCleanly pins the security bound on a single
@@ -802,7 +764,7 @@ func TestComposioRESTResponseCapErrorsCleanly(t *testing.T) {
 
 	client := &ComposioREST{
 		APIKey:  "cmp_test",
-		UserID:  "ceo@example.com",
+		UserID:  "cos@example.com",
 		BaseURL: server.URL,
 		Client:  server.Client(),
 	}
@@ -894,7 +856,7 @@ func TestComposioRESTCatalogHidesComposioToolkits(t *testing.T) {
 
 	client := &ComposioREST{
 		APIKey:  "cmp_test",
-		UserID:  "ceo@example.com",
+		UserID:  "cos@example.com",
 		BaseURL: server.URL,
 		Client:  server.Client(),
 	}
@@ -944,7 +906,7 @@ func TestComposioRESTCreatesV3AuthConfig(t *testing.T) {
 	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
-	client := &ComposioREST{APIKey: "cmp_test", UserID: "ceo@example.com", BaseURL: server.URL, Client: server.Client()}
+	client := &ComposioREST{APIKey: "cmp_test", UserID: "cos@example.com", BaseURL: server.URL, Client: server.Client()}
 
 	res, err := client.StartIntegrationConnection(context.Background(), IntegrationConnectRequest{Platform: "gmail"})
 	if err != nil {

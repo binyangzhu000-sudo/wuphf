@@ -37,7 +37,7 @@ appears with a CEO DM open.
 
 ## Stage 2 — CEO greets (deterministic form fills)
 
-The CEO DM is open at `dm:ceo:onboarding`. CEO sends the first card
+The CEO DM is open at `dm:cos:onboarding`. CEO sends the first card
 immediately. No LLM call at this stage.
 
 Each card commits before the next appears:
@@ -99,16 +99,12 @@ the last committed phase:
 
 On reopen, `RootRoute` reads `/onboarding/state`. If `phase` is set and
 `onboarded` is false, the Shell renders `OnboardingDMRoute` and
-redirects generic URLs to `dm:ceo:onboarding`.
+redirects generic URLs to `dm:cos:onboarding`.
 
 ---
 
 ## Settings — Integrations
 
-After onboarding, connect Nex in **Settings → Integrations → Nex**.
-Enter your email, click **Connect Nex**. The broker calls `/nex/register`
-which runs `nex-cli setup <email>`. If nex-cli is not installed, a link
-to `nex.ai/register` appears instead.
-
-Once you have your Nex API key, paste it in **Settings → API Keys →
-Nex API Key**.
+After onboarding, connect integrations in **Settings → Integrations**.
+Integrations are Composio-backed: sign in with Composio, or paste a
+Composio API key in **Settings → API Keys → Composio**.

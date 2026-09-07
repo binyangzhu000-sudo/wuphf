@@ -16,7 +16,7 @@ const ROLE_OPTIONS: readonly ApprovalRole[] = APPROVAL_ROLE_VALUES;
 const [DEFAULT_ROLE] = APPROVAL_ROLE_VALUES;
 
 const WEBAUTHN_UNSUPPORTED_MESSAGE =
-  "This environment doesn't support passkeys (WebAuthn), so a security key can't be registered here. Open WUPHF in a browser or on a platform with passkey support to bind an approval credential.";
+  "This environment doesn't support passkeys (WebAuthn), so a security key can't be registered here. Open gawkbot in a browser or on a platform with passkey support to bind an approval credential.";
 
 type RegistrationState =
   | { readonly kind: "idle" }
@@ -223,7 +223,7 @@ function RegistrationOutcome({
       : {
           background: "rgba(220, 38, 38, 0.08)",
           border: "rgba(220, 38, 38, 0.35)",
-          color: "var(--danger-500, #dc2626)",
+          color: "var(--red)",
         };
   return (
     <div

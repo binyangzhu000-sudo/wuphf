@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nex-crm/wuphf/internal/agent"
+	"github.com/nex-crm/wuphf/internal/bot"
 )
 
 func (b *Broker) handleSkills(w http.ResponseWriter, r *http.Request) {
@@ -102,20 +102,20 @@ func (b *Broker) skillIDExistsLocked(id string) bool {
 }
 
 // SkillSummary is the slim projection of an active skill used to render the
-// AVAILABLE SKILLS catalog block into agent system prompts. Slug + title +
+// AVAILABLE SKILLS catalog block into bot system prompts. Slug + title +
 // one-line description is enough for the LLM to pick the right team_skill_run
 // target without dragging the full Content body (which can be long) into the
-// prompt of every agent on every spawn.
+// prompt of every bot on every spawn.
 type SkillSummary struct {
 	Slug        string
 	Title       string
 	Description string
-	// OwnerAgents lists agent slugs this skill is assigned to. Compilation
+	// OwnerBots lists bot slugs this skill is assigned to. Compilation
 	// auto-assigns the office roster at creation (core-loop step 8); the
 	// human or CEO can narrow it via the Skills tab. prompt_builder.go
-	// renders ONLY assigned skills into an agent's prompt — unassigned
-	// skills are invisible to that agent.
-	OwnerAgents []string
+	// renders ONLY assigned skills into a bot's prompt — unassigned
+	// skills are invisible to that bot.
+	OwnerBots []string
 }
 
 // ListActiveSkillSummaries returns slim summaries of every active skill,
@@ -125,7 +125,7 @@ type SkillSummary struct {
 // filtered out.
 //
 // Slim by design: the broker's full skill content can be many KB. We render
-// only the slug and a short description into the prompt so every agent has a
+// only the slug and a short description into the prompt so every bot has a
 // definitive catalog to compare against before invoking team_skill_run,
 // without paying full content cost on every system prompt build.
 func (b *Broker) ListActiveSkillSummaries() []SkillSummary {
@@ -141,11 +141,15 @@ func (b *Broker) ListActiveSkillSummaries() []SkillSummary {
 		if slug == "" {
 			continue
 		}
+		owners := append([]string(nil), sk.OwnerBots...)
+		if sk.System {
+			owners = b.systemSkillEffectiveOwnersLocked(&sk)
+		}
 		out = append(out, SkillSummary{
 			Slug:        slug,
 			Title:       strings.TrimSpace(sk.Title),
 			Description: strings.TrimSpace(sk.Description),
-			OwnerAgents: append([]string(nil), sk.OwnerAgents...),
+			OwnerBots:   owners,
 		})
 	}
 	return out
@@ -165,11 +169,26 @@ func (b *Broker) findSkillByWorkflowKeyLocked(key string) *teamSkill {
 }
 
 func (b *Broker) handleGetSkills(w http.ResponseWriter, r *http.Request) {
-	channelFilter := normalizeChannelSlug(r.URL.Query().Get("channel"))
+	// An absent ?channel= means NO FILTER — list every skill. Normalising an
+	// empty query value first would turn it into "general" (that is
+	// normalizeChannelSlug's lobby fallback), so the `channelFilter != ""`
+	// test below could never be false and an unfiltered request silently
+	// returned only #general's skills. Test the raw value, then normalise.
+	channelFilter := ""
+	if raw := strings.TrimSpace(r.URL.Query().Get("channel")); raw != "" {
+		channelFilter = normalizeChannelSlug(raw)
+	}
 
 	b.mu.Lock()
 	result := make([]teamSkill, 0, len(b.skills))
 	for _, sk := range b.skills {
+		// A system skill's assignment is the roster minus DisabledBots;
+		// surface that as owner_agents so every consumer (bot Skills tab,
+		// Skills app, prompt debuggers) reads the effective set without
+		// learning the system-skill rule.
+		if sk.System {
+			sk.OwnerBots = b.systemSkillEffectiveOwnersLocked(&sk)
+		}
 		if sk.Status == "archived" {
 			continue
 		}
@@ -184,11 +203,11 @@ func (b *Broker) handleGetSkills(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"skills": result})
 }
 
-// handlePostSkill creates a skill directly via HTTP. Agent-driven skill
+// handlePostSkill creates a skill directly via HTTP. Bot-driven skill
 // creation was removed in core-loop R5 — skills are created ONLY by playbook
 // compilation. This endpoint remains as the INTERNAL seeding/install path
 // (e.g. `wuphf skills install` from a hub, test fixtures); it is not exposed
-// to agents through any MCP tool.
+// to bots through any MCP tool.
 func (b *Broker) handlePostSkill(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		// Action is parsed only to fail closed: the propose flow was
@@ -232,9 +251,25 @@ func (b *Broker) handlePostSkill(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	channel := normalizeChannelSlug(body.Channel)
+	// Raw emptiness first: normalizeChannelSlug("") is "general", so a missing
+	// channel used to be silently laundered into the shared room. Resolve a real
+	// home instead — while #general is enabled this still answers "general", so
+	// today is unchanged; once it is off this is the bot's DM, or a refusal.
+	//
+	// homeChannelFor is the correct variant HERE specifically: b.mu is
+	// NOT held at this point. The other variant would
+	// read the roster unsynchronised.
+	channel := ""
+	if raw := strings.TrimSpace(body.Channel); raw != "" {
+		channel = normalizeChannelSlug(raw)
+	}
 	if channel == "" {
-		channel = "general"
+		home, err := b.homeChannelFor(body.CreatedBy)
+		if err != nil {
+			http.Error(w, `channel is required: there is no default room to fall back to. Name a channel, or set a member slug so the message can go to that agent's DM.`, http.StatusBadRequest)
+			return
+		}
+		channel = home
 	}
 
 	const msgKind = "skill_update"
@@ -261,8 +296,8 @@ func (b *Broker) handlePostSkill(w http.ResponseWriter, r *http.Request) {
 
 	// Auto-assignment (core-loop step 8): seeded/installed skills are
 	// assigned to the whole office roster so they are loaded for every
-	// agent; the human narrows the assignment via the Skills tab.
-	ownerAgents := b.allMemberSlugsLocked()
+	// bot; the human narrows the assignment via the Skills tab.
+	ownerBots := b.allMemberSlugsLocked()
 
 	b.counter++
 	sk := teamSkill{
@@ -272,7 +307,7 @@ func (b *Broker) handlePostSkill(w http.ResponseWriter, r *http.Request) {
 		Description:         strings.TrimSpace(body.Description),
 		Content:             strings.TrimSpace(body.Content),
 		CreatedBy:           createdBy,
-		OwnerAgents:         ownerAgents,
+		OwnerBots:           ownerBots,
 		Channel:             channel,
 		Tags:                body.Tags,
 		Trigger:             strings.TrimSpace(body.Trigger),
@@ -527,6 +562,10 @@ func (b *Broker) handleDeleteSkill(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "skill not found", http.StatusNotFound)
 		return
 	}
+	if reason := guardSystemSkillMutation(sk, "delete"); reason != "" {
+		http.Error(w, reason, http.StatusForbidden)
+		return
+	}
 
 	sk.Status = "archived"
 	sk.UpdatedAt = now
@@ -588,7 +627,7 @@ func (b *Broker) handleInvokeSkill(w http.ResponseWriter, r *http.Request) {
 	sk := b.findSkillByNameLocked(skillName)
 	if sk == nil {
 		// Soft-404 (Layer 3 of skill-hallucination fix): include the
-		// active-skill slugs in the response body so the calling agent
+		// active-skill slugs in the response body so the calling bot
 		// reads the actual catalog on the next turn instead of wasting
 		// another turn on another guess. Status code stays 404 so any
 		// existing client-side error UX still triggers; the catalog
@@ -628,8 +667,15 @@ func (b *Broker) handleInvokeSkill(w http.ResponseWriter, r *http.Request) {
 	sk.UsageCount++
 	sk.UpdatedAt = now
 
-	channel := normalizeChannelSlug(body.Channel)
-	if channel == "" {
+	// Raw emptiness so the sk.Channel fallback can actually run: with the
+	// normalise first, an invoke with no body.Channel became "general" and the
+	// skill's OWN channel was never consulted. The final "general" default is an
+	// A_lobby site and is deliberately left for S3.
+	channel := ""
+	if raw := strings.TrimSpace(body.Channel); raw != "" {
+		channel = normalizeChannelSlug(raw)
+	}
+	if channel == "" && strings.TrimSpace(sk.Channel) != "" {
 		channel = normalizeChannelSlug(sk.Channel)
 	}
 	if channel == "" {
@@ -656,7 +702,7 @@ func (b *Broker) handleInvokeSkill(w http.ResponseWriter, r *http.Request) {
 	})
 	b.appendActionLocked("skill_invocation", "office", channel, invoker, truncateSummary(sk.Title+" [invoked]", 140), sk.ID)
 
-	// Dispatch a real task so an agent picks up and executes the skill.
+	// Dispatch a real task so a bot picks up and executes the skill.
 	// This is best-effort: if task creation fails we log and carry on —
 	// the skill_invocation message + action are already recorded.
 	taskID, taskErr := b.createSkillRunTaskLocked(sk, channel, invoker, now)
@@ -685,7 +731,7 @@ func (b *Broker) createSkillRunTaskLocked(sk *teamSkill, channel, invoker, now s
 		owner = strings.TrimSpace(invoker)
 	}
 	if owner == "" {
-		owner = "ceo"
+		owner = "cos"
 	}
 
 	title := strings.TrimSpace(sk.Title)
@@ -722,7 +768,11 @@ func (b *Broker) createSkillRunTaskLocked(sk *teamSkill, channel, invoker, now s
 	if err := b.syncTaskWorktreeLocked(&task); err != nil {
 		return "", fmt.Errorf("syncTaskWorktree: %w", err)
 	}
-	b.ensureTaskOwnerChannelMembershipLocked(channel, task.Owner)
+	// channel is A_lobby-sourced above and left alone; this only stops the
+	// promotion writing into a room that no longer exists once it can be empty.
+	if channel != "" {
+		b.ensureTaskOwnerChannelMembershipLocked(channel, task.Owner)
+	}
 	b.queueTaskBehindActiveOwnerLaneLocked(&task)
 	b.scheduleTaskLifecycleLocked(&task)
 	b.tasks = append(b.tasks, task)
@@ -733,7 +783,7 @@ func (b *Broker) createSkillRunTaskLocked(sk *teamSkill, channel, invoker, now s
 // SeedDefaultSkills pre-populates the broker with the given skill specs.
 // It is idempotent: skills whose name already exists (by slug) are skipped.
 // No production callers remain; tests use it to set up broker skill state.
-func (b *Broker) SeedDefaultSkills(specs []agent.PackSkillSpec) {
+func (b *Broker) SeedDefaultSkills(specs []bot.PackSkillSpec) {
 	if len(specs) == 0 {
 		return
 	}
@@ -760,7 +810,7 @@ func (b *Broker) SeedDefaultSkills(specs []agent.PackSkillSpec) {
 			Description: strings.TrimSpace(spec.Description),
 			Content:     strings.TrimSpace(spec.Content),
 			CreatedBy:   "system",
-			OwnerAgents: b.allMemberSlugsLocked(),
+			OwnerBots:   b.allMemberSlugsLocked(),
 			Tags:        append([]string(nil), spec.Tags...),
 			Trigger:     strings.TrimSpace(spec.Trigger),
 			Status:      "active",

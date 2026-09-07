@@ -162,8 +162,20 @@ export interface Task {
    */
   lifecycle_state?: string;
   execution_mode?: string;
+  /**
+   * RFC3339 timestamp the silent-stall watchdog stamped when this task's
+   * owner went quiet, absent when it is not stalled and cleared automatically
+   * once fresh activity lands (broker_task_stall.go).
+   *
+   * The broker has emitted this on the wire for a while; nothing on the web
+   * read it, so the only delivery for "this went quiet" was a chat post from
+   * a sender called "system" — which the no-system-senders rule retires. The
+   * board is now the only place a stall can surface, so this field is what
+   * that surface reads.
+   */
+  stalled_since?: string;
   /** Per-task LLM runtime set in the new-task composer (model lives on the
-   * task, not the agent). */
+   * task, not the bot). */
   provider?: string;
   model?: string;
   /** Model-specific reasoning-effort level set in the new-task composer. */
@@ -250,7 +262,7 @@ export interface CreateTaskInput {
   execution_mode?: string;
   /**
    * Per-task LLM runtime. The model/provider is a property of the task, not
-   * the agent: dispatch prefers these over the owner's binding. Effort is the
+   * the bot: dispatch prefers these over the owner's binding. Effort is the
    * model-specific reasoning level. Omit any to inherit the owner's binding /
    * the install default.
    */
@@ -283,11 +295,16 @@ export function createTasks(
   tasks: CreateTaskInput[],
   opts?: { channel?: string; createdBy?: string },
 ): Promise<CreateTasksResponse> {
-  return post<CreateTasksResponse>("/task-plan", {
-    channel: opts?.channel || "general",
+  const body: Record<string, unknown> = {
     created_by: opts?.createdBy || "human",
     tasks,
-  }).then((r) => {
+  };
+  // Omit `channel` unless the caller named one. It was `|| "general"`, a room
+  // that no longer exists. The broker routes each task in the plan to its own
+  // assignee's DM, which is a better answer than one shared default anyway.
+  const planChannel = opts?.channel?.trim();
+  if (planChannel) body.channel = planChannel;
+  return post<CreateTasksResponse>("/task-plan", body).then((r) => {
     // One task_created per planned task — properties come from the input, never
     // the task title/details content.
     for (const t of tasks) {
@@ -311,17 +328,65 @@ export function reassignTask(
   channel: string,
   actor = "human",
 ) {
-  return trackOn(
-    post<TaskResponse>("/tasks", {
-      action: "reassign",
-      id: taskId,
-      owner: newOwner,
-      channel: channel || "general",
-      created_by: actor,
-    }),
-    "task_status_changed",
-    { action: "reassign" },
-  );
+  const body: Record<string, string> = {
+    action: "reassign",
+    id: taskId,
+    owner: newOwner,
+    created_by: actor,
+  };
+  // See editTaskFields: send `channel` only when the task has one. A reassign
+  // addresses an existing task by id, so the broker reads the task's own
+  // channel; `|| "general"` only ever pointed at a retired room.
+  const trimmed = channel.trim();
+  if (trimmed) body.channel = trimmed;
+  return trackOn(post<TaskResponse>("/tasks", body), "task_status_changed", {
+    action: "reassign",
+  });
+}
+
+/**
+ * Save a human's edits to a task's name and description.
+ *
+ * FORM SAVE, NOT A PATCH. `title` and `details` are both authoritative and
+ * must carry the COMPLETE value the form holds, changed or not. That is what
+ * makes clearing a description expressible: send `details: ""`. Sending only
+ * the changed field would be wrong twice over — the broker's `edit` case
+ * assigns both unconditionally, and a per-field call would post two separate
+ * change announcements into the channel for one save.
+ *
+ * Carries no lifecycle verb: renaming a task must never move it between board
+ * columns. An empty/whitespace title is rejected by the broker with 400
+ * "title required" — a task must keep a name.
+ *
+ * Authorised for the human and the CEO only (checkTaskActionAuthLocked); a
+ * specialist bot calling this is rejected.
+ *
+ * The broker announces the change itself — it posts one `task_changed`
+ * message tagging the owner. Callers must NOT also post a chat message on
+ * success, or the edit is announced twice.
+ */
+export function editTaskFields(
+  taskId: string,
+  fields: { title: string; details: string },
+  channel: string,
+  actor = "human",
+) {
+  const body: Record<string, string> = {
+    action: "edit",
+    id: taskId,
+    title: fields.title,
+    details: fields.details,
+    created_by: actor,
+  };
+  // Send `channel` only when the task actually has one. This used to be
+  // `channel || "general"`, which is the same laundering the task surfaces
+  // just had removed: a task with no conversation home is not a task in
+  // #general, and asserting otherwise is how an edit lands in a retired room.
+  // The broker resolves an edit against the task's OWN channel and only
+  // consults this as a backstop, so omitting it loses nothing.
+  const trimmed = channel.trim();
+  if (trimmed) body.channel = trimmed;
+  return post<TaskResponse>("/tasks", body);
 }
 
 export type TaskStatusAction =
@@ -353,9 +418,13 @@ export function updateTaskStatus(
   const body: Record<string, string | boolean> = {
     action,
     id: taskId,
-    channel: channel || "general",
     created_by: actor,
   };
+  // See editTaskFields: omit rather than launder an empty channel into the
+  // retired shared room. A status change names the task by id and the broker
+  // authorizes against the task's own channel.
+  const trimmedChannel = channel.trim();
+  if (trimmedChannel) body.channel = trimmedChannel;
   if (options?.memoryWorkflowOverride) {
     body.memory_workflow_override = true;
     body.memory_workflow_override_actor =
@@ -376,10 +445,16 @@ export function getTasks(
   channel: string,
   opts?: { includeDone?: boolean; status?: string; mySlug?: string },
 ) {
-  const params: Record<string, string> = {
-    viewer_slug: "human",
-    channel: channel || "general",
-  };
+  const params: Record<string, string> = { viewer_slug: "human" };
+  // With no channel named, ask across channels rather than filtering on a room
+  // that does not exist. `|| "general"` returned an empty list and looked like
+  // "you have no tasks" instead of "you did not say where to look".
+  const trimmed = channel.trim();
+  if (trimmed) {
+    params.channel = trimmed;
+  } else {
+    params.all_channels = "true";
+  }
   if (opts?.includeDone) params.include_done = "true";
   if (opts?.status) params.status = opts.status;
   if (opts?.mySlug) params.my_slug = opts.mySlug;
@@ -469,14 +544,22 @@ export function getSubTasks(parentTaskId: string) {
 export function createSubTask(opts: {
   parentTaskId: string;
   title: string;
+  /** The parent's conversation home. "" when the parent has none. */
   channel: string;
   details?: string;
   owner?: string;
 }) {
+  // `opts.channel || "general"` filed a sub-task of a homeless parent into
+  // the retired room. Send the channel only when the parent actually has
+  // one. NOTE: this stops the CLIENT asserting a room it does not have; the
+  // broker still normalizes an absent channel to "general" server-side
+  // (normalizeChannelSlug), so the leak only fully closes when the Go guard
+  // lands. Callers should not offer sub-task creation without a channel.
+  const parentChannel = opts.channel.trim();
   return trackOn(
     post<TaskResponse>("/tasks", {
       action: "create",
-      channel: opts.channel || "general",
+      ...(parentChannel ? { channel: parentChannel } : {}),
       title: opts.title,
       details: opts.details || "",
       owner: opts.owner || "",
@@ -499,16 +582,17 @@ export function createSubTask(opts: {
  *  reopens straight into running (owner re-dispatched); an ownerless one
  *  lands ready and dispatches on assignment. */
 export function reopenTask(taskId: string, channel: string) {
-  return trackOn(
-    post<TaskResponse>("/tasks", {
-      action: "reopen",
-      id: taskId,
-      channel: channel || "general",
-      created_by: "human",
-    }),
-    "task_status_changed",
-    { action: "reopen" },
-  );
+  const body: Record<string, string> = {
+    action: "reopen",
+    id: taskId,
+    created_by: "human",
+  };
+  // See editTaskFields: omit an empty channel instead of naming a dead room.
+  const trimmed = channel.trim();
+  if (trimmed) body.channel = trimmed;
+  return trackOn(post<TaskResponse>("/tasks", body), "task_status_changed", {
+    action: "reopen",
+  });
 }
 
 export function getOfficeTasks(opts?: {
@@ -547,17 +631,14 @@ export interface TaskLogEntry {
   completed_at?: number;
 }
 
-export function listAgentLogTasks(opts?: {
-  limit?: number;
-  agentSlug?: string;
-}) {
+export function listBotLogTasks(opts?: { limit?: number; agentSlug?: string }) {
   const params: Record<string, string> = {};
   if (opts?.limit) params.limit = String(opts.limit);
   if (opts?.agentSlug) params.agent = opts.agentSlug;
   return get<{ tasks: TaskLogSummary[] }>("/agent-logs", params);
 }
 
-export function getAgentLogEntries(taskId: string) {
+export function getBotLogEntries(taskId: string) {
   return get<{ task: string; entries: TaskLogEntry[] }>("/agent-logs", {
     task: taskId,
   });

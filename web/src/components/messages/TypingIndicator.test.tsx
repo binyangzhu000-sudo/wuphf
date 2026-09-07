@@ -32,19 +32,19 @@ describe("<TypingIndicator>", () => {
     });
   });
 
-  it("scopes typing to the agents present in the channel", () => {
+  it("scopes typing to the bots present in the channel", () => {
     mockUseCurrentRoute.mockReturnValue({
       kind: "channel",
       channelSlug: "general",
     });
     mockUseOfficeMembers.mockReturnValue({
       data: [
-        { slug: "ceo", name: "CEO", status: "active" },
+        { slug: "cos", name: "CEO", status: "active" },
         { slug: "pm", name: "PM", status: "active" },
       ],
     } as unknown as ReturnType<typeof useOfficeMembers>);
     mockUseChannelMembers.mockReturnValue({
-      data: [{ slug: "ceo", name: "CEO" }],
+      data: [{ slug: "cos", name: "CEO" }],
     } as unknown as ReturnType<typeof useChannelMembers>);
 
     render(<TypingIndicator />);
@@ -66,7 +66,7 @@ describe("<TypingIndicator>", () => {
     });
     mockUseOfficeMembers.mockReturnValue({
       data: [
-        { slug: "ceo", name: "CEO", status: "active" },
+        { slug: "cos", name: "CEO", status: "active" },
         { slug: "pm", name: "PM", status: "active" },
       ],
     } as unknown as ReturnType<typeof useOfficeMembers>);
@@ -83,7 +83,7 @@ describe("<TypingIndicator>", () => {
     expect(screen.queryByText(/CEO/)).not.toBeInTheDocument();
   });
 
-  it("surfaces the live progress detail for a single active agent", () => {
+  it("surfaces the live progress detail for a single active bot", () => {
     mockUseCurrentRoute.mockReturnValue({
       kind: "channel",
       channelSlug: "product",
@@ -142,7 +142,7 @@ describe("<TypingIndicator>", () => {
     mockUseOfficeMembers.mockReturnValue({
       data: [
         {
-          slug: "ceo",
+          slug: "cos",
           name: "CEO",
           status: "active",
           liveActivity: rawToolJSON,
@@ -150,7 +150,7 @@ describe("<TypingIndicator>", () => {
       ],
     } as unknown as ReturnType<typeof useOfficeMembers>);
     mockUseChannelMembers.mockReturnValue({
-      data: [{ slug: "ceo", name: "CEO" }],
+      data: [{ slug: "cos", name: "CEO" }],
     } as unknown as ReturnType<typeof useChannelMembers>);
 
     render(<TypingIndicator />);
@@ -161,7 +161,7 @@ describe("<TypingIndicator>", () => {
     expect(screen.getAllByText("Working…").length).toBeGreaterThan(0);
   });
 
-  it("suppresses the detail when several agents are active to avoid implying shared progress", () => {
+  it("suppresses the detail when several bots are active to avoid implying shared progress", () => {
     mockUseCurrentRoute.mockReturnValue({
       kind: "channel",
       channelSlug: "general",

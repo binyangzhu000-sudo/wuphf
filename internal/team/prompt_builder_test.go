@@ -5,7 +5,7 @@ package team
 // before the type exists, so a compile failure at first run is expected.
 //
 // The aim is twofold: (1) exercise branches that buildPrompt wasn't covering
-// (1:1 mode, codingAgentSlugs branch, headlessSandboxNote, teamVoiceForSlug
+// (1:1 mode, codingBotSlugs branch, headlessSandboxNote, teamVoiceForSlug
 // table) so the new file lands well above the 85% per-file gate, and
 // (2) prove that the new type can be driven without a *Launcher — that's
 // the whole point of the extraction.
@@ -17,7 +17,7 @@ import (
 
 func TestTeamVoiceForSlug_KnownSlugs(t *testing.T) {
 	cases := map[string]string{
-		"ceo":       "Charismatic, decisive",
+		"cos":       "Charismatic, decisive",
 		"pm":        "Sharp product brain",
 		"fe":        "Craft-obsessed",
 		"be":        "Systems-minded",
@@ -144,10 +144,10 @@ func TestPromptBuilder_RendersPriorLearningsWhenMarkdownMemoryActive(t *testing.
 		isOneOnOne:  func() bool { return false },
 		isFocusMode: func() bool { return false },
 		packName:    func() string { return "Test Office" },
-		leadSlug:    func() string { return "ceo" },
+		leadSlug:    func() string { return "cos" },
 		members: func() []officeMember {
 			return []officeMember{
-				{Slug: "ceo", Name: "CEO", Role: "ceo"},
+				{Slug: "cos", Name: "CEO", Role: "cos"},
 				{Slug: "fe", Name: "Frontend", Role: "fe"},
 			}
 		},
@@ -201,16 +201,15 @@ func TestPromptBuilder_OneOnOneBranch(t *testing.T) {
 		isOneOnOne:  func() bool { return true },
 		isFocusMode: func() bool { return false },
 		packName:    func() string { return "1:1 with CEO" },
-		leadSlug:    func() string { return "ceo" },
+		leadSlug:    func() string { return "cos" },
 		members: func() []officeMember {
-			return []officeMember{{Slug: "ceo", Name: "CEO", Role: "ceo", Personality: "decisive"}}
+			return []officeMember{{Slug: "cos", Name: "CEO", Role: "cos", Personality: "decisive"}}
 		},
-		policies:    func() []officePolicy { return nil },
-		nameFor:     func(slug string) string { return slug },
-		nexDisabled: true,
+		policies: func() []officePolicy { return nil },
+		nameFor:  func(slug string) string { return slug },
 	}
 
-	got := pb.Build("ceo")
+	got := pb.Build("cos")
 	if !strings.Contains(got, "direct one-on-one WUPHF session with the human") {
 		t.Fatalf("expected 1:1 banner, got: %s", got)
 	}
@@ -223,8 +222,11 @@ func TestPromptBuilder_OneOnOneBranch(t *testing.T) {
 	if !strings.Contains(got, "team_broadcast: Send a normal direct chat reply") {
 		t.Fatalf("1:1 prompt should describe team_broadcast in 1:1 framing")
 	}
-	if !strings.Contains(got, "Nex tools are disabled for this run") {
-		t.Fatalf("nexDisabled=true should produce the no-Nex 1:1 line")
+	if !strings.Contains(got, "There is no external knowledge graph in this run") {
+		t.Fatalf("a non-markdown 1:1 prompt should say there is no external knowledge graph")
+	}
+	if strings.Contains(got, "Nex") {
+		t.Fatalf("prompt must not mention Nex:\n%s", got)
 	}
 }
 
@@ -233,15 +235,14 @@ func TestPromptBuilder_OneOnOneMarkdownMemoryMentionsHTMLArtifacts(t *testing.T)
 		isOneOnOne:     func() bool { return true },
 		isFocusMode:    func() bool { return false },
 		packName:       func() string { return "1:1 with CEO" },
-		leadSlug:       func() string { return "ceo" },
-		members:        func() []officeMember { return []officeMember{{Slug: "ceo", Name: "CEO", Role: "ceo"}} },
+		leadSlug:       func() string { return "cos" },
+		members:        func() []officeMember { return []officeMember{{Slug: "cos", Name: "CEO", Role: "cos"}} },
 		policies:       func() []officePolicy { return nil },
 		nameFor:        func(slug string) string { return slug },
 		markdownMemory: true,
-		nexDisabled:    true,
 	}
 
-	got := pb.Build("ceo")
+	got := pb.Build("cos")
 	for _, want := range []string{
 		"Markdown wiki memory is active in this 1:1",
 		"visual_artifact_create",
@@ -259,8 +260,8 @@ func TestPromptBuilder_OneOnOneSkipsLearningLookup(t *testing.T) {
 		isOneOnOne:  func() bool { return true },
 		isFocusMode: func() bool { return false },
 		packName:    func() string { return "1:1 with CEO" },
-		leadSlug:    func() string { return "ceo" },
-		members:     func() []officeMember { return []officeMember{{Slug: "ceo", Name: "CEO"}} },
+		leadSlug:    func() string { return "cos" },
+		members:     func() []officeMember { return []officeMember{{Slug: "cos", Name: "CEO"}} },
 		policies:    func() []officePolicy { return nil },
 		nameFor:     func(slug string) string { return slug },
 		learnings: func(slug string) []LearningSearchResult {
@@ -270,26 +271,9 @@ func TestPromptBuilder_OneOnOneSkipsLearningLookup(t *testing.T) {
 		markdownMemory: true,
 	}
 
-	got := pb.Build("ceo")
+	got := pb.Build("cos")
 	if strings.Contains(got, "== PRIOR TEAM LEARNINGS ==") {
 		t.Fatalf("1:1 prompt should not render prior learnings")
-	}
-}
-
-func TestPromptBuilder_OneOnOneNexEnabledMentionsContextGraph(t *testing.T) {
-	pb := &promptBuilder{
-		isOneOnOne:  func() bool { return true },
-		isFocusMode: func() bool { return false },
-		packName:    func() string { return "1:1 with CEO" },
-		leadSlug:    func() string { return "ceo" },
-		members:     func() []officeMember { return []officeMember{{Slug: "ceo", Name: "CEO"}} },
-		policies:    func() []officePolicy { return nil },
-		nameFor:     func(slug string) string { return slug },
-		nexDisabled: false,
-	}
-	got := pb.Build("ceo")
-	if !strings.Contains(got, "query_context") {
-		t.Fatalf("Nex-enabled 1:1 prompt should reference query_context")
 	}
 }
 
@@ -298,10 +282,10 @@ func TestPromptBuilder_MarkdownMemoryPromptsNaturalHTMLArtifactsDuringWork(t *te
 		isOneOnOne:  func() bool { return false },
 		isFocusMode: func() bool { return false },
 		packName:    func() string { return "WUPHF Office" },
-		leadSlug:    func() string { return "ceo" },
+		leadSlug:    func() string { return "cos" },
 		members: func() []officeMember {
 			return []officeMember{
-				{Slug: "ceo", Name: "CEO"},
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "pm", Name: "Product Manager"},
 			}
 		},
@@ -310,7 +294,7 @@ func TestPromptBuilder_MarkdownMemoryPromptsNaturalHTMLArtifactsDuringWork(t *te
 		markdownMemory: true,
 	}
 
-	for _, slug := range []string{"ceo", "pm"} {
+	for _, slug := range []string{"cos", "pm"} {
 		got := pb.Build(slug)
 		for _, want := range []string{
 			"visual_artifact_create",
@@ -334,7 +318,7 @@ func TestPromptBuilder_VisualArtifactSelectivityRulePresentOnEverySurface(t *tes
 	// research/explain/plan request. The 2026-05-29 demo showed that was a
 	// bug: a one-line coffee-pressure question got a full HTML article plus
 	// an unsolicited team_skill_create. The block is now a selectivity
-	// decision tree — agents must judge whether HTML is warranted before
+	// decision tree — bots must judge whether HTML is warranted before
 	// reaching for the tool. This test pins the new shape across every
 	// surface that markdown memory reaches.
 	mkBuilder := func(oneOnOne bool) *promptBuilder {
@@ -342,17 +326,16 @@ func TestPromptBuilder_VisualArtifactSelectivityRulePresentOnEverySurface(t *tes
 			isOneOnOne:  func() bool { return oneOnOne },
 			isFocusMode: func() bool { return false },
 			packName:    func() string { return "WUPHF Office" },
-			leadSlug:    func() string { return "ceo" },
+			leadSlug:    func() string { return "cos" },
 			members: func() []officeMember {
 				return []officeMember{
-					{Slug: "ceo", Name: "CEO", Role: "ceo"},
+					{Slug: "cos", Name: "CEO", Role: "cos"},
 					{Slug: "pm", Name: "Product Manager"},
 				}
 			},
 			policies:       func() []officePolicy { return nil },
 			nameFor:        func(slug string) string { return slug },
 			markdownMemory: true,
-			nexDisabled:    true,
 		}
 	}
 
@@ -361,9 +344,9 @@ func TestPromptBuilder_VisualArtifactSelectivityRulePresentOnEverySurface(t *tes
 		oneOnOne bool
 		slug     string
 	}{
-		{name: "lead/office", oneOnOne: false, slug: "ceo"},
+		{name: "lead/office", oneOnOne: false, slug: "cos"},
 		{name: "specialist/office", oneOnOne: false, slug: "pm"},
-		{name: "lead/one-on-one", oneOnOne: true, slug: "ceo"},
+		{name: "lead/one-on-one", oneOnOne: true, slug: "cos"},
 	}
 	wants := []string{
 		// Selectivity framing — header explicitly says "selectivity, not reflex".
@@ -434,17 +417,16 @@ func TestPromptBuilder_HTMLArtifactFlowIsConsistentAcrossBlocks(t *testing.T) {
 			isOneOnOne:  func() bool { return oneOnOne },
 			isFocusMode: func() bool { return false },
 			packName:    func() string { return "WUPHF Office" },
-			leadSlug:    func() string { return "ceo" },
+			leadSlug:    func() string { return "cos" },
 			members: func() []officeMember {
 				return []officeMember{
-					{Slug: "ceo", Name: "CEO", Role: "ceo"},
+					{Slug: "cos", Name: "CEO", Role: "cos"},
 					{Slug: "pm", Name: "Product Manager"},
 				}
 			},
 			policies:       func() []officePolicy { return nil },
 			nameFor:        func(slug string) string { return slug },
 			markdownMemory: true,
-			nexDisabled:    true,
 		}
 	}
 	cases := []struct {
@@ -452,9 +434,9 @@ func TestPromptBuilder_HTMLArtifactFlowIsConsistentAcrossBlocks(t *testing.T) {
 		oneOnOne bool
 		slug     string
 	}{
-		{name: "lead/office", oneOnOne: false, slug: "ceo"},
+		{name: "lead/office", oneOnOne: false, slug: "cos"},
 		{name: "specialist/office", oneOnOne: false, slug: "pm"},
-		{name: "lead/one-on-one", oneOnOne: true, slug: "ceo"},
+		{name: "lead/one-on-one", oneOnOne: true, slug: "cos"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -479,28 +461,28 @@ func TestPromptBuilder_HTMLArtifactFlowIsConsistentAcrossBlocks(t *testing.T) {
 
 func TestPromptBuilder_ToolSearchAcceptanceLanguagePreserved(t *testing.T) {
 	// Existing behavior we don't want to lose: when claude-code defers tool
-	// schemas, the agent should make ONE ToolSearch call at the start of the
+	// schemas, the bot should make ONE ToolSearch call at the start of the
 	// turn (silently, no narration) and proceed. The schema list it loads is
 	// now pared back — it must NOT preload the genuinely-unsolicited tools
 	// (skill_create, wiki_write) unless the human explicitly asked. team_task
 	// is NO LONGER in the ban: Rule Zero requires team_task action=create as
 	// the FIRST tool call on a work-shaped request, so banning its schema
-	// would forbid loading a tool the agent is mandated to use.
+	// would forbid loading a tool the bot is mandated to use.
 	pb := &promptBuilder{
 		isOneOnOne:  func() bool { return false },
 		isFocusMode: func() bool { return false },
 		packName:    func() string { return "WUPHF Office" },
-		leadSlug:    func() string { return "ceo" },
+		leadSlug:    func() string { return "cos" },
 		members: func() []officeMember {
 			return []officeMember{
-				{Slug: "ceo", Name: "CEO"},
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "pm", Name: "Product Manager"},
 			}
 		},
 		policies: func() []officePolicy { return nil },
 		nameFor:  func(slug string) string { return slug },
 	}
-	for _, slug := range []string{"ceo", "pm"} {
+	for _, slug := range []string{"cos", "pm"} {
 		got := pb.Build(slug)
 		for _, want := range []string{
 			"claude-code defers their schemas behind a built-in ToolSearch tool",
@@ -509,7 +491,11 @@ func TestPromptBuilder_ToolSearchAcceptanceLanguagePreserved(t *testing.T) {
 			"Load ONLY the schemas you actually plan to use",
 			"Do NOT preload team_wiki_write",
 			"Never call ToolSearch a second time in the same turn",
-			"Do NOT narrate the tool-loading process",
+			// The tooling-narration ban stayed; what changed is that it no
+			// longer also forbids the one line of human-facing text that
+			// keeps the first message from being pure tool calls.
+			"What is still banned is narrating your TOOLING",
+			"OPEN WITH ONE LINE ABOUT THE WORK",
 		} {
 			if !strings.Contains(got, want) {
 				t.Fatalf("%s prompt missing ToolSearch language %q", slug, want)
@@ -529,7 +515,7 @@ func TestPromptBuilder_ToolSearchAcceptanceLanguagePreserved(t *testing.T) {
 
 func TestPromptBuilder_UnsolicitedToolBanIsExplicit(t *testing.T) {
 	// Live demo failure 2026-05-29: after answering a coffee question, the
-	// agent self-codified a skill and called team_task to mark a task
+	// bot self-codified a skill and called team_task to mark a task
 	// complete. Neither was requested. team_skill_create is gone entirely
 	// (core-loop R5); pin the ban on the remaining tools plus the absence
 	// of any skill-creation tool mention.
@@ -537,19 +523,18 @@ func TestPromptBuilder_UnsolicitedToolBanIsExplicit(t *testing.T) {
 		isOneOnOne:  func() bool { return false },
 		isFocusMode: func() bool { return false },
 		packName:    func() string { return "WUPHF Office" },
-		leadSlug:    func() string { return "ceo" },
+		leadSlug:    func() string { return "cos" },
 		members: func() []officeMember {
 			return []officeMember{
-				{Slug: "ceo", Name: "CEO"},
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "pm", Name: "Product Manager"},
 			}
 		},
 		policies:       func() []officePolicy { return nil },
 		nameFor:        func(slug string) string { return slug },
 		markdownMemory: true,
-		nexDisabled:    true,
 	}
-	for _, slug := range []string{"ceo", "pm"} {
+	for _, slug := range []string{"cos", "pm"} {
 		got := pb.Build(slug)
 		// Ban must apply to the remaining tool families.
 		for _, want := range []string{
@@ -578,14 +563,13 @@ func TestPromptBuilder_VisualArtifactForcingRuleSkippedWithoutMarkdownMemory(t *
 			isOneOnOne:  func() bool { return oneOnOne },
 			isFocusMode: func() bool { return false },
 			packName:    func() string { return "WUPHF Office" },
-			leadSlug:    func() string { return "ceo" },
+			leadSlug:    func() string { return "cos" },
 			members: func() []officeMember {
-				return []officeMember{{Slug: "ceo", Name: "CEO", Role: "ceo"}, {Slug: "pm", Name: "PM"}}
+				return []officeMember{{Slug: "cos", Name: "CEO", Role: "cos"}, {Slug: "pm", Name: "PM"}}
 			},
 			policies:       func() []officePolicy { return nil },
 			nameFor:        func(slug string) string { return slug },
 			markdownMemory: false,
-			nexDisabled:    true,
 		}
 	}
 	cases := []struct {
@@ -593,9 +577,9 @@ func TestPromptBuilder_VisualArtifactForcingRuleSkippedWithoutMarkdownMemory(t *
 		oneOnOne bool
 		slug     string
 	}{
-		{name: "lead/office", oneOnOne: false, slug: "ceo"},
+		{name: "lead/office", oneOnOne: false, slug: "cos"},
 		{name: "specialist/office", oneOnOne: false, slug: "pm"},
-		{name: "lead/one-on-one", oneOnOne: true, slug: "ceo"},
+		{name: "lead/one-on-one", oneOnOne: true, slug: "cos"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -612,17 +596,17 @@ func TestPromptBuilder_LeadFocusModeAddsDelegationSection(t *testing.T) {
 		isOneOnOne:  func() bool { return false },
 		isFocusMode: func() bool { return true },
 		packName:    func() string { return "WUPHF Office" },
-		leadSlug:    func() string { return "ceo" },
+		leadSlug:    func() string { return "cos" },
 		members: func() []officeMember {
 			return []officeMember{
-				{Slug: "ceo", Name: "CEO"},
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "fe", Name: "Frontend"},
 			}
 		},
 		policies: func() []officePolicy { return nil },
 		nameFor:  func(slug string) string { return slug },
 	}
-	got := pb.Build("ceo")
+	got := pb.Build("cos")
 	if !strings.Contains(got, "== DELEGATION MODE ==") {
 		t.Fatalf("expected lead delegation block when focus mode is on")
 	}
@@ -636,10 +620,10 @@ func TestPromptBuilder_SpecialistFocusModeAddsDelegationSection(t *testing.T) {
 		isOneOnOne:  func() bool { return false },
 		isFocusMode: func() bool { return true },
 		packName:    func() string { return "WUPHF Office" },
-		leadSlug:    func() string { return "ceo" },
+		leadSlug:    func() string { return "cos" },
 		members: func() []officeMember {
 			return []officeMember{
-				{Slug: "ceo", Name: "CEO"},
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "fe", Name: "Frontend"},
 			}
 		},
@@ -650,22 +634,22 @@ func TestPromptBuilder_SpecialistFocusModeAddsDelegationSection(t *testing.T) {
 	if !strings.Contains(got, "Delegation mode is enabled") {
 		t.Fatalf("expected specialist delegation block when focus mode is on")
 	}
-	if !strings.Contains(got, "report completion, blockers, or handoff notes back to @ceo") {
+	if !strings.Contains(got, "report completion, blockers, or handoff notes back to @cos") {
 		t.Fatalf("expected specialist hand-off back-to-CEO instruction")
 	}
 }
 
 func TestPromptBuilder_SpecialistCodingAgentRequiresGhPRCreate(t *testing.T) {
-	// codingAgentSlugs (eng/be/fe/etc.) get the explicit "actually open the
+	// codingBotSlugs (eng/be/fe/etc.) get the explicit "actually open the
 	// PR" instruction. Verify that branch fires for an eng specialist.
 	pb := &promptBuilder{
 		isOneOnOne:  func() bool { return false },
 		isFocusMode: func() bool { return false },
 		packName:    func() string { return "WUPHF Office" },
-		leadSlug:    func() string { return "ceo" },
+		leadSlug:    func() string { return "cos" },
 		members: func() []officeMember {
 			return []officeMember{
-				{Slug: "ceo", Name: "CEO"},
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "eng", Name: "Engineer"},
 			}
 		},
@@ -674,10 +658,10 @@ func TestPromptBuilder_SpecialistCodingAgentRequiresGhPRCreate(t *testing.T) {
 	}
 	got := pb.Build("eng")
 	if !strings.Contains(got, "gh pr create") {
-		t.Fatalf("coding-agent specialist prompt must require running gh pr create, got: %s", got)
+		t.Fatalf("coding-bot specialist prompt must require running gh pr create, got: %s", got)
 	}
 	if !strings.Contains(got, "https://github.com/...") {
-		t.Fatalf("coding-agent specialist prompt must require pasting the returned URL")
+		t.Fatalf("coding-bot specialist prompt must require pasting the returned URL")
 	}
 }
 
@@ -686,10 +670,10 @@ func TestPromptBuilder_SpecialistNonCodingAgentOmitsGhPRRequirement(t *testing.T
 		isOneOnOne:  func() bool { return false },
 		isFocusMode: func() bool { return false },
 		packName:    func() string { return "WUPHF Office" },
-		leadSlug:    func() string { return "ceo" },
+		leadSlug:    func() string { return "cos" },
 		members: func() []officeMember {
 			return []officeMember{
-				{Slug: "ceo", Name: "CEO"},
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "designer", Name: "Designer"},
 			}
 		},
@@ -707,8 +691,8 @@ func TestPromptBuilder_LeadIncludesActivePoliciesSorted(t *testing.T) {
 		isOneOnOne:  func() bool { return false },
 		isFocusMode: func() bool { return false },
 		packName:    func() string { return "WUPHF Office" },
-		leadSlug:    func() string { return "ceo" },
-		members:     func() []officeMember { return []officeMember{{Slug: "ceo", Name: "CEO"}} },
+		leadSlug:    func() string { return "cos" },
+		members:     func() []officeMember { return []officeMember{{Slug: "cos", Name: "CEO"}} },
 		// Caller is responsible for passing pre-sorted policies (matches the
 		// existing buildPrompt behaviour). The block formatting itself is
 		// what we're asserting here.
@@ -720,7 +704,7 @@ func TestPromptBuilder_LeadIncludesActivePoliciesSorted(t *testing.T) {
 		},
 		nameFor: func(slug string) string { return slug },
 	}
-	got := pb.Build("ceo")
+	got := pb.Build("cos")
 	if !strings.Contains(got, "== ACTIVE OFFICE POLICIES ==") {
 		t.Fatalf("expected active policies banner")
 	}
@@ -739,7 +723,7 @@ func TestPromptBuilder_LeadIncludesActivePoliciesSorted(t *testing.T) {
 }
 
 func TestMarkdownKnowledgeToolBlock_HumanRememberAutoRoutingNote(t *testing.T) {
-	// PR 7 edit 1: the memory guidance must warn agents that the
+	// PR 7 edit 1: the memory guidance must warn bots that the
 	// broker auto-routes human "remember this" / "save to wiki" phrases so
 	// they do not duplicate the write. PR 2 originally added this copy; PR 7
 	// keeps it as a regression gate.
@@ -755,20 +739,30 @@ func TestMarkdownKnowledgeToolBlock_HumanRememberAutoRoutingNote(t *testing.T) {
 	}
 }
 
-func TestPromptBuilder_LibrarianOwnsWikiReviewCEODelegates(t *testing.T) {
-	// Phase 4: wiki promotion/review authority moved from the CEO to the
-	// Librarian. The Librarian prompt mentions team_notebook_review + the demand
-	// signal; the CEO prompt no longer runs review itself and instead delegates
-	// to @librarian.
+// TestPromptBuilder_NoAgentOwnsTheWikiPromotionNeedsAHuman is the INVERSION of
+// the test that stood here ("the Librarian owns wiki review, the CEO
+// delegates").
+//
+// Phase 4 gave wiki authority to a Librarian bot, and the prompt builder
+// special-cased that slug with a WIKI OWNERSHIP block naming it the sole writer
+// of canonical knowledge. The Librarian is retired as a default bot, so there
+// is no sole writer to hand authority to. Wiki contribution is a system skill
+// every bot carries, and what gates canonical knowledge is now a HUMAN
+// approving the promotion — not a bot's job title.
+//
+// Inverted rather than deleted because the special case is the regression risk:
+// a slug-keyed branch that hands one bot authority over everyone else's
+// knowledge is exactly what this must not grow back.
+func TestPromptBuilder_NoAgentOwnsTheWikiPromotionNeedsAHuman(t *testing.T) {
 	mk := func() *promptBuilder {
 		return &promptBuilder{
 			isOneOnOne:  func() bool { return false },
 			isFocusMode: func() bool { return false },
 			packName:    func() string { return "WUPHF Office" },
-			leadSlug:    func() string { return "ceo" },
+			leadSlug:    func() string { return "cos" },
 			members: func() []officeMember {
 				return []officeMember{
-					{Slug: "ceo", Name: "CEO"},
+					{Slug: "cos", Name: "CEO"},
 					{Slug: LibrarianSlug, Name: librarianName, Role: librarianRole},
 					{Slug: "fe", Name: "Frontend"},
 				}
@@ -780,23 +774,44 @@ func TestPromptBuilder_LibrarianOwnsWikiReviewCEODelegates(t *testing.T) {
 	}
 
 	lib := mk().Build(LibrarianSlug)
-	for _, want := range []string{
-		"WIKI OWNERSHIP (you are the Librarian)",
-		"You own the team's wiki",
-	} {
-		if !strings.Contains(lib, want) {
-			t.Errorf("Librarian prompt missing wiki-authority fragment %q", want)
+	fe := mk().Build("fe")
+	cos := mk().Build("cos")
+
+	// 1. The ownership block is gone from EVERY prompt, including the slug it
+	//    used to be keyed on.
+	for name, prompt := range map[string]string{"librarian": lib, "fe": fe, "cos": cos} {
+		for _, banned := range []string{
+			"WIKI OWNERSHIP (you are the Librarian)",
+			"You own the team's wiki",
+		} {
+			if strings.Contains(prompt, banned) {
+				t.Errorf("%s prompt still carries the retired wiki-ownership block %q", name, banned)
+			}
 		}
 	}
 
-	ceo := mk().Build("ceo")
-	if strings.Contains(ceo, "WIKI OWNERSHIP (you are the Librarian)") {
-		t.Errorf("CEO prompt must not carry the Librarian's wiki-ownership block")
+	// 2. A workspace that still holds a legacy bot on the "librarian" slug
+	//    gets the ordinary specialist prompt. Compared against another
+	//    specialist so the assertion fails if any slug-keyed branch returns:
+	//    the two differ only in the bot's own identity lines.
+	if lib == fe {
+		t.Fatal("librarian and fe prompts are byte-identical; the fixture is not exercising per-bot rendering")
 	}
-	if !strings.Contains(ceo, "tag @librarian (Pam) to capture it into the team wiki") {
-		t.Errorf("CEO prompt should hand durable knowledge capture to @librarian")
+	for _, shared := range []string{
+		"Use wuphf_wiki_lookup or team_wiki_search when prior knowledge matters",
+		"Promotion into the canonical wiki requires human approval",
+	} {
+		if !strings.Contains(lib, shared) {
+			t.Errorf("librarian prompt missing the shared wiki rule %q: a special case is back", shared)
+		}
+		if !strings.Contains(fe, shared) {
+			t.Errorf("specialist prompt missing the shared wiki rule %q", shared)
+		}
 	}
-	if strings.Contains(ceo, "team_notebook_review") {
+
+	// 3. Still true, and still worth pinning: the lead does not run notebook
+	//    review itself with a tool that no longer exists.
+	if strings.Contains(cos, "team_notebook_review") {
 		t.Errorf("CEO prompt must not reference the removed team_notebook_review tool")
 	}
 }
@@ -808,10 +823,10 @@ func TestPromptBuilder_NonCEOOmitsTeamNotebookReview(t *testing.T) {
 		isOneOnOne:  func() bool { return false },
 		isFocusMode: func() bool { return false },
 		packName:    func() string { return "WUPHF Office" },
-		leadSlug:    func() string { return "ceo" },
+		leadSlug:    func() string { return "cos" },
 		members: func() []officeMember {
 			return []officeMember{
-				{Slug: "ceo", Name: "CEO"},
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "fe", Name: "Frontend"},
 			}
 		},
@@ -834,10 +849,10 @@ func TestPromptBuilder_DurableKnowledgeRoutesThroughLibrarian(t *testing.T) {
 			isOneOnOne:  func() bool { return false },
 			isFocusMode: func() bool { return false },
 			packName:    func() string { return "WUPHF Office" },
-			leadSlug:    func() string { return "ceo" },
+			leadSlug:    func() string { return "cos" },
 			members: func() []officeMember {
 				return []officeMember{
-					{Slug: "ceo", Name: "CEO"},
+					{Slug: "cos", Name: "CEO"},
 					{Slug: "fe", Name: "Frontend"},
 				}
 			},
@@ -846,7 +861,7 @@ func TestPromptBuilder_DurableKnowledgeRoutesThroughLibrarian(t *testing.T) {
 			markdownMemory: true,
 		}
 	}
-	for _, slug := range []string{"ceo", "fe"} {
+	for _, slug := range []string{"cos", "fe"} {
 		got := mk().Build(slug)
 		if !strings.Contains(got, "@librarian") {
 			t.Errorf("%s prompt should route durable knowledge through @librarian", slug)
@@ -874,14 +889,14 @@ func TestPromptBuilder_DeterministicOrderingFromMembers(t *testing.T) {
 			isOneOnOne:  func() bool { return false },
 			isFocusMode: func() bool { return false },
 			packName:    func() string { return "WUPHF Office" },
-			leadSlug:    func() string { return "ceo" },
+			leadSlug:    func() string { return "cos" },
 			members:     func() []officeMember { return members },
 			policies:    func() []officePolicy { return nil },
 			nameFor:     func(slug string) string { return slug },
 		}
 	}
-	a := mk([]string{"ceo", "eng", "fe"}).Build("ceo")
-	b := mk([]string{"fe", "ceo", "eng"}).Build("ceo")
+	a := mk([]string{"cos", "eng", "fe"}).Build("cos")
+	b := mk([]string{"fe", "cos", "eng"}).Build("cos")
 	if a != b {
 		t.Fatalf("promptBuilder.Build is not deterministic across member input orderings.\nA len=%d\nB len=%d", len(a), len(b))
 	}
@@ -891,7 +906,7 @@ func TestPromptBuilder_DeterministicOrderingFromMembers(t *testing.T) {
 // non-trivial Issue spec must ship with an HTML artifact reference inside
 // the `details` field. The FE's IssueDescription renders that artifact
 // inline above the markdown body via the same RichArtifactEmbed pipeline
-// wiki articles use — without this prompt language, agents fall back to
+// wiki articles use — without this prompt language, bots fall back to
 // pasting a wall of markdown into details and the inline-embed surface
 // never gets exercised.
 func TestVisualArtifactForcingBlock_CoversIssueSpecs(t *testing.T) {
@@ -913,26 +928,26 @@ func TestVisualArtifactForcingBlock_CoversIssueSpecs(t *testing.T) {
 }
 
 // TestPromptBuilder_PoliciesFilteredByAgentAssignment pins the B3
-// always-loaded contract for policies: a policy scoped to another agent
-// stays OUT of this agent's prompt; nil-scope (all agents) and own-scope
+// always-loaded contract for policies: a policy scoped to another bot
+// stays OUT of this bot's prompt; nil-scope (all bots) and own-scope
 // policies are rendered.
 func TestPromptBuilder_PoliciesFilteredByAgentAssignment(t *testing.T) {
 	pb := &promptBuilder{
 		isOneOnOne:  func() bool { return false },
 		isFocusMode: func() bool { return false },
 		packName:    func() string { return "WUPHF Office" },
-		leadSlug:    func() string { return "ceo" },
+		leadSlug:    func() string { return "cos" },
 		members: func() []officeMember {
 			return []officeMember{
-				{Slug: "ceo", Name: "CEO"},
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "eng", Name: "Engineer"},
 			}
 		},
 		policies: func() []officePolicy {
 			return []officePolicy{
 				{ID: "a", Rule: "applies to everyone"},
-				{ID: "b", Rule: "eng-only deploy checklist", Agents: []string{"eng"}},
-				{ID: "c", Rule: "ceo-only hiring review", Agents: []string{"ceo"}},
+				{ID: "b", Rule: "eng-only deploy checklist", Bots: []string{"eng"}},
+				{ID: "c", Rule: "ceo-only hiring review", Bots: []string{"cos"}},
 			}
 		},
 		nameFor: func(slug string) string { return slug },
@@ -940,15 +955,15 @@ func TestPromptBuilder_PoliciesFilteredByAgentAssignment(t *testing.T) {
 
 	eng := pb.Build("eng")
 	if !strings.Contains(eng, "applies to everyone") || !strings.Contains(eng, "eng-only deploy checklist") {
-		t.Fatalf("eng prompt must carry all-agents + eng-scoped policies:\n%s", eng)
+		t.Fatalf("eng prompt must carry all-bots + eng-scoped policies:\n%s", eng)
 	}
 	if strings.Contains(eng, "ceo-only hiring review") {
-		t.Fatalf("eng prompt must NOT carry a policy scoped to another agent")
+		t.Fatalf("eng prompt must NOT carry a policy scoped to another bot")
 	}
 
-	ceo := pb.Build("ceo")
-	if !strings.Contains(ceo, "ceo-only hiring review") || strings.Contains(ceo, "eng-only deploy checklist") {
-		t.Fatalf("ceo prompt scope filter broken:\n%s", ceo)
+	cos := pb.Build("cos")
+	if !strings.Contains(cos, "ceo-only hiring review") || strings.Contains(cos, "eng-only deploy checklist") {
+		t.Fatalf("cos prompt scope filter broken:\n%s", cos)
 	}
 }
 
@@ -976,17 +991,17 @@ func TestPromptBuilder_GroundingBlockOnLeadAndSpecialist(t *testing.T) {
 		isOneOnOne:  func() bool { return false },
 		isFocusMode: func() bool { return false },
 		packName:    func() string { return "Test Office" },
-		leadSlug:    func() string { return "ceo" },
+		leadSlug:    func() string { return "cos" },
 		members: func() []officeMember {
 			return []officeMember{
-				{Slug: "ceo", Name: "CEO", Role: "ceo"},
+				{Slug: "cos", Name: "CEO", Role: "cos"},
 				{Slug: "eng", Name: "Engineer", Role: "eng"},
 			}
 		},
 		policies: func() []officePolicy { return nil },
 		nameFor:  func(slug string) string { return slug },
 	}
-	for _, slug := range []string{"ceo", "eng"} {
+	for _, slug := range []string{"cos", "eng"} {
 		if got := pb.Build(slug); !strings.Contains(got, "== GROUNDING") {
 			t.Errorf("prompt for %q missing the grounding block", slug)
 		}
@@ -1022,17 +1037,17 @@ func TestPromptBuilder_DestructiveVCSGuardOnLeadAndSpecialist(t *testing.T) {
 		isOneOnOne:  func() bool { return false },
 		isFocusMode: func() bool { return false },
 		packName:    func() string { return "Test Office" },
-		leadSlug:    func() string { return "ceo" },
+		leadSlug:    func() string { return "cos" },
 		members: func() []officeMember {
 			return []officeMember{
-				{Slug: "ceo", Name: "CEO", Role: "ceo"},
+				{Slug: "cos", Name: "CEO", Role: "cos"},
 				{Slug: "eng", Name: "Engineer", Role: "eng"},
 			}
 		},
 		policies: func() []officePolicy { return nil },
 		nameFor:  func(slug string) string { return slug },
 	}
-	for _, slug := range []string{"ceo", "eng"} {
+	for _, slug := range []string{"cos", "eng"} {
 		if got := pb.Build(slug); !strings.Contains(got, "== DESTRUCTIVE GIT GUARD") {
 			t.Errorf("prompt for %q missing the destructive git guard", slug)
 		}

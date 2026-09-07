@@ -118,10 +118,10 @@ func (b *Broker) createSlackChannel(channelID, name string) (*teamChannel, error
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// Every adopted office member joins (ceo is prepended by createChannelLocked).
+	// Every adopted office member joins (cos is prepended by createChannelLocked).
 	members := make([]string, 0, len(b.members))
 	for _, m := range b.members {
-		if m.Slug != "" && m.Slug != "ceo" {
+		if m.Slug != "" && m.Slug != "cos" {
 			members = append(members, m.Slug)
 		}
 	}
@@ -185,9 +185,12 @@ func isSlackChannelID(s string) bool {
 // prefixed "slack-" so Slack channels are visually grouped and never collide
 // with a same-named native channel.
 func slackChannelSlug(name string) string {
-	s := normalizeChannelSlug(name)
-	if s == "" {
-		s = "channel"
+	// Raw emptiness before normalising: an unnamed Slack channel became
+	// "general" here, so the "channel" default never applied and the bridge was
+	// minted as "slack-general" instead of "slack-channel".
+	s := "channel"
+	if strings.TrimSpace(name) != "" {
+		s = normalizeChannelSlug(name)
 	}
 	if !strings.HasPrefix(s, "slack-") {
 		s = "slack-" + s

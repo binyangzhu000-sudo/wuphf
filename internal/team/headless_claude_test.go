@@ -2,24 +2,24 @@ package team
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
-	"github.com/nex-crm/wuphf/internal/agent"
+	"github.com/nex-crm/wuphf/internal/bot"
 	"github.com/nex-crm/wuphf/internal/provider"
 )
 
 // minimalLauncher builds a Launcher with a predictable two-member pack so
-// officeLeadSlug() always returns "ceo".
+// officeLeadSlug() always returns "cos".
 func minimalLauncher(opusCEO bool) *Launcher {
 	return &Launcher{
-		pack: &agent.PackDefinition{
-			LeadSlug: "ceo",
-			Agents: []agent.AgentConfig{
-				{Slug: "ceo", Name: "CEO"},
+		pack: &bot.PackDefinition{
+			LeadSlug: "cos",
+			Bots: []bot.BotConfig{
+				{Slug: "cos", Name: "CEO"},
 				{Slug: "eng", Name: "Engineer"},
 				{Slug: "pm", Name: "Product Manager"},
 			},
@@ -36,28 +36,28 @@ func minimalLauncher(opusCEO bool) *Launcher {
 // ─── headlessClaudeMaxTurns ───────────────────────────────────────────────
 
 // TestHeadlessClaudeMaxTurns_AppBuilderGetsBuildHeadroom pins the fix for the
-// App Builder running out of turns mid-build: a coding/build agent needs far
+// App Builder running out of turns mid-build: a coding/build bot needs far
 // more than a chat specialist's budget.
 func TestHeadlessClaudeMaxTurns_AppBuilderGetsBuildHeadroom(t *testing.T) {
 	l := minimalLauncher(false)
-	if got := l.headlessClaudeMaxTurns(appBuilderSlug); got != "60" {
+	if got := l.headlessClaudeMaxTurns(appBuilderSlug, ""); got != "60" {
 		t.Fatalf("app-builder max turns = %s, want 60 (build headroom)", got)
 	}
-	if got := l.headlessClaudeMaxTurns("ceo"); got != "30" {
+	if got := l.headlessClaudeMaxTurns("cos", ""); got != "30" {
 		t.Fatalf("lead max turns = %s, want 30", got)
 	}
-	if got := l.headlessClaudeMaxTurns("pm"); got != "15" {
+	if got := l.headlessClaudeMaxTurns("pm", ""); got != "15" {
 		t.Fatalf("chat specialist max turns = %s, want 15", got)
 	}
 }
 
 // ─── headlessClaudeModel ──────────────────────────────────────────────────
 
-// TestHeadlessClaudeModel_SonnetByDefault verifies that every agent, including
+// TestHeadlessClaudeModel_SonnetByDefault verifies that every bot, including
 // the lead, uses the Sonnet model when opusCEO is false.
 func TestHeadlessClaudeModel_SonnetByDefault(t *testing.T) {
 	l := minimalLauncher(false)
-	for _, slug := range []string{"ceo", "eng", "pm"} {
+	for _, slug := range []string{"cos", "eng", "pm"} {
 		t.Run(slug, func(t *testing.T) {
 			if got := l.headlessClaudeModel(context.Background(), slug); got != "claude-sonnet-4-6" {
 				t.Fatalf("slug=%q opusCEO=false: want claude-sonnet-4-6, got %q", slug, got)
@@ -67,14 +67,14 @@ func TestHeadlessClaudeModel_SonnetByDefault(t *testing.T) {
 }
 
 // TestHeadlessClaudeModel_OpusForLeadOnly verifies that only the lead (CEO)
-// gets upgraded to Opus when opusCEO is true; non-lead agents stay on Sonnet.
+// gets upgraded to Opus when opusCEO is true; non-lead bots stay on Sonnet.
 func TestHeadlessClaudeModel_OpusForLeadOnly(t *testing.T) {
 	l := minimalLauncher(true)
 	tests := []struct {
 		slug string
 		want string
 	}{
-		{"ceo", "claude-opus-4-8"},
+		{"cos", "claude-opus-4-8"},
 		{"eng", "claude-sonnet-4-6"},
 		{"pm", "claude-sonnet-4-6"},
 	}
@@ -88,13 +88,13 @@ func TestHeadlessClaudeModel_OpusForLeadOnly(t *testing.T) {
 }
 
 // TestHeadlessClaudeModel_CustomLeadSlug verifies model selection when the
-// pack defines a non-"ceo" lead slug. No broker is constructed, so
+// pack defines a non-"cos" lead slug. No broker is constructed, so
 // officeMembersSnapshot() falls through to the pack definition.
 func TestHeadlessClaudeModel_CustomLeadSlug(t *testing.T) {
 	l := &Launcher{
-		pack: &agent.PackDefinition{
+		pack: &bot.PackDefinition{
 			LeadSlug: "captain",
-			Agents: []agent.AgentConfig{
+			Bots: []bot.BotConfig{
 				{Slug: "captain", Name: "Captain"},
 				{Slug: "crew", Name: "Crew"},
 			},
@@ -124,7 +124,7 @@ func TestHeadlessClaudeModel_CustomLeadSlug(t *testing.T) {
 }
 
 // TestHeadlessClaudeModel_PerAgentBindingOverride covers the broker-driven
-// override path that ships with the AgentProfilePanel runtime picker. When
+// override path that ships with the BotProfilePanel runtime picker. When
 // a member has ProviderBinding{Kind: "claude-code", Model: "<custom>"},
 // the next claude turn must dispatch against <custom>, not the hardcoded
 // opus/sonnet default. The kind guard also matters: a stale Model left
@@ -224,12 +224,12 @@ func TestRunHeadlessClaudeTurn_NoResumeFlag(t *testing.T) {
 		return exec.CommandContext(ctx, "/bin/true")
 	}
 
-	b := NewBrokerAt(filepath.Join(tmpDir, "broker-state.json"))
+	b := newBrokerWithTeamRoom(filepath.Join(tmpDir, "broker-state.json"))
 	l := minimalLauncher(false)
 	l.broker = b
 	l.cwd = tmpDir
 
-	// Write a valid (empty) MCP config so ensureAgentMCPConfig succeeds.
+	// Write a valid (empty) MCP config so ensureBotMCPConfig succeeds.
 	mcpPath := filepath.Join(tmpDir, "mcp.json")
 	_ = os.WriteFile(mcpPath, []byte(`{"mcpServers":{}}`), 0o600)
 	l.mcpConfig = mcpPath
@@ -248,89 +248,9 @@ func TestRunHeadlessClaudeTurn_NoResumeFlag(t *testing.T) {
 	}
 }
 
-// ─── MCP manifest: no-nex mode ────────────────────────────────────────────
-
 // TestBuildMCPServerMap_NoNexExcludesNexServer verifies that when
 // WUPHF_NO_NEX=true the built server map contains no "nex" entry, even if a
 // non-empty API key is present.
-func TestBuildMCPServerMap_NoNexExcludesNexServer(t *testing.T) {
-	t.Setenv("WUPHF_NO_NEX", "true")
-	// Provide a non-empty API key so we would enter the nex branch if WUPHF_NO_NEX
-	// were not checked.
-	t.Setenv("WUPHF_API_KEY", "test-key-12345")
-
-	l := minimalLauncher(false)
-	servers, err := l.buildMCPServerMap()
-	if err != nil {
-		t.Fatalf("buildMCPServerMap: %v", err)
-	}
-	if _, ok := servers["nex"]; ok {
-		t.Fatalf("'nex' server must be absent when WUPHF_NO_NEX=true, got servers: %v", mapKeys(servers))
-	}
-	// wuphf-office must always be present regardless of no-nex mode.
-	if _, ok := servers["wuphf-office"]; !ok {
-		t.Fatalf("'wuphf-office' server must always be present, got servers: %v", mapKeys(servers))
-	}
-}
-
-// TestEnsureAgentMCPConfig_NoNexEntryInWrittenFile verifies that the per-agent
-// MCP config file written to disk contains no "nex" key when WUPHF_NO_NEX=true.
-func TestEnsureAgentMCPConfig_NoNexEntryInWrittenFile(t *testing.T) {
-	t.Setenv("WUPHF_NO_NEX", "true")
-	t.Setenv("WUPHF_API_KEY", "test-key-12345")
-
-	l := minimalLauncher(false)
-	path, err := l.ensureAgentMCPConfig("ceo")
-	if err != nil {
-		t.Fatalf("ensureAgentMCPConfig: %v", err)
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read MCP config file: %v", err)
-	}
-	var cfg struct {
-		MCPServers map[string]any `json:"mcpServers"`
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		t.Fatalf("parse MCP config: %v", err)
-	}
-	if _, hasNex := cfg.MCPServers["nex"]; hasNex {
-		t.Fatalf("'nex' server must be absent in written MCP config when WUPHF_NO_NEX=true, got servers: %v", mapKeys(cfg.MCPServers))
-	}
-}
-
-// TestBuildMCPServerMap_NexCredentialsFlowThroughOffice verifies that the office
-// MCP server now owns shared-memory access, so Nex credentials flow through the
-// wuphf-office server instead of mounting a raw nex MCP server.
-func TestBuildMCPServerMap_NexCredentialsFlowThroughOffice(t *testing.T) {
-	t.Setenv("WUPHF_CONFIG_PATH", filepath.Join(t.TempDir(), "config.json"))
-	t.Setenv("WUPHF_NO_NEX", "")
-	t.Setenv("WUPHF_MEMORY_BACKEND", "nex")
-	t.Setenv("WUPHF_API_KEY", "test-key-12345")
-
-	l := minimalLauncher(false)
-	servers, err := l.buildMCPServerMap()
-	if err != nil {
-		t.Fatalf("buildMCPServerMap: %v", err)
-	}
-	entry, ok := servers["wuphf-office"]
-	if !ok {
-		t.Fatalf("'wuphf-office' server must be present, got servers: %v", mapKeys(servers))
-	}
-	server, ok := entry.(map[string]any)
-	if !ok {
-		t.Fatalf("expected wuphf-office entry to be an object, got %T", entry)
-	}
-	env, ok := server["env"].(map[string]string)
-	if !ok {
-		t.Fatalf("expected office env map, got %#v", server["env"])
-	}
-	if env["WUPHF_API_KEY"] != "test-key-12345" || env["NEX_API_KEY"] != "test-key-12345" {
-		t.Fatalf("expected Nex credentials on office server, got %#v", env)
-	}
-}
-
 func TestBuildMCPServerMap_GBrainCredentialsFlowThroughOffice(t *testing.T) {
 	t.Setenv("WUPHF_MEMORY_BACKEND", "gbrain")
 	t.Setenv("WUPHF_OPENAI_API_KEY", "openai-test-key")
@@ -364,4 +284,100 @@ func mapKeys[V any](m map[string]V) []string {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+// TestBuildMCPServerMap_NeverMountsRetiredNexServer pins the removal: no
+// combination of leftover environment may resurrect a "nex" MCP server. The
+// legacy WUPHF_NO_NEX/WUPHF_API_KEY vars are set here precisely because they
+// are still in real launchers and shells.
+func TestBuildMCPServerMap_NeverMountsRetiredNexServer(t *testing.T) {
+	t.Setenv("WUPHF_CONFIG_PATH", filepath.Join(t.TempDir(), "config.json"))
+	t.Setenv("WUPHF_NO_NEX", "")
+	t.Setenv("WUPHF_API_KEY", "test-key-12345")
+	t.Setenv("WUPHF_MEMORY_BACKEND", "nex")
+
+	l := minimalLauncher(false)
+	servers, err := l.buildMCPServerMap()
+	if err != nil {
+		t.Fatalf("buildMCPServerMap: %v", err)
+	}
+	if _, ok := servers["nex"]; ok {
+		t.Fatalf("a \"nex\" MCP server must never be mounted, got servers: %v", mapKeys(servers))
+	}
+	if _, ok := servers["wuphf-office"]; !ok {
+		t.Fatalf("'wuphf-office' server must always be present, got servers: %v", mapKeys(servers))
+	}
+}
+
+// TestHeadlessClaudeMaxTurns_AnyAgentMidBuildGetsHeadroom: app building is a
+// system skill every agent carries, so an agent that owns an open app build
+// task gets the App Builder's budget; the same agent with no build in flight
+// stays on the chat budget.
+func TestHeadlessClaudeMaxTurns_AnyAgentMidBuildGetsHeadroom(t *testing.T) {
+	b := newTestBroker(t)
+	l := minimalLauncher(false)
+	l.broker = b
+
+	if got := l.headlessClaudeMaxTurns("pm", ""); got != "15" {
+		t.Fatalf("pm with no build = %s, want 15", got)
+	}
+
+	b.mu.Lock()
+	b.tasks = append(b.tasks, teamTask{
+		ID:      "task-build",
+		Title:   "Build app: Tip Calculator",
+		Owner:   "pm",
+		Channel: "team",
+		Details: "Bill amount and tip.\n\n" + appWorkspaceBrief("app_1", "/tmp/app_1/src"),
+		status:  "in_progress",
+	})
+	b.mu.Unlock()
+	if got := l.headlessClaudeMaxTurns("pm", ""); got != "60" {
+		t.Fatalf("pm mid-build = %s, want 60 (build headroom)", got)
+	}
+
+	b.mu.Lock()
+	b.tasks[len(b.tasks)-1].status = "done"
+	b.mu.Unlock()
+	if got := l.headlessClaudeMaxTurns("pm", ""); got != "15" {
+		t.Fatalf("pm after the build is done = %s, want 15", got)
+	}
+}
+
+// TestHeadlessClaudeMaxTurns_AppAskGetsHeadroom: the budget is fixed at
+// launch and the build task is created during the turn, so the human's ask
+// itself must unlock the build budget.
+func TestHeadlessClaudeMaxTurns_AppAskGetsHeadroom(t *testing.T) {
+	l := minimalLauncher(false)
+	cases := map[string]string{
+		"Build me a Unit Converter app: km to miles.":             "60",
+		"create an app that tracks sponsor follow-ups":            "60",
+		"Can you make a small internal tool for expense reports?": "60",
+		"Ship the onboarding checklist app today":                 "60",
+		"what pressure for espresso?":                             "15",
+		"Build the landing page copy":                             "15",
+		"":                                                        "15",
+	}
+	for ask, want := range cases {
+		if got := l.headlessClaudeMaxTurns("pm", ask); got != want {
+			t.Fatalf("max turns for %q = %s, want %s", ask, got, want)
+		}
+	}
+}
+
+// TestWithAppAskPreface: an app ask gets the order-of-operations preface in
+// the message itself; anything else passes through untouched.
+func TestWithAppAskPreface(t *testing.T) {
+	ask := "Build me a Unit Converter app: km to miles."
+	got := withAppAskPreface(ask)
+	if !strings.HasPrefix(got, "APP ASK") || !strings.HasSuffix(got, ask) {
+		t.Fatalf("app ask not prefaced: %q", got)
+	}
+	if !strings.Contains(got, "team_task action=create") || !strings.Contains(got, "register_app(") {
+		t.Fatalf("preface missing the task-first / publish steps: %q", got)
+	}
+	plain := "what pressure for espresso?"
+	if withAppAskPreface(plain) != plain {
+		t.Fatalf("non-app message must pass through unchanged")
+	}
 }

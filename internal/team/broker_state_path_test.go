@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -80,7 +81,7 @@ func TestBrokerStateSnapshotPathIsLastGoodSibling(t *testing.T) {
 	// on this exact shape. If snapshot derivation ever drifts to a
 	// different directory or format, recovery silently breaks.
 	statePath := filepath.Join(t.TempDir(), "broker-state.json")
-	b := NewBrokerAt(statePath)
+	b := newBrokerWithTeamRoom(statePath)
 
 	got := b.stateSnapshotPath()
 	want := statePath + ".last-good"
@@ -98,7 +99,7 @@ func TestBrokerStateSnapshotPathIsLastGoodSibling(t *testing.T) {
 
 func TestNewBroker_SkipStateLoadGateRespected(t *testing.T) {
 	// The TestMain in this package flips skipBrokerStateLoadOnConstruct
-	// to true so NewBrokerAt() starts fresh and tests don't cross-
+	// to true so newBrokerWithTeamRoom() starts fresh and tests don't cross-
 	// contaminate via a shared broker-state.json. Persistence-checking
 	// tests opt back into disk load via reloadedBroker(t, b). Track A
 	// must preserve this contract: a test-mode constructor must NOT
@@ -106,12 +107,12 @@ func TestNewBroker_SkipStateLoadGateRespected(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "broker-state.json")
 
 	// Seed disk with a distinctive message. If the gate is broken,
-	// NewBrokerAt() will pick it up.
-	seed := NewBrokerAt(statePath)
+	// newBrokerWithTeamRoom() will pick it up.
+	seed := newBrokerWithTeamRoom(statePath)
 	seed.mu.Lock()
 	seed.messages = []channelMessage{{
 		ID:        "seed-msg",
-		From:      "ceo",
+		From:      "cos",
 		Content:   "canary from the seed broker",
 		Timestamp: "2026-04-25T00:00:00Z",
 	}}
@@ -126,12 +127,12 @@ func TestNewBroker_SkipStateLoadGateRespected(t *testing.T) {
 	if !skipBrokerStateLoadOnConstruct {
 		t.Fatal("precondition: skipBrokerStateLoadOnConstruct should be true in tests")
 	}
-	gated := NewBrokerAt(statePath)
+	gated := newBrokerWithTeamRoom(statePath)
 	if got := len(gated.Messages()); got != 0 {
 		t.Fatalf("gate=true must yield 0 messages on construct; got %d", got)
 	}
 
-	// Gate OFF (production default): NewBrokerAt() reads from disk.
+	// Gate OFF (production default): newBrokerWithTeamRoom() reads from disk.
 	//
 	// Mutating skipBrokerStateLoadOnConstruct mid-test is safe today
 	// because no test in this package calls t.Parallel() — the gate is
@@ -141,7 +142,7 @@ func TestNewBroker_SkipStateLoadGateRespected(t *testing.T) {
 	oldGate := skipBrokerStateLoadOnConstruct
 	skipBrokerStateLoadOnConstruct = false
 	t.Cleanup(func() { skipBrokerStateLoadOnConstruct = oldGate })
-	loaded := NewBrokerAt(statePath)
+	loaded := newBrokerWithTeamRoom(statePath)
 	msgs := loaded.Messages()
 	if len(msgs) != 1 || msgs[0].ID != "seed-msg" {
 		t.Fatalf("gate=false must auto-load seed; got %+v", msgs)
@@ -156,20 +157,20 @@ func TestNewBrokerAt_PathSnapshottedAtConstruction(t *testing.T) {
 	// what other brokers (constructed later, with other paths) are doing
 	// in the same process.
 	boundPath := filepath.Join(t.TempDir(), "bound-state.json")
-	b := NewBrokerAt(boundPath)
+	b := newBrokerWithTeamRoom(boundPath)
 
 	// Construct a second broker at a distinct path — simulates another
 	// test running alongside this one. Its statePath must not bleed into
 	// b's saves. Held by `other` so a future constructor-time goroutine in
 	// NewBrokerAt would still have an explicit reference to stop on.
 	unboundPath := filepath.Join(t.TempDir(), "should-not-be-written.json")
-	other := NewBrokerAt(unboundPath)
+	other := newBrokerWithTeamRoom(unboundPath)
 	_ = other
 
 	b.mu.Lock()
 	b.messages = []channelMessage{{
 		ID:        "bound-msg",
-		From:      "ceo",
+		From:      "cos",
 		Content:   "belongs to the bound path",
 		Timestamp: "2026-04-25T00:00:00Z",
 	}}
@@ -201,10 +202,10 @@ func TestNewBrokerAt_PanicsOnEmptyPath(t *testing.T) {
 	defer func() {
 		r := recover()
 		if r == nil {
-			t.Fatal("expected NewBrokerAt(\"\") to panic; got nil")
+			t.Fatal("expected newBrokerWithTeamRoom(\"\") to panic; got nil")
 		}
 	}()
-	_ = NewBrokerAt("")
+	_ = newBrokerWithTeamRoom("")
 }
 
 func TestBrokerStop_ClosesStopChannelAndPreservesState(t *testing.T) {
@@ -216,16 +217,15 @@ func TestBrokerStop_ClosesStopChannelAndPreservesState(t *testing.T) {
 	// The previous incarnation slept 250ms and asserted no late writes,
 	// which (a) violated this repo's no-sleeps-in-tests rule and (b)
 	// would pass for the wrong reason if the offending goroutine was
-	// quiescent during the window. A real "no late writes" check
-	// requires a sync.WaitGroup on the goroutine set, which is broker
-	// instrumentation worth doing separately if/when the goroutine
-	// surface grows.
+	// quiescent during the window. The real "no late writes" guarantee
+	// now exists for tracked hooks: Stop drains b.bgWG — see
+	// trackBackground and TestStopWaitsForTrackedBackgroundWork below.
 	//
 	// Starts the broker via StartOnPort(0) so the HTTP listener
 	// goroutine is actually present — without that, Stop is a near-noop
 	// and the test wouldn't exercise the drain path at all.
 	statePath := filepath.Join(t.TempDir(), "broker-state.json")
-	b := NewBrokerAt(statePath)
+	b := newBrokerWithTeamRoom(statePath)
 	if err := b.StartOnPort(0); err != nil {
 		t.Fatalf("StartOnPort: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestBrokerStop_ClosesStopChannelAndPreservesState(t *testing.T) {
 	b.mu.Lock()
 	b.messages = []channelMessage{{
 		ID:        "pre-stop",
-		From:      "ceo",
+		From:      "cos",
 		Content:   "written before Stop",
 		Timestamp: "2026-04-25T00:00:00Z",
 	}}
@@ -274,4 +274,46 @@ func TestBrokerStop_ClosesStopChannelAndPreservesState(t *testing.T) {
 		t.Fatalf("state file content changed across Stop:\nbefore: %s\nafter: %s",
 			beforeBytes, afterBytes)
 	}
+}
+
+// TestStopWaitsForTrackedBackgroundWork locks the drain contract the comment
+// in TestBrokerStop_ClosesStopChannelAndPreservesState deferred to "when the
+// goroutine surface grows": it grew. The publish-path hooks (manifest
+// advisory stamp, workflow precompile, dev-server pre-warm) run through
+// trackBackground, and Stop must not return while one is mid-flight — an
+// untracked hook re-stamping app.json after Stop was exactly the race that
+// made t.TempDir cleanup fail with "directory not empty" in
+// TestAppEditSessionRestrictedToWriters.
+func TestStopWaitsForTrackedBackgroundWork(t *testing.T) {
+	b := newBrokerWithTeamRoom(filepath.Join(t.TempDir(), "broker-state.json"))
+	if err := b.StartOnPort(0); err != nil {
+		t.Fatalf("StartOnPort: %v", err)
+	}
+
+	release := make(chan struct{})
+	var finished atomic.Bool
+	b.trackBackground(func() {
+		<-release
+		finished.Store(true)
+	})
+
+	stopReturned := make(chan struct{})
+	go func() {
+		b.Stop()
+		close(stopReturned)
+	}()
+	// Let the hook finish; Stop may only return after it has. No sleeps:
+	// if Stop does not wait on the tracked set, it races the hook and the
+	// finished assertion below fails.
+	close(release)
+	<-stopReturned
+	if !finished.Load() {
+		t.Fatal("Stop returned before the tracked background hook finished")
+	}
+
+	// Once Stop has begun, new tracked work is dropped, never launched. If
+	// this hook were tracked, the second (idempotent) Stop would wait for
+	// it and the t.Error would fire before Stop returned.
+	b.trackBackground(func() { t.Error("tracked hook launched after Stop") })
+	b.Stop()
 }

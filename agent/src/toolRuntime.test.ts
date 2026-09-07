@@ -1,61 +1,64 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { currentRunSignal } from "./runContext.js";
 import { createServer } from "./service.js";
+import { AgentStore } from "./store.js";
 import { type CapabilityTree, runTool } from "./toolRuntime.js";
 import type { Tool, ToolCallResult, WorkflowSpec } from "./wire.js";
 
 // Tool fixtures are inlined (not imported from tools.ts) so this file has no
 // coupling to the authoring module while it is edited in parallel.
 
-function makeTool(code: string, inputs: Tool["inputs"] = []): Tool {
-	return { name: "t", title: "T", purpose: "p", inputs, code };
+function makeTool(code: string, inputs: Tool["inputs"] = [], name = "t"): Tool {
+	return { name, title: "T", purpose: "p", inputs, code };
 }
 
 const READ_TOOL = makeTool(
 	[
-		"async function weeklyPipelineSummary() {",
-		"  const deals = await crm.deals({ since: '7d' });",
-		"  const moved = deals.filter((d) => d.stageChanged);",
-		"  return nex.ai.summarize(moved, { style: 'exec recap' });",
+		"async function weeklySummary() {",
+		"  const records = await data.list('records', { since: '7d' });",
+		"  return nex.ai.summarize(records, { style: 'concise recap' });",
 		"}",
 	].join("\n"),
+	[],
+	"read_tool",
 );
 
 const GATED_TOOL = makeTool(
 	[
-		"async function routeLead(lead) {",
-		"  const ae = await crm.ownerFor(lead);",
-		"  await crm.assign(lead, ae);",
-		"  return `routed ${lead} to ${ae.name}`;",
+		"async function notifyOwner(record) {",
+		"  const result = await nex.send(record, 'heads up');",
+		"  return `notified ${record}: ${result}`;",
 		"}",
 	].join("\n"),
-	[{ name: "lead", type: "string" }],
+	[{ name: "record", type: "string" }],
+	"gated_tool",
 );
 
-test("a read tool (crm.deals + summarize) runs ok with actions recorded", async () => {
+test("a read tool (data.list + summarize) runs ok with actions recorded", async () => {
 	const r = await runTool(READ_TOOL, {});
 	expect(r.status).toBe("ok");
 	if (r.status !== "ok") throw new Error("unreachable");
-	expect(r.result).toContain("simulated recap");
-	expect(r.actions.some((a) => a.startsWith("crm.deals("))).toBe(true);
+	// data.list returns [] in the sim, summarize records "0 items" honestly.
+	expect(r.actions.some((a) => a.startsWith("data.list("))).toBe(true);
 	expect(r.actions.some((a) => a.startsWith("nex.ai.summarize("))).toBe(true);
 });
 
-test("crm.assign halts needs_approval by default (default deny)", async () => {
-	const r = await runTool(GATED_TOOL, { lead: "Acme" });
+test("a gated write (nex.send) halts needs_approval by default (default deny)", async () => {
+	const r = await runTool(GATED_TOOL, { record: "Acme" });
 	expect(r.status).toBe("needs_approval");
 	if (r.status !== "needs_approval") throw new Error("unreachable");
-	expect(r.gate.capability).toBe("crm.assign");
+	expect(r.gate.capability).toBe("nex.send");
 	expect(r.gate.detail).toContain("Acme");
-	expect(r.gate.detail).toContain("Priya (AE)");
 });
 
-test("the same call with approved: true completes", async () => {
-	const r = await runTool(GATED_TOOL, { lead: "Acme" }, { approved: true });
+test("the same gated call with approved: true completes", async () => {
+	const r = await runTool(GATED_TOOL, { record: "Acme" }, { approved: true });
 	expect(r.status).toBe("ok");
 	if (r.status !== "ok") throw new Error("unreachable");
-	expect(r.result).toBe("routed Acme to Priya (AE)");
-	expect(r.actions.some((a) => a.startsWith("crm.assign("))).toBe(true);
+	expect(r.actions.some((a) => a.startsWith("nex.send("))).toBe(true);
 });
 
 test("nex.send is gated too", async () => {
@@ -69,12 +72,12 @@ test("nex.send is gated too", async () => {
 });
 
 test("a thrown error -> status error (with prior actions kept)", async () => {
-	const t = makeTool('async function boom() { await crm.deals(); throw new Error("kaput"); }');
+	const t = makeTool('async function boom() { await data.list("records"); throw new Error("kaput"); }');
 	const r = await runTool(t, {});
 	expect(r.status).toBe("error");
 	if (r.status !== "error") throw new Error("unreachable");
 	expect(r.detail).toContain("kaput");
-	expect(r.actions.some((a) => a.startsWith("crm.deals("))).toBe(true);
+	expect(r.actions.some((a) => a.startsWith("data.list("))).toBe(true);
 });
 
 test("the code scan rejects import (dynamic and static) and eval", async () => {
@@ -105,7 +108,7 @@ test("timeout: a never-resolving capability -> error", async () => {
 	const r = await runTool(t, { input: "x" }, { capabilities, timeoutMs: 20 });
 	expect(r.status).toBe("error");
 	if (r.status !== "error") throw new Error("unreachable");
-	expect(r.detail).toContain("timed out after 20ms");
+	expect(r.detail).toContain("took too long");
 });
 
 test("HARD KILL: a synchronous infinite loop dies at the deadline (worker isolate)", async () => {
@@ -117,7 +120,7 @@ test("HARD KILL: a synchronous infinite loop dies at the deadline (worker isolat
 	const elapsed = Date.now() - started;
 	expect(r.status).toBe("error");
 	if (r.status !== "error") throw new Error("unreachable");
-	expect(r.detail).toContain("timed out after 150ms");
+	expect(r.detail).toContain("took too long");
 	expect(elapsed).toBeLessThan(2000); // returned promptly — the loop was killed, not raced
 });
 
@@ -170,25 +173,27 @@ test("nex.browser is gated: default deny with the browser-control detail", async
 test("injected capabilities are used AND recorded (and stay gated)", async () => {
 	const seen: string[] = [];
 	const capabilities: CapabilityTree = {
-		crm: {
-			deals: () => {
-				seen.push("deals");
-				return [{ name: "OnlyDeal", stageChanged: true }];
+		data: {
+			list: () => {
+				seen.push("list");
+				return [{ name: "OnlyRecord" }];
 			},
-			assign: () => "assigned",
 		},
-		nex: { ai: { summarize: (items: unknown) => `got ${(items as unknown[]).length}` } },
+		nex: {
+			ai: { summarize: (items: unknown) => `got ${(items as unknown[]).length}` },
+			send: () => "sent",
+		},
 	};
-	const read = makeTool("async function t() { const d = await crm.deals({ since: '7d' }); return nex.ai.summarize(d); }");
+	const read = makeTool("async function t() { const d = await data.list('records', { since: '7d' }); return nex.ai.summarize(d); }");
 	const r = await runTool(read, {}, { capabilities });
 	expect(r.status).toBe("ok");
 	if (r.status !== "ok") throw new Error("unreachable");
 	expect(r.result).toBe("got 1");
-	expect(seen).toEqual(["deals"]);
-	expect(r.actions[0]).toBe('crm.deals({"since":"7d"})');
+	expect(seen).toEqual(["list"]);
+	expect(r.actions[0]).toBe('data.list("records", {"since":"7d"})');
 	// The gate is enforced at the instrumentation layer, so an injected
-	// crm.assign is still default-deny.
-	const gated = makeTool('async function t() { return crm.assign("Acme", "Priya"); }');
+	// nex.send is still default-deny.
+	const gated = makeTool('async function t() { return nex.send("Acme", "hi"); }');
 	const g = await runTool(gated, {}, { capabilities });
 	expect(g.status).toBe("needs_approval");
 });
@@ -212,13 +217,33 @@ async function* fakeBuild() {
 	};
 }
 
+// The tool CODE is resolved from the per-agent store by (agent, name); the
+// request body carries only a reference + args, never code (that path was
+// unauthenticated RCE — see wire.ts ToolCallRequest). Seed the store so the
+// service can look the fixtures up.
+const APP = "app1";
 let server: ReturnType<typeof createServer>;
 let base: string;
+let priorAuthorModel: string | undefined;
 beforeAll(() => {
-	server = createServer({ port: 0, buildStream: fakeBuild });
+	// These HTTP tests exercise the /tools/call plumbing against the SIMULATED
+	// runtime, not a live model. Pin authoring off so runtimeAICapabilityConfig
+	// does not resolve an ambient provider (a CI runner with ANTHROPIC_API_KEY
+	// would otherwise make nex.ai.* fire a real, slow network call and this test
+	// would flake on a socket timeout). Restored in afterAll.
+	priorAuthorModel = process.env.TOOL_AUTHOR_MODEL;
+	process.env.TOOL_AUTHOR_MODEL = "0";
+	const store = new AgentStore(mkdtempSync(join(tmpdir(), "wuphf-toolcall-")));
+	store.upsertTool(APP, READ_TOOL);
+	store.upsertTool(APP, GATED_TOOL);
+	server = createServer({ port: 0, buildStream: fakeBuild, store });
 	base = server.url.toString().replace(/\/$/, "");
 });
-afterAll(() => server.stop(true));
+afterAll(() => {
+	if (priorAuthorModel === undefined) delete process.env.TOOL_AUTHOR_MODEL;
+	else process.env.TOOL_AUTHOR_MODEL = priorAuthorModel;
+	server.stop(true);
+});
 
 function post(body: unknown): Promise<Response> {
 	return fetch(`${base}/tools/call`, {
@@ -229,7 +254,7 @@ function post(body: unknown): Promise<Response> {
 }
 
 test("POST /tools/call runs a read tool ok", async () => {
-	const res = await post({ schema_version: 1, tool: READ_TOOL, args: {} });
+	const res = await post({ schema_version: 1, agent: APP, name: "read_tool", args: {} });
 	expect(res.status).toBe(200);
 	const data = (await res.json()) as ToolCallResult;
 	expect(data.status).toBe("ok");
@@ -237,20 +262,31 @@ test("POST /tools/call runs a read tool ok", async () => {
 });
 
 test("POST /tools/call halts needs_approval, then completes with approved: true", async () => {
-	const r1 = (await (await post({ schema_version: 1, tool: GATED_TOOL, args: { lead: "Acme" } })).json()) as ToolCallResult;
+	const r1 = (await (await post({ schema_version: 1, agent: APP, name: "gated_tool", args: { record: "Acme" } })).json()) as ToolCallResult;
 	expect(r1.status).toBe("needs_approval");
-	expect(r1.gate?.capability).toBe("crm.assign");
+	expect(r1.gate?.capability).toBe("nex.send");
 	const r2 = (await (
-		await post({ schema_version: 1, tool: GATED_TOOL, args: { lead: "Acme" }, approved: true })
+		await post({ schema_version: 1, agent: APP, name: "gated_tool", args: { record: "Acme" }, approved: true })
 	).json()) as ToolCallResult;
 	expect(r2.status).toBe("ok");
 });
 
-test("POST /tools/call 400s on a missing/malformed tool", async () => {
-	for (const bad of [{}, { tool: null }, { tool: { name: "x" } }, { tool: { code: "y" } }]) {
+test("POST /tools/call never runs code from the request body (RCE regression)", async () => {
+	// A body-supplied `code`/`tool` is ignored entirely: the endpoint resolves the
+	// implementation from the store by (agent, name). An unknown name is a 404, so
+	// there is no path to execute attacker-controlled code.
+	const evil = "function pwn(){ return ([]).constructor.constructor('return process')().env.SECRET; }";
+	const res = await post({ schema_version: 1, agent: APP, name: "pwn", code: evil, tool: { name: "pwn", code: evil } });
+	expect(res.status).toBe(404);
+});
+
+test("POST /tools/call 400s on a missing agent/name and 404s on an unknown tool", async () => {
+	for (const bad of [{}, { agent: APP }, { name: "read_tool" }, { agent: "", name: "read_tool" }, { agent: APP, name: "" }]) {
 		const res = await post(bad);
 		expect(res.status).toBe(400);
 	}
+	const unknown = await post({ agent: APP, name: "does_not_exist" });
+	expect(unknown.status).toBe(404);
 	const notJson = await fetch(`${base}/tools/call`, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
@@ -259,21 +295,7 @@ test("POST /tools/call 400s on a missing/malformed tool", async () => {
 	expect(notJson.status).toBe(400);
 });
 
-test("POST /tools/call 400s on malformed inputs and treats absent inputs as [] (regression: CodeRabbit)", async () => {
-	// inputs: null (or non-{ name: string } entries) used to 500 inside runTool.
-	const { inputs: _drop, ...noInputs } = READ_TOOL;
-	for (const badInputs of [null, "lead", 7, [null], [{ title: "no name" }], [{ name: 42 }]]) {
-		const res = await post({ schema_version: 1, tool: { ...noInputs, inputs: badInputs } });
-		expect(res.status).toBe(400);
-		expect(((await res.json()) as { error?: string }).error).toContain("inputs");
-	}
-	// Absent inputs normalize to [] and the call runs.
-	const ok = await post({ schema_version: 1, tool: noInputs });
-	expect(ok.status).toBe(200);
-	expect(((await ok.json()) as ToolCallResult).status).toBe("ok");
-});
-
 test("POST /tools/call rejects a schema_version mismatch", async () => {
-	const res = await post({ schema_version: 99, tool: READ_TOOL });
+	const res = await post({ schema_version: 99, agent: APP, name: "read_tool" });
 	expect(res.status).toBe(400);
 });
